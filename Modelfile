@@ -1,0 +1,9 @@
+FROM qwen3:8b
+
+# Disable extended thinking mode permanently.
+# qwen3:8b defaults to /think (extended reasoning), which adds 60-90s
+# of silent computation before every response — unusable for real-time voice.
+# Setting think=false here bakes it into the model variant so it applies
+# regardless of which API endpoint (native /api/chat or /v1/chat/completions)
+# is used. No extra_body or system prompt tricks needed.
+PARAMETER think false

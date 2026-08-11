@@ -1,0 +1,32 @@
+/* ==========================================================
+   HR Buddy — Design Tokens
+   Add this to index.html <head> so the fonts load:
+   <link rel="preconnect" href="https://fonts.googleapis.com">
+   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+   ========================================================== */
+:root {
+  --bg-base: #0A0D12;
+  --bg-surface: #12161F;
+  --bg-surface-2: #181D28;
+  --bg-surface-3: #1F2530;
+  --border: #232838;
+  --border-soft: #1B2029;
+
+  --accent: #34D8B0;
+  --accent-soft: rgba(52, 216, 176, 0.12);
+  --accent-2: #FFB454;
+  --accent-2-soft: rgba(255, 180, 84, 0.12);
+  --danger: #F0665C;
+
+  --text-primary: #EDEFF2;
+  --text-muted: #8B93A1;
+  --text-faint: #545C6B;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+
+  --font-display: 'Sora', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}

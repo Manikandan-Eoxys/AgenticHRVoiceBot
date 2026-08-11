@@ -1,0 +1,29 @@
+.status {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+}
+.status-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: 12px;
+}
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 19.5px;
+  padding: 7px 0;
+  color: var(--text-muted);
+}
+.status-row b {
+  color: var(--text-primary);
+  font-weight: 500;
+  font-family: var(--font-mono);
+  font-size: 18px;
+}
+.status-row .status-live { color: var(--accent) !important; }

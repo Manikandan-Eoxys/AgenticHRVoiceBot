@@ -1,0 +1,36 @@
+{
+    "casual_leave": {
+        "title": "Casual Leave",
+        "description": "Employees are entitled to 12 casual leaves per calendar year."
+    },
+
+    "sick_leave": {
+        "title": "Sick Leave",
+        "description": "Employees receive 10 sick leaves every year. Medical certificate is required for more than 3 consecutive days."
+    },
+
+    "earned_leave": {
+        "title": "Earned Leave",
+        "description": "Earned leave accumulates monthly and can be carried forward up to 30 days."
+    },
+
+    "probation": {
+        "title": "Probation Policy",
+        "description": "Employees on probation cannot avail casual leave unless approved by HR."
+    },
+
+    "work_from_home": {
+        "title": "Work From Home",
+        "description": "Employees may work from home up to two days per week with manager approval."
+    },
+
+    "grievance": {
+        "title": "Grievance Policy",
+        "description": "All employee grievances are confidential and reviewed by HR within five business days."
+    },
+
+    "attendance": {
+        "title": "Attendance",
+        "description": "Employees must complete at least 8 working hours per day."
+    }
+}

@@ -1,0 +1,46 @@
+.tool-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+}
+.tool-panel h3 {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: 12px;
+}
+.tool-panel .empty {
+  font-size: 19.5px;
+  color: var(--text-faint);
+}
+.tool-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 19.5px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.tool-item:last-child { border-bottom: none; }
+.tool-name {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+.tool-status {
+  font-size: 17px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  padding: 3px 9px;
+  border-radius: 20px;
+}
+/* Common status values — extend as your backend adds more */
+.tool-status.pending  { color: var(--accent-2); background: var(--accent-2-soft); }
+.tool-status.running  { color: #6FB7FF; background: rgba(111,183,255,0.12); }
+.tool-status.success  { color: var(--accent); background: var(--accent-soft); }
+.tool-status.done     { color: var(--accent); background: var(--accent-soft); }
+.tool-status.error    { color: var(--danger); background: rgba(240,102,92,0.12); }

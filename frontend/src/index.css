@@ -1,0 +1,5 @@
+/* Vite scaffold defaults removed — this project uses styles/theme.css
+   and styles/app.css for all real styling. Keeping this file minimal
+   avoids fighting the dashboard layout with leftover template rules. */
+* { box-sizing: border-box; }
+body { margin: 0; }

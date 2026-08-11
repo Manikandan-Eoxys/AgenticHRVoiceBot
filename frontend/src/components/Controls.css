@@ -1,0 +1,74 @@
+.controls-wrapper {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border-soft);
+}
+
+.controls {
+  padding: 18px 24px 16px;
+  display: flex;
+  align-items: center;
+}
+
+.controls-active {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.btn {
+  font-family: var(--font-body);
+  font-size: 18px;
+  font-weight: 600;
+  padding: 11px 22px;
+  border-radius: 24px;
+  border: none;
+  cursor: pointer;
+  transition: transform .1s ease, box-shadow .15s ease, background .2s ease;
+}
+.btn:active { transform: scale(0.97); }
+
+.btn-connect {
+  background: linear-gradient(135deg, var(--accent), #1FA98A);
+  color: #06110D;
+  box-shadow: 0 0 0 0 rgba(52,216,176,.4);
+  animation: hb-pulse 2.2s infinite;
+}
+@keyframes hb-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(52,216,176,.35); }
+  70%  { box-shadow: 0 0 0 12px rgba(52,216,176,0); }
+  100% { box-shadow: 0 0 0 0 rgba(52,216,176,0); }
+}
+
+.btn-mic-on {
+  background: rgba(52, 216, 176, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(52, 216, 176, 0.4);
+}
+.btn-mic-on:hover {
+  background: rgba(52, 216, 176, 0.25);
+}
+
+.btn-mic-off {
+  background: rgba(240, 102, 92, 0.15);
+  color: #F0665C;
+  border: 1px solid rgba(240, 102, 92, 0.4);
+}
+.btn-mic-off:hover {
+  background: rgba(240, 102, 92, 0.25);
+}
+
+.btn-disconnect {
+  background: var(--bg-surface-3);
+  color: var(--danger);
+  border: 1px solid rgba(240,102,92,0.3);
+}
+.btn-disconnect:hover { background: rgba(240,102,92,0.12); }
+
+.mic-error-alert {
+  padding: 8px 24px 14px;
+  font-size: 13px;
+  color: #F0665C;
+  background: rgba(240, 102, 92, 0.08);
+}
+

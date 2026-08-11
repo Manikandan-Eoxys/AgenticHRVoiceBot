@@ -1,0 +1,60 @@
+.agent-info-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+}
+.agent-info-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin-bottom: 14px;
+}
+.agent-info-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.agent-info-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30.5px;
+}
+.agent-info-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 21.5px;
+}
+.agent-info-role {
+  font-size: 17.5px;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+.agent-info-caps {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.agent-info-cap {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 19.5px;
+  color: var(--text-muted);
+}
+.cap-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}

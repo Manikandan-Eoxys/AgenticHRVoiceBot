@@ -1,0 +1,114 @@
+.transcript-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.transcript-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.transcript-header {
+  font-family: var(--font-display);
+  font-size: 21.5px;
+  font-weight: 600;
+}
+.clear-btn {
+  font-size: 18px;
+  color: var(--text-faint);
+  background: none;
+  border: 1px solid var(--border);
+  padding: 6px 11px;
+  border-radius: 8px;
+  font-family: var(--font-body);
+}
+.clear-btn:hover { color: var(--text-muted); border-color: var(--text-faint); }
+
+.transcript-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 25px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.empty-chat {
+  margin: auto;
+  text-align: center;
+  color: var(--text-faint);
+}
+.empty-chat h3 {
+  font-family: var(--font-display);
+  font-size: 23px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.empty-chat p { font-size: 20px; }
+
+.message {
+  display: flex;
+  gap: 11px;
+  max-width: 72%;
+}
+.message.user { align-self: flex-end; flex-direction: row-reverse; }
+.message.assistant { align-self: flex-start; }
+
+.message .avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 21.5px;
+  margin-top: 2px;
+}
+.message.assistant .avatar { background: var(--accent-soft); }
+.message.user .avatar { background: var(--bg-surface-3); }
+
+.bubble { display: flex; flex-direction: column; gap: 5px; }
+.message.user .bubble { align-items: flex-end; }
+
+.sender {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.text {
+  font-size: 21px;
+  line-height: 1.55;
+  padding: 13px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+}
+.message.assistant .text { background: var(--bg-surface); border-top-left-radius: 4px; }
+.message.user .text {
+  background: var(--accent-soft);
+  color: #DFFAF2;
+  border-color: rgba(52,216,176,0.25);
+  border-top-right-radius: 4px;
+}
+
+/* Streaming (interim, not-yet-final) message styling */
+.message.streaming .text {
+  opacity: 0.85;
+}
+.streaming-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--accent);
+  margin-left: 3px;
+  vertical-align: middle;
+  animation: hb-blink 1s steps(1) infinite;
+}
+@keyframes hb-blink {
+  50% { opacity: 0; }
+}

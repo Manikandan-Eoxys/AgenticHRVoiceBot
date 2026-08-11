@@ -1,0 +1,732 @@
+"""
+agent.py
+
+HR Voice Agent
+LiveKit Agents v1.6.5
+"""
+
+from livekit.agents import (
+    Agent,
+    RunContext,
+    function_tool,
+)
+
+from services.employee_service import EmployeeService
+from services.leave_service import LeaveService
+from services.grievance_service import GrievanceService
+from services.policy_service import PolicyService
+from services.calendar_service import CalendarService
+from memory.conversation_memory import ConversationMemory
+
+from security.auth_service import AuthService
+from security.auth_session import AuthSession
+# from pathlib import Path
+from config import SYSTEM_PROMPT
+from modules.topic_guard import classify as _classify_topic
+
+# SYSTEM_PROMPT = Path(
+#     "prompts/system_prompt.txt"
+# ).read_text(encoding="utf-8")
+
+class HRAgent(Agent):
+
+    def __init__(self):
+
+        super().__init__(
+            instructions=SYSTEM_PROMPT
+        )
+
+        self.memory = ConversationMemory()
+
+        self.auth_service = AuthService()
+        self.auth = AuthSession()
+        
+        self.employee_service = EmployeeService()
+        self.leave_service = LeaveService()
+        self.grievance_service = GrievanceService()
+        self.policy_service = PolicyService()
+        self.calendar_service = CalendarService()
+
+    async def on_enter(self):
+        """Greet the user when the session starts."""
+        await self.session.say(
+            "Hello! I'm HR Buddy, your Agentic HR Voice Assistant. "
+            "How can I help you today?",
+            allow_interruptions=True,
+        )
+
+    ####################################################################
+    # GUARDRAIL
+    ####################################################################
+
+    @function_tool()
+    async def check_topic(
+        self,
+        context: RunContext,
+        user_message: str,
+    ):
+        """
+        MANDATORY GUARDRAIL — Call this tool FIRST whenever the user's request
+        is ambiguous, seems unrelated to HR, or touches any of the following:
+
+        - Weather, geography, science
+        - Politics, current events, news
+        - Finance, stocks, cryptocurrency
+        - Sports, entertainment, movies, music
+        - Recipes, food, restaurants
+        - Travel, tourism, hotels
+        - Programming, coding, software
+        - Medical or legal advice
+        - Jokes, stories, poems, creative writing
+        - General knowledge or trivia
+
+        This tool classifies the message and either:
+          - Returns allowed=True  -> proceed normally
+          - Returns allowed=False -> speak the 'message' field verbatim and stop
+
+        DO NOT skip this tool for borderline requests.
+        DO NOT answer non-HR questions even if you think you know the answer.
+        """
+        result = _classify_topic(user_message)
+        return result
+
+    ####################################################################
+    # EMPLOYEE
+    ####################################################################
+
+    @function_tool()
+    async def get_employee(
+        self,
+        context: RunContext,
+        employee_id: int,
+    ):
+        """
+        Retrieve complete information for an employee using their employee ID.
+
+        Use this tool whenever the user asks for details about a specific employee
+        and already provides the employee ID.
+
+        Examples:
+        - Show employee 1001.
+        - Get details of employee ID 1045.
+        - What is the information for employee 2005?
+
+        Do NOT use this tool if the user only provides a name.
+        Use search_employee instead.
+        """
+        return self.employee_service.get_employee(employee_id)
+    
+
+    @function_tool()
+    async def search_employee(
+        self,
+        context: RunContext,
+        name: str,
+    ):
+        """
+        Search employees by first name or last name.
+
+        Use this tool whenever the user mentions an employee name instead of an ID.
+
+        Examples:
+        - Find John.
+        - Search employee named Alice.
+        - Do we have an employee called David?
+        - Show me Ravi.
+
+        Returns one or more matching employees.
+
+        Do NOT use when an employee ID is available.
+        """
+        return self.employee_service.search_employee(name)
+
+    @function_tool()
+    async def employee_summary(
+        self,
+        context: RunContext,
+        employee_id: int,
+    ):
+        """
+        Retrieve a short summary of an employee.
+
+        Includes information such as:
+        - Name
+        - Department
+        - Designation
+        - Manager
+        - Contact information
+
+        Use this when the user asks for an overview instead of complete employee details.
+
+        Examples:
+        - Give me a summary of employee 1005.
+        - Tell me about employee 1005.
+        """
+        return self.employee_service.get_employee_summary(employee_id)
+
+    @function_tool()
+    async def list_employees(
+        self,
+        context: RunContext,
+    ):
+        """
+        Retrieve a list of all employees.
+
+        Use only when the user explicitly asks to list employees.
+
+        Examples:
+        - List all employees.
+        - Show every employee.
+        - Display employee directory.
+        """
+        return self.employee_service.list_employees()
+
+    ####################################################################
+    # LEAVE
+    ####################################################################
+
+    @function_tool()
+    async def leave_balance(
+        self,
+        context: RunContext,
+        employee_id: int,
+    ):
+        """
+        Retrieve the available leave balance for an employee.
+
+        Use whenever the user asks about remaining leave.
+
+        Examples:
+        - How many casual leaves do I have?
+        - What's my leave balance?
+        - Remaining annual leave?
+        - Sick leave left?
+
+        Requires an employee ID.
+        """
+        return self.leave_service.check_leave_balance(employee_id)
+
+    @function_tool()
+    async def apply_leave(
+        self,
+        context: RunContext,
+        employee_id: int,
+        from_date: str,
+        to_date: str,
+        leave_type: str,
+    ):
+        # -------------------------
+        # Authentication Check
+        # -------------------------
+        if not self.auth.authenticated:
+            return {
+                "success": False,
+                "message": "Please verify your identity first by providing your employee ID."
+            }
+
+        """
+        Submit a leave request for an employee.
+
+        Use ONLY after collecting:
+
+        - Employee ID
+        - Leave type
+        - Start date
+        - End date
+
+        Always ask for confirmation before calling this tool.
+
+        Examples:
+        - I want leave tomorrow.
+        - Apply casual leave.
+        - Book annual leave.
+        - I need vacation from Monday to Friday.
+
+        Never call this tool until all required information has been collected.
+        """
+        return self.leave_service.apply_leave(
+            employee_id,
+            from_date,
+            to_date,
+            leave_type,
+        )
+
+    @function_tool()
+    async def cancel_leave(
+        self,
+        context: RunContext,
+        request_id: int,
+    ):
+        # -------------------------
+        # Authentication Check
+        # -------------------------
+        if not self.auth.authenticated:
+            return {
+                "success": False,
+                "message": "Please verify your identity first by providing your employee ID."
+            }
+
+        """
+        Cancel an existing leave request.
+
+        Use only after the employee provides the leave request ID.
+
+        Examples:
+        - Cancel my leave.
+        - Withdraw leave request 25.
+        - Delete my leave application.
+
+        Requires authentication.
+        """
+        return self.leave_service.cancel_leave(request_id)
+
+    @function_tool()
+    async def leave_history(
+        self,
+        context: RunContext,
+        employee_id: int,
+    ):
+        """
+        Retrieve the leave history for an employee.
+
+        Use when the employee asks about previous leave requests.
+
+        Examples:
+        - Show my leave history.
+        - Previous leave applications.
+        - What leave have I taken this year?
+        """
+        return self.leave_service.leave_history(employee_id)
+
+    ####################################################################
+    # GRIEVANCE
+    ####################################################################
+
+    @function_tool()
+    async def raise_grievance(
+        self,
+        context: RunContext,
+        employee_id: int,
+        category: str,
+        description: str,
+        anonymous: bool = False,
+    ):
+        # -------------------------
+        # Authentication Check
+        # -------------------------
+        if not self.auth.authenticated:
+            return {
+                "success": False,
+                "message": "Please verify your identity first by providing your employee ID."
+            }
+
+        """
+        Create a new employee grievance.
+
+        Use only after collecting:
+
+        - Employee ID
+        - Category
+        - Description
+        - Anonymous or not
+
+        Always ask for confirmation before submitting.
+
+        Examples:
+        - I want to report harassment.
+        - Raise a grievance.
+        - Report a workplace issue.
+        - File a complaint.
+
+        Requires authentication.
+        """
+        return self.grievance_service.create_grievance(
+            employee_id,
+            category,
+            description,
+            anonymous,
+        )
+
+    @function_tool()
+    async def grievance_status(
+        self,
+        context: RunContext,
+        grievance_id: int,
+    ):
+        """
+        Retrieve the status of a grievance using its grievance ID.
+
+        Examples:
+        - Check grievance 45.
+        - What's the status of my complaint?
+        - Has grievance 20 been resolved?
+        """
+        return self.grievance_service.get_grievance(grievance_id)
+
+    @function_tool()
+    async def employee_grievances(
+        self,
+        context: RunContext,
+        employee_id: int,
+    ):
+        """
+        Retrieve all grievances submitted by an employee.
+
+        Examples:
+        - Show my grievances.
+        - List my complaints.
+        - My grievance history.
+        """
+        return self.grievance_service.list_employee_grievances(employee_id)
+
+    @function_tool()
+    async def escalate_grievance(
+        self,
+        context: RunContext,
+        grievance_id: int,
+    ):
+        # -------------------------
+        # Authentication Check
+        # -------------------------
+        if not self.auth.authenticated:
+            return {
+                "success": False,
+                "message": "Please verify your identity first by providing your employee ID."
+            }
+
+        """
+        Escalate an existing grievance.
+
+        Use only after confirming with the employee.
+
+        Examples:
+        - Escalate grievance 24.
+        - I want HR management to review my complaint.
+
+        Requires authentication.
+        """
+        return self.grievance_service.escalate_grievance(grievance_id)
+
+    ####################################################################
+    # POLICY
+    ####################################################################
+
+    @function_tool()
+    async def get_policy(
+        self,
+        context: RunContext,
+        policy_name: str,
+    ):
+        """
+        Retrieve the full HR policy for a specific topic.
+
+        Use when the user asks about one known policy.
+
+        Examples:
+        - Explain maternity leave policy.
+        - What is the work from home policy?
+        - Show me the attendance policy.
+        - Explain casual leave policy.
+
+        Never invent policy information.
+        Always use this tool.
+        """
+        return self.policy_service.get_policy(policy_name)
+
+    @function_tool()
+    async def search_policy(
+        self,
+        context: RunContext,
+        keyword: str,
+    ):
+        """
+        Search HR policies using keywords.
+
+        Use when the user is unsure of the exact policy name.
+
+        Examples:
+        - Policies related to leave.
+        - Travel policies.
+        - Remote work.
+        - Insurance.
+        - Performance review.
+
+        Return matching policies.
+        """
+        return self.policy_service.search_policy(keyword)
+
+    @function_tool()
+    async def leave_eligibility(
+        self,
+        context: RunContext,
+        leave_type: str,
+        years_of_service: int,
+    ):
+        """
+        Check whether an employee is eligible for a specific leave type.
+
+        Requires:
+
+        - Leave type
+        - Years of service
+
+        Examples:
+        - Am I eligible for maternity leave?
+        - Can a new employee take earned leave?
+        - Eligibility for paternity leave.
+        """
+        return self.policy_service.check_leave_eligibility(
+            leave_type,
+            years_of_service,
+        )
+
+    @function_tool()
+    async def list_policies(
+        self,
+        context: RunContext,
+    ):
+        """
+        Retrieve a list of all available HR policies.
+
+        Use only when the employee asks to browse policies.
+
+        Examples:
+        - List all HR policies.
+        - What policies are available?
+        - Show company policies.
+        """
+        return self.policy_service.list_policies()
+
+    ####################################################################
+    # CALENDAR
+    ####################################################################
+
+    @function_tool()
+    async def schedule_meeting(
+        self,
+        context: RunContext,
+        employee_id: int,
+        title: str,
+        event_date: str,
+        event_time: str,
+        duration: int = 30,
+    ):
+        # -------------------------
+        # Authentication Check
+        # -------------------------
+        if not self.auth.authenticated:
+            return {
+                "success": False,
+                "message": "Please verify your identity first by providing your employee ID."
+            }
+
+        """
+        Schedule a meeting.
+
+        Collect:
+
+        - Employee ID
+        - Meeting title
+        - Date
+        - Time
+        - Duration
+
+        Always confirm before scheduling.
+
+        Examples:
+        - Schedule a meeting tomorrow.
+        - Book a meeting with HR.
+        - Create an interview meeting.
+
+        Requires authentication.
+        """
+        return self.calendar_service.schedule_meeting(
+            employee_id,
+            title,
+            event_date,
+            event_time,
+            duration,
+        )
+
+    @function_tool()
+    async def cancel_meeting(
+        self,
+        context: RunContext,
+        event_id: int,
+    ):
+        # -------------------------
+        # Authentication Check
+        # -------------------------
+        if not self.auth.authenticated:
+            return {
+                "success": False,
+                "message": "Please verify your identity first by providing your employee ID."
+            }
+
+        """
+        Cancel an existing meeting.
+
+        Requires the meeting ID.
+
+        Examples:
+        - Cancel meeting 35.
+        - Delete tomorrow's meeting.
+
+        Requires authentication.
+        """
+        return self.calendar_service.cancel_meeting(event_id)
+
+    @function_tool()
+    async def upcoming_meetings(
+        self,
+        context: RunContext,
+        employee_id: int,
+    ):
+        """
+        Retrieve all upcoming meetings for an employee.
+
+        Examples:
+        - My meetings.
+        - What's on my calendar?
+        - Upcoming meetings.
+        """
+        return self.calendar_service.upcoming_meetings(employee_id)
+
+    @function_tool()
+    async def available_slots(
+        self,
+        context: RunContext,
+        employee_id: int,
+        event_date: str,
+    ):
+        """
+        Retrieve available meeting time slots for a specific day.
+
+        Requires:
+
+        - Employee ID
+        - Date
+
+        Examples:
+        - Free slots tomorrow.
+        - When am I available on Monday?
+        - Available meeting times.
+        """
+        return self.calendar_service.available_slots(
+            employee_id,
+            event_date,
+        )
+
+    ####################################################################
+    # SECURITY
+    ####################################################################
+    
+    @function_tool()
+    async def verify_employee(
+        self,
+        context: RunContext,
+        employee_id: int,
+    ):
+        """
+        Begin employee identity verification.
+
+        Use before any operation that modifies company data.
+
+        Examples:
+        - Apply leave.
+        - Raise grievance.
+        - Cancel leave.
+        - Schedule meeting.
+        - Update employee information.
+
+        The employee provides an employee ID.
+
+        This tool generates an OTP for verification.
+        """
+
+        result = self.auth_service.begin_verification(employee_id)
+
+        if not result["success"]:
+
+            return result
+
+        self.auth.employee_id = employee_id
+
+        self.auth.employee_name = result["employee"]["name"]
+
+        self.auth.verification_pending = True
+
+        self.auth.otp_sent = True
+
+        return {
+
+            "success": True,
+
+            "message":
+            f"For demo purposes, your OTP is {result['otp']}. Please provide this OTP to continue."
+
+        }
+
+    @function_tool()
+    async def verify_otp(
+        self,
+        context: RunContext,
+        otp: str,
+    ):
+        """
+        Verify the OTP previously sent to the employee.
+
+        Use immediately after verify_employee.
+
+        Examples:
+        - My OTP is 453281.
+        - Verify 884522.
+        - The code is 111222.
+
+        After successful verification, the employee is authenticated.
+        """
+
+        if self.auth.employee_id is None:
+
+            return {
+
+                "success": False,
+
+                "message": "No employee verification is in progress."
+
+            }
+
+        ok = self.auth_service.verify_otp(
+
+            self.auth.employee_id,
+
+            otp,
+
+        )
+
+        if not ok["success"]:
+
+            return {
+
+                "success": False,
+
+                "message": "Invalid OTP."
+
+            }
+
+        self.auth.login(
+
+            self.auth.employee_id,
+
+            self.auth.employee_name,
+
+        )
+
+        return {
+
+            "success": True,
+
+            "message":
+            f"Welcome {self.auth.employee_name}. Your identity has been verified."
+
+        }

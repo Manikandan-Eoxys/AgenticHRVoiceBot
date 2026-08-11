@@ -1,0 +1,75 @@
+.header {
+  height: 64px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-base);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.header .logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 27.5px;
+}
+.header-left h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 23px;
+  letter-spacing: -0.01em;
+}
+.header-left p {
+  font-size: 18px;
+  color: var(--text-faint);
+  margin-top: 1px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.conn-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border);
+  padding: 7px 12px;
+  border-radius: 20px;
+  margin-right: 4px;
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
+.dot--on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
+.header .badge {
+  font-size: 16.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  padding: 6px 10px;
+  border-radius: 20px;
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.header-right .badge:nth-of-type(1) { color: var(--accent); border-color: rgba(52,216,176,0.3); background: var(--accent-soft); }
+.header-right .badge:nth-of-type(2) { color: var(--accent-2); border-color: rgba(255,180,84,0.3); background: var(--accent-2-soft); }
+.header-right .badge:nth-of-type(3) { color: #6FB7FF; border-color: rgba(111,183,255,0.3); background: rgba(111,183,255,0.12); }
+.header-right .badge:nth-of-type(4) { color: #F17FB8; border-color: rgba(241,127,184,0.3); background: rgba(241,127,184,0.12); }

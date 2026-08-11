@@ -1,0 +1,26 @@
+livekit-agents
+livekit-plugins-openai
+livekit-plugins-deepgram
+livekit-plugins-elevenlabs
+
+openai
+
+python-dotenv
+
+sqlite-utils
+
+aiohttp
+
+requests
+
+pydantic
+
+python-dateutil
+
+loguru
+
+# Background sync scheduler (IFS Cloud + SQL Server periodic sync)
+apscheduler>=3.10.0
+
+# Microsoft SQL Server integration (optional — required for live SQL Server sync)
+# pyodbc
