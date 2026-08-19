@@ -36,8 +36,14 @@ class Config:
 
     OLLAMA_MODEL = os.getenv(
         "OLLAMA_MODEL",
-        "qwen3:8b"
+        "qwen2.5:3b"
     )
+
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", None)
+    OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    GROQ_API_KEY   = os.getenv("GROQ_API_KEY", None)
+    GROQ_MODEL     = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
     DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 
@@ -103,6 +109,15 @@ class Config:
 
     TEAMS_WEBHOOK_URL = os.getenv("TEAMS_WEBHOOK_URL", None)
 
+    # ------------------------------------------------------------------
+    # Plivo / SIP Trunk
+    # Must match the credentials you entered when creating the
+    # LiveKit Cloud SIP URI (Authentication needed toggle).
+    # ------------------------------------------------------------------
+    SIP_TRUNK_USERNAME = os.getenv("SIP_TRUNK_USERNAME", "AgenticHRVoicebot")
+    SIP_TRUNK_PASSWORD = os.getenv("SIP_TRUNK_PASSWORD", "Agent@110")
+    SIP_ROOM_PREFIX    = os.getenv("SIP_ROOM_PREFIX",    "plivo-hr-call")
+
 
 # ---------------------------------------------------------
 # Module-level aliases (imported directly by main.py etc.)
@@ -119,6 +134,12 @@ LIVEKIT_API_SECRET = Config.LIVEKIT_API_SECRET
 OLLAMA_BASE_URL = Config.OLLAMA_BASE_URL
 OLLAMA_MODEL    = Config.OLLAMA_MODEL
 
+OPENAI_API_KEY = Config.OPENAI_API_KEY
+OPENAI_MODEL   = Config.OPENAI_MODEL
+
+GROQ_API_KEY = Config.GROQ_API_KEY
+GROQ_MODEL   = Config.GROQ_MODEL
+
 DEEPGRAM_API_KEY = Config.DEEPGRAM_API_KEY
 
 ELEVENLABS_API_KEY  = Config.ELEVENLABS_API_KEY
@@ -126,3 +147,8 @@ ELEVENLABS_VOICE_ID = Config.ELEVENLABS_VOICE_ID
 
 DATABASE_PATH = Config.DATABASE_PATH
 LOG_LEVEL     = Config.LOG_LEVEL
+
+# SIP / Plivo
+SIP_TRUNK_USERNAME = Config.SIP_TRUNK_USERNAME
+SIP_TRUNK_PASSWORD = Config.SIP_TRUNK_PASSWORD
+SIP_ROOM_PREFIX    = Config.SIP_ROOM_PREFIX

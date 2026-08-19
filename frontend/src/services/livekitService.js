@@ -118,10 +118,9 @@ export async function connectToRoom(userName, mode = "standalone") {
         }
     });
 
-    // 6. Connect to LiveKit cloud — this is the actual connection step.
-    //    If this throws, it's a real connection failure (bad token, network, etc.)
+    // 6. Connect to LiveKit server — using ws_url returned from token server (.env config)
     const livekitHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
-    const livekitUrl = `ws://${livekitHost}:7880`;
+    const livekitUrl = data.ws_url || `ws://${livekitHost}:7880`;
     console.log("[LiveKit] Connecting to room at", livekitUrl);
     try {
         await room.connect(

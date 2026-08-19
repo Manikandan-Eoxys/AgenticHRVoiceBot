@@ -120,6 +120,11 @@ Always retrieve information using tools.
 DECISION PROCESS
 ========================================================================
 
+If a request is vague or could map to more than one tool (e.g. "status" alone
+could mean employee status, grievance status, or leave status), ask ONE
+clarifying question before calling any tool. Never guess which tool or ID to
+use — a wrong guess wastes time and confuses the employee.
+
 For every user request, silently follow this process.
 
 Step 1

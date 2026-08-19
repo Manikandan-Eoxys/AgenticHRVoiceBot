@@ -372,8 +372,9 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     JobProcess,
-    inference,
 )
+from livekit.plugins.deepgram import STT, TTS as DeepgramTTS
+from ollama_llm import OllamaLLM
 
 from config import (
     OLLAMA_BASE_URL,
@@ -421,9 +422,9 @@ class VoiceController:
         self.system_prompt = system_prompt
 
         # Engines (populated by INITIALIZING)
-        self.llm: Optional[Any] = None
-        self.stt: Optional[Any] = None
-        self.tts: Optional[Any] = None
+        self.llm: Optional[OllamaLLM] = None
+        self.stt: Optional[STT] = None
+        self.tts: Optional[DeepgramTTS] = None
 
         # FSM core — mirrors SafetyIslandEngine
         self.current_state: ControllerState = ControllerState.UNINITIALIZED
@@ -562,6 +563,8 @@ class VoiceController:
             start_scheduler()
             atexit.register(stop_scheduler)
             print("⏳ Background sync scheduler started.")
+
+            self._prime_ollama_model()
         except Exception as exc:
             print(f"❌ Prewarm failed: {exc}")
             self._error_message = str(exc)
@@ -599,18 +602,24 @@ class VoiceController:
     # send_illuminator() being called from SIState.EXECUTE)
     # -----------------------
     def _build_engines(self) -> None:
-        self.llm = inference.LLM(model="openai/gpt-4o-mini")
-        logger.info("[FSM] LLM (LiveKit Inference) constructed.")
-
-        self.stt = inference.STT(model="deepgram/nova-3")
-        logger.info("[FSM] STT (LiveKit Inference) constructed.")
-
-        self.tts = inference.TTS(
-            model="deepgram/aura-2",
-            voice="andromeda",
-            language="en",
+        self.llm = OllamaLLM(
+            model=self.ollama_model,
+            base_url=self.ollama_base_url,
+            think=False,
+            timeout=60.0,
         )
-        logger.info("[FSM] TTS (LiveKit Inference) constructed.")
+        logger.info("[FSM] LLM (OllamaLLM) constructed.")
+
+        self.stt = STT(
+            api_key=self.deepgram_api_key,
+            model="nova-3",
+        )
+        logger.info("[FSM] STT (Deepgram Nova-3) constructed.")
+
+        self.tts = DeepgramTTS(
+            api_key=self.deepgram_api_key,
+        )
+        logger.info("[FSM] TTS (DeepgramTTS) constructed.")
 
     def _prime_ollama_model(self) -> None:
         """Synchronous warm-up request so the first real turn isn't slow."""

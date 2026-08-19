@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import (
     LIVEKIT_API_KEY,
     LIVEKIT_API_SECRET,
+    LIVEKIT_URL,
 )
 
 app = FastAPI()
@@ -77,6 +78,7 @@ async def get_token(name: str):
     return {
         "token": token,
         "room": room_name,
+        "ws_url": LIVEKIT_URL,
     }
 
 
@@ -115,4 +117,5 @@ async def get_sip_token(name: str):
     return {
         "token": token,
         "room": room_name,
+        "ws_url": LIVEKIT_URL,
     }
