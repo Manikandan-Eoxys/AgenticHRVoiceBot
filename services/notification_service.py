@@ -12,9 +12,9 @@ Wire to real SMTP / MS Teams webhook / SMS by setting environment variables.
 """
 
 import logging
-import sqlite3
 from datetime import datetime
 from config import Config
+from database.db import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -22,25 +22,95 @@ logger = logging.getLogger(__name__)
 class NotificationService:
 
     def __init__(self):
-        self.db        = Config.DATABASE_PATH
         self.smtp_host = getattr(Config, "SMTP_HOST",          None)
         self.smtp_port = getattr(Config, "SMTP_PORT",          587)
         self.smtp_user = getattr(Config, "SMTP_USER",          None)
         self.smtp_pass = getattr(Config, "SMTP_PASS",          None)
+        self.hr_email  = getattr(Config, "HR_EMAIL",           None)
         self.teams_url = getattr(Config, "TEAMS_WEBHOOK_URL",  None)
 
     def _connect(self):
-        conn = sqlite3.connect(self.db)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return get_db_connection()
 
     def _get_employee(self, employee_id: int) -> dict:
-        conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM employees WHERE employee_id=?", (employee_id,))
+        conn   = self._connect()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT employee_id, full_name AS name, email FROM employees WHERE employee_id = %s",
+            (str(employee_id),)
+        )
         row = cursor.fetchone()
+        cursor.close()
         conn.close()
-        return dict(row) if row else {}
+        return row if row else {}
+
+    # ----------------------------------------------------------
+    # 0. Notify HR — Every Leave Request Submitted by Employee
+    # ----------------------------------------------------------
+    def notify_hr_leave_request(
+        self,
+        employee_id:  int,
+        employee_name: str,
+        leave_type:   str,
+        from_date:    str,
+        to_date:      str,
+        days:         int,
+        request_id:   int,
+        reason:       str = "",
+    ) -> dict:
+        """
+        Sends a leave request notification to the HR inbox.
+        Triggered immediately after the employee verbally confirms their leave request.
+        """
+        hr_email = self.hr_email
+        if not hr_email:
+            logger.warning("[NotificationService] HR_EMAIL not configured — leave notification skipped.")
+            return {"success": False, "message": "HR_EMAIL not configured."}
+
+        subject = (
+            f"[Leave Request] {employee_name} (ID: {employee_id}) — "
+            f"{leave_type} | {from_date} to {to_date}"
+        )
+        body = (
+            f"Dear HR Team,\n\n"
+            f"A new leave request has been submitted via the HR Voice Bot.\n\n"
+            f"  Employee   : {employee_name} (ID: {employee_id})\n"
+            f"  Leave Type : {leave_type}\n"
+            f"  From       : {from_date}\n"
+            f"  To         : {to_date}\n"
+            f"  Days       : {days}\n"
+            f"  Request ID : {request_id}\n"
+            + (f"  Reason     : {reason}\n" if reason else "")
+            + f"\nPlease review and approve or reject this request at your earliest convenience.\n\n"
+            f"-- HR Voice Bot"
+        )
+
+        sent = self._send_notification(
+            to_email = hr_email,
+            to_name  = "HR Team",
+            subject  = subject,
+            body     = body,
+            channel  = "email",
+        )
+
+        logger.info(
+            "[NotificationService] HR leave request email sent: employee=%s request_id=%s sent=%s",
+            employee_name, request_id, sent,
+        )
+
+        return {
+            "success":      sent,
+            "notification_type": "hr_leave_request",
+            "employee_id":  employee_id,
+            "request_id":   request_id,
+            "hr_email":     hr_email,
+            "channel":      "email",
+            "message": (
+                f"Leave request email sent to HR ({hr_email})."
+                if sent else
+                "Leave request logged (email not sent — check SMTP config)."
+            ),
+        }
 
     # ----------------------------------------------------------
     # 1. Notify Area Manager — Exception Requires Approval
@@ -231,18 +301,21 @@ class NotificationService:
         return True  # Simulate success in demo mode
 
     def _send_email(self, to_email: str, subject: str, body: str) -> bool:
-        """Real SMTP email sender. Uses smtplib (sync). Wire aiosmtplib for async FastAPI."""
+        """Real Gmail / SMTP TLS email sender."""
         try:
             import smtplib
             from email.mime.text import MIMEText
-            msg          = MIMEText(body)
-            msg["Subject"] = subject
-            msg["From"]    = self.smtp_user
-            msg["To"]      = to_email
-            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+            msg              = MIMEText(body, "plain", "utf-8")
+            msg["Subject"]   = subject
+            msg["From"]      = self.smtp_user
+            msg["To"]        = to_email
+            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=15) as server:
+                server.ehlo()
                 server.starttls()
+                server.ehlo()
                 server.login(self.smtp_user, self.smtp_pass)
                 server.sendmail(self.smtp_user, [to_email], msg.as_string())
+            logger.info("[NotificationService] Email sent to %s", to_email)
             return True
         except Exception as exc:
             logger.error("[NotificationService] Email send failed: %s", exc)

@@ -21,10 +21,11 @@ class Config:
     # ------------------------------------------------------------------
     # Database
     # ------------------------------------------------------------------
-    DATABASE_PATH = os.getenv(
-        "DATABASE_PATH",
-        "database/hr.db"
-    )
+    MYSQL_HOST     = os.getenv("MYSQL_HOST", "localhost")
+    MYSQL_USER     = os.getenv("MYSQL_USER", "hrbot")
+    MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "Eoxys@110")
+    MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "hr_voicebot")
+    DATABASE_PATH  = os.getenv("DATABASE_PATH", "database/hr.db")
 
     # ------------------------------------------------------------------
     # LLM / Voice
@@ -107,6 +108,9 @@ class Config:
     SMTP_USER = os.getenv("SMTP_USER", None)
     SMTP_PASS = os.getenv("SMTP_PASS", None)
 
+    # HR inbox — receives every leave request submitted via the voice bot
+    HR_EMAIL  = os.getenv("HR_EMAIL", None)
+
     TEAMS_WEBHOOK_URL = os.getenv("TEAMS_WEBHOOK_URL", None)
 
     # ------------------------------------------------------------------
@@ -145,8 +149,12 @@ DEEPGRAM_API_KEY = Config.DEEPGRAM_API_KEY
 ELEVENLABS_API_KEY  = Config.ELEVENLABS_API_KEY
 ELEVENLABS_VOICE_ID = Config.ELEVENLABS_VOICE_ID
 
-DATABASE_PATH = Config.DATABASE_PATH
-LOG_LEVEL     = Config.LOG_LEVEL
+MYSQL_HOST     = Config.MYSQL_HOST
+MYSQL_USER     = Config.MYSQL_USER
+MYSQL_PASSWORD = Config.MYSQL_PASSWORD
+MYSQL_DATABASE = Config.MYSQL_DATABASE
+DATABASE_PATH  = Config.DATABASE_PATH
+LOG_LEVEL      = Config.LOG_LEVEL
 
 # SIP / Plivo
 SIP_TRUNK_USERNAME = Config.SIP_TRUNK_USERNAME

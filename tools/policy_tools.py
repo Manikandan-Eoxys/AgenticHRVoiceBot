@@ -1,55 +1,55 @@
 """
 policy_tools.py
 
-Policy Tool
+Policy Tool using MySQL.
 
-Reads HR policies from SQLite database `policies` table with fallback to JSON.
-
-Used by LiveKit Agent / GPT for answering policy-related questions.
+Reads HR policies from `leave_policy` table with fallback to JSON.
 """
 
 import json
 import os
-import sqlite3
-from config import Config
+from database.db import get_db_connection
 
 
 class PolicyTools:
 
     def __init__(self):
-        self.db = Config.DATABASE_PATH
         self.policy_file = os.path.join("data", "leave_policy.json")
 
     def _connect(self):
-        return sqlite3.connect(self.db)
+        return get_db_connection()
 
     # ----------------------------------------
     # Get Policy by Name or Key
     # ----------------------------------------
     def get_policy(self, policy_name):
         conn = self._connect()
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
 
-        # Try searching by exact name or case-insensitive match
+        pattern = f"%{policy_name.lower()}%"
         cursor.execute("""
-            SELECT policy_id, policy_name, category, description
-            FROM policies
-            WHERE LOWER(policy_name) = LOWER(?)
-               OR LOWER(policy_name) LIKE LOWER(?)
-        """, (policy_name, f"%{policy_name}%"))
+            SELECT leave_code, leave_name, annual_range, short_note, description, applies_to
+            FROM leave_policy
+            WHERE LOWER(leave_name) LIKE %s
+               OR LOWER(leave_code) LIKE %s
+               OR LOWER(description) LIKE %s
+        """, (pattern, pattern, pattern))
 
         row = cursor.fetchone()
+        cursor.close()
         conn.close()
 
         if row:
             return {
                 "success": True,
                 "policy": {
-                    "policy_id": row[0],
-                    "policy_name": row[1],
-                    "title": row[1],
-                    "category": row[2],
-                    "description": row[3]
+                    "policy_id": row["leave_code"],
+                    "policy_name": row["leave_name"],
+                    "title": row["leave_name"],
+                    "category": row["applies_to"],
+                    "description": row["description"],
+                    "annual_range": row["annual_range"],
+                    "short_note": row["short_note"]
                 }
             }
 
@@ -78,27 +78,28 @@ class PolicyTools:
     # ----------------------------------------
     def list_policies(self):
         conn = self._connect()
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
 
         cursor.execute("""
-            SELECT policy_id, policy_name, category
-            FROM policies
-            ORDER BY policy_id
+            SELECT leave_code, leave_name, applies_to, description
+            FROM leave_policy
+            ORDER BY leave_code
         """)
         rows = cursor.fetchall()
+        cursor.close()
         conn.close()
 
         result = []
         if rows:
             for row in rows:
                 result.append({
-                    "policy_id": row[0],
-                    "key": row[1].lower().replace(" ", "_"),
-                    "title": row[1],
-                    "category": row[2]
+                    "policy_id": row["leave_code"],
+                    "key": row["leave_code"].lower(),
+                    "title": row["leave_name"],
+                    "category": row["applies_to"],
+                    "description": row["description"]
                 })
         else:
-            # Fallback to JSON
             policies_json = self._load_json()
             for key, value in policies_json.items():
                 result.append({
@@ -117,33 +118,33 @@ class PolicyTools:
     # ----------------------------------------
     def search_policy(self, keyword):
         conn = self._connect()
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
 
         pattern = f"%{keyword.lower()}%"
         cursor.execute("""
-            SELECT policy_id, policy_name, category, description
-            FROM policies
-            WHERE LOWER(policy_name) LIKE ?
-               OR LOWER(category) LIKE ?
-               OR LOWER(description) LIKE ?
-            ORDER BY policy_id
+            SELECT leave_code, leave_name, applies_to, description
+            FROM leave_policy
+            WHERE LOWER(leave_name) LIKE %s
+               OR LOWER(leave_code) LIKE %s
+               OR LOWER(description) LIKE %s
+            ORDER BY leave_code
         """, (pattern, pattern, pattern))
 
         rows = cursor.fetchall()
+        cursor.close()
         conn.close()
 
         matches = []
         if rows:
             for row in rows:
                 matches.append({
-                    "policy_id": row[0],
-                    "key": row[1].lower().replace(" ", "_"),
-                    "title": row[1],
-                    "category": row[2],
-                    "description": row[3]
+                    "policy_id": row["leave_code"],
+                    "key": row["leave_code"].lower(),
+                    "title": row["leave_name"],
+                    "category": row["applies_to"],
+                    "description": row["description"]
                 })
 
-        # Also search JSON fallback
         if not matches:
             policies_json = self._load_json()
             kw = keyword.lower()

@@ -9,20 +9,15 @@ Handles:
   4. Generating coverage summaries across all teams
 """
 
-import sqlite3
 from datetime import datetime, timedelta
 from config import Config
+from database.db import get_db_connection
 
 
 class WorkforcePlanningService:
 
-    def __init__(self):
-        self.db = Config.DATABASE_PATH
-
     def _connect(self):
-        conn = sqlite3.connect(self.db)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return get_db_connection()
 
     # ----------------------------------------------------------
     # 1. Auto-Reallocate Roster after an Absence is Approved

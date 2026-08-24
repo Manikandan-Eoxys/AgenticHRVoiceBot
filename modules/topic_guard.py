@@ -351,23 +351,19 @@ def classify(text: str) -> dict:
     # context-aware check in agent.py's on_user_turn_completed — that one
     # catches most cases by checking if the assistant just asked a
     # question; this catches the rest by simple length.
-    if len(text_stripped.split()) <= 5:
-        return _allow("Short utterance treated as conversational.")
-
-    # Fast reject: known off-topic patterns
+    # 1. Fast reject: check explicit off-topic patterns FIRST (weather, jokes, sports, etc.)
     for pattern in _OFF_TOPIC_COMPILED:
         if pattern.search(text_stripped):
-            # HR keyword can override (e.g. "holiday policy" has "holiday")
             if _is_hr(text_stripped):
                 return _allow("HR keyword overrides off-topic signal.")
             return _reject(f"Off-topic pattern matched: {pattern.pattern}")
 
-    # HR keyword present -> allow
-    if _is_hr(text_stripped):
-        return _allow("HR keyword matched.")
+    # 2. Allow short/conversational utterances (up to 10 words) or HR-related messages
+    if len(text_stripped.split()) <= 10 or _is_hr(text_stripped):
+        return _allow("Conversational or HR utterance allowed.")
 
-    # No clear HR signal -> reject conservatively
-    return _reject("No HR-related keyword detected.")
+    # 3. Default allow general conversational messages
+    return _allow("Conversational response allowed.")
 
 
 # ---------------------------------------------------------------------------

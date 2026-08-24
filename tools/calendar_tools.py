@@ -1,7 +1,7 @@
 """
 calendar_tools.py
 
-Calendar Tool Functions
+Calendar Tool Functions using MySQL.
 
 Used for:
 1. Schedule Meeting
@@ -10,17 +10,13 @@ Used for:
 4. Update Meeting
 """
 
-import sqlite3
-from config import Config
+from database.db import get_db_connection
 
 
 class CalendarTools:
 
-    def __init__(self):
-        self.db = Config.DATABASE_PATH
-
     def _connect(self):
-        return sqlite3.connect(self.db)
+        return get_db_connection()
 
     # ----------------------------------------------------
     # Schedule Meeting
@@ -35,306 +31,143 @@ class CalendarTools:
         location="Meeting Room",
         attendees=""
     ):
-
         conn = self._connect()
         cursor = conn.cursor()
 
         cursor.execute("""
-        INSERT INTO calendar_events(
-
-            employee_id,
-
-            title,
-
-            event_date,
-
-            event_time,
-
-            duration,
-
-            location,
-
-            attendees,
-
-            status
-
-        )
-
-        VALUES(
-
-            ?,?,?,?,?,?,?,?
-
-        )
-        """,
-
-        (
-
-            employee_id,
-
-            title,
-
-            event_date,
-
-            event_time,
-
-            duration,
-
-            location,
-
-            attendees,
-
-            "Scheduled"
-
-        ))
+            INSERT INTO calendar_events
+            (employee_id, title, event_date, event_time, duration, location, attendees, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'Scheduled')
+        """, (str(employee_id), title, event_date, event_time, duration, location, attendees))
 
         event_id = cursor.lastrowid
-
         conn.commit()
-
+        cursor.close()
         conn.close()
 
         return {
-
             "success": True,
-
             "event_id": event_id,
-
             "message": "Meeting Scheduled."
-
         }
 
     # ----------------------------------------------------
     # List Meetings
     # ----------------------------------------------------
     def list_meetings(self, employee_id):
-
         conn = self._connect()
-
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
 
         cursor.execute("""
-
-        SELECT
-
-            event_id,
-
-            title,
-
-            event_date,
-
-            event_time,
-
-            duration,
-
-            location,
-
-            status
-
-        FROM calendar_events
-
-        WHERE employee_id=?
-
-        ORDER BY event_date,event_time
-
-        """,
-
-        (employee_id,))
+            SELECT event_id, title, event_date, event_time, duration, location, status
+            FROM calendar_events
+            WHERE employee_id = %s
+            ORDER BY event_date, event_time
+        """, (str(employee_id),))
 
         rows = cursor.fetchall()
-
+        cursor.close()
         conn.close()
 
         meetings = []
-
-        for row in rows:
-
+        for r in rows:
             meetings.append({
-
-                "event_id": row[0],
-
-                "title": row[1],
-
-                "date": row[2],
-
-                "time": row[3],
-
-                "duration": row[4],
-
-                "location": row[5],
-
-                "status": row[6]
-
+                "event_id": r["event_id"],
+                "title": r["title"],
+                "date": str(r["event_date"]),
+                "time": r["event_time"],
+                "duration": r["duration"],
+                "location": r["location"],
+                "status": r["status"]
             })
 
         return {
-
             "success": True,
-
             "meetings": meetings
-
         }
 
     # ----------------------------------------------------
     # Cancel Meeting
     # ----------------------------------------------------
     def cancel_meeting(self, event_id):
-
         conn = self._connect()
-
         cursor = conn.cursor()
 
         cursor.execute("""
-
-        UPDATE calendar_events
-
-        SET status='Cancelled'
-
-        WHERE event_id=?
-
-        """,
-
-        (event_id,))
+            UPDATE calendar_events
+            SET status = 'Cancelled'
+            WHERE event_id = %s
+        """, (event_id,))
 
         conn.commit()
-
+        cursor.close()
         conn.close()
 
         return {
-
             "success": True,
-
             "message": "Meeting Cancelled."
-
         }
 
     # ----------------------------------------------------
     # Update Meeting
     # ----------------------------------------------------
     def update_meeting(
-
         self,
-
         event_id,
-
         event_date,
-
         event_time
-
     ):
-
         conn = self._connect()
-
         cursor = conn.cursor()
 
         cursor.execute("""
-
-        UPDATE calendar_events
-
-        SET
-
-            event_date=?,
-
-            event_time=?
-
-        WHERE event_id=?
-
-        """,
-
-        (
-
-            event_date,
-
-            event_time,
-
-            event_id
-
-        ))
+            UPDATE calendar_events
+            SET event_date = %s, event_time = %s
+            WHERE event_id = %s
+        """, (event_date, event_time, event_id))
 
         conn.commit()
-
+        cursor.close()
         conn.close()
 
         return {
-
             "success": True,
-
             "message": "Meeting Updated."
-
         }
 
     # ----------------------------------------------------
     # Get Meeting
     # ----------------------------------------------------
     def get_meeting(self, event_id):
-
         conn = self._connect()
-
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
 
         cursor.execute("""
-
-        SELECT
-
-            event_id,
-
-            title,
-
-            event_date,
-
-            event_time,
-
-            duration,
-
-            location,
-
-            attendees,
-
-            status
-
-        FROM calendar_events
-
-        WHERE event_id=?
-
-        """,
-
-        (event_id,))
+            SELECT event_id, title, event_date, event_time, duration, location, attendees, status
+            FROM calendar_events
+            WHERE event_id = %s
+        """, (event_id,))
 
         row = cursor.fetchone()
-
+        cursor.close()
         conn.close()
 
         if row is None:
-
             return {
-
                 "success": False,
-
                 "message": "Meeting not found."
-
             }
 
         return {
-
             "success": True,
-
             "meeting": {
-
-                "event_id": row[0],
-
-                "title": row[1],
-
-                "date": row[2],
-
-                "time": row[3],
-
-                "duration": row[4],
-
-                "location": row[5],
-
-                "attendees": row[6],
-
-                "status": row[7]
-
+                "event_id": row["event_id"],
+                "title": row["title"],
+                "date": str(row["event_date"]),
+                "time": row["event_time"],
+                "duration": row["duration"],
+                "location": row["location"],
+                "attendees": row["attendees"],
+                "status": row["status"]
             }
-
         }

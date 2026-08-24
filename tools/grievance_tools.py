@@ -1,7 +1,7 @@
 """
 grievance_tools.py
 
-Grievance Management Tool
+Grievance Management Tool using MySQL.
 
 Functions:
 1. Create Grievance
@@ -10,23 +10,16 @@ Functions:
 4. Update Status
 5. Add Comment
 6. Close Grievance
-
-Used by OpenAI Function Calling / LiveKit Agent
 """
 
-import sqlite3
 from datetime import datetime
-
-from config import Config
+from database.db import get_db_connection
 
 
 class GrievanceTools:
 
-    def __init__(self):
-        self.db = Config.DATABASE_PATH
-
     def _connect(self):
-        return sqlite3.connect(self.db)
+        return get_db_connection()
 
     # ----------------------------------------------------
     # Create New Grievance
@@ -37,39 +30,20 @@ class GrievanceTools:
         title,
         description
     ):
-
         conn = self._connect()
         cursor = conn.cursor()
 
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        cursor.execute(
-            """
+        cursor.execute("""
             INSERT INTO grievances
-            (
-                employee_id,
-                title,
-                description,
-                status,
-                created_at
-            )
-            VALUES
-            (
-                ?, ?, ?, ?, ?
-            )
-            """,
-            (
-                employee_id,
-                title,
-                description,
-                "Open",
-                created_at
-            )
-        )
+            (employee_id, title, description, status, created_at)
+            VALUES (%s, %s, %s, 'Open', %s)
+        """, (str(employee_id), title, description, created_at))
 
         grievance_id = cursor.lastrowid
-
         conn.commit()
+        cursor.close()
         conn.close()
 
         return {
@@ -83,114 +57,67 @@ class GrievanceTools:
     # Get Single Grievance
     # ----------------------------------------------------
     def get_grievance(self, grievance_id):
-
         conn = self._connect()
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
 
-        cursor.execute(
-            """
-            SELECT
-                grievance_id,
-                employee_id,
-                title,
-                description,
-                status,
-                created_at
+        cursor.execute("""
+            SELECT grievance_id, employee_id, title, description, status, created_at
             FROM grievances
-            WHERE grievance_id=?
-            """,
-            (grievance_id,)
-        )
+            WHERE grievance_id = %s
+        """, (grievance_id,))
 
         row = cursor.fetchone()
-
+        cursor.close()
         conn.close()
 
         if row is None:
-
             return {
                 "success": False,
                 "message": "Grievance not found."
             }
 
         return {
-
             "success": True,
-
             "grievance": {
-
-                "grievance_id": row[0],
-
-                "employee_id": row[1],
-
-                "title": row[2],
-
-                "description": row[3],
-
-                "status": row[4],
-
-                "created_at": row[5]
-
+                "grievance_id": row["grievance_id"],
+                "employee_id": row["employee_id"],
+                "title": row["title"],
+                "description": row["description"],
+                "status": row["status"],
+                "created_at": str(row["created_at"])
             }
-
         }
 
     # ----------------------------------------------------
     # List Employee Grievances
     # ----------------------------------------------------
     def list_grievances(self, employee_id):
-
         conn = self._connect()
+        cursor = conn.cursor(dictionary=True)
 
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT
-
-                grievance_id,
-
-                title,
-
-                status,
-
-                created_at
-
+        cursor.execute("""
+            SELECT grievance_id, title, status, created_at
             FROM grievances
-
-            WHERE employee_id=?
-
+            WHERE employee_id = %s
             ORDER BY grievance_id DESC
-            """,
-            (employee_id,)
-        )
+        """, (str(employee_id),))
 
         rows = cursor.fetchall()
-
+        cursor.close()
         conn.close()
 
         grievances = []
-
-        for row in rows:
-
+        for r in rows:
             grievances.append({
-
-                "grievance_id": row[0],
-
-                "title": row[1],
-
-                "status": row[2],
-
-                "created_at": row[3]
-
+                "grievance_id": r["grievance_id"],
+                "title": r["title"],
+                "status": r["status"],
+                "created_at": str(r["created_at"])
             })
 
         return {
-
             "success": True,
-
             "grievances": grievances
-
         }
 
     # ----------------------------------------------------
@@ -201,44 +128,29 @@ class GrievanceTools:
         grievance_id,
         status
     ):
-
         conn = self._connect()
-
         cursor = conn.cursor()
 
-        cursor.execute(
-            """
+        cursor.execute("""
             UPDATE grievances
-            SET status=?
-            WHERE grievance_id=?
-            """,
-            (
-                status,
-                grievance_id
-            )
-        )
+            SET status = %s
+            WHERE grievance_id = %s
+        """, (status, grievance_id))
 
         conn.commit()
-
+        cursor.close()
         conn.close()
 
         return {
-
             "success": True,
-
             "message": "Status Updated."
-
         }
 
     # ----------------------------------------------------
     # Close Grievance
     # ----------------------------------------------------
     def close_grievance(self, grievance_id):
-
-        return self.update_status(
-            grievance_id,
-            "Closed"
-        )
+        return self.update_status(grievance_id, "Closed")
 
     # ----------------------------------------------------
     # Add Comment
@@ -248,60 +160,38 @@ class GrievanceTools:
         grievance_id,
         comment
     ):
-
         conn = self._connect()
+        cursor = conn.cursor(dictionary=True)
 
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT description
             FROM grievances
-            WHERE grievance_id=?
-            """,
-            (grievance_id,)
-        )
+            WHERE grievance_id = %s
+        """, (grievance_id,))
 
         row = cursor.fetchone()
 
         if row is None:
-
+            cursor.close()
             conn.close()
-
             return {
-
                 "success": False,
-
                 "message": "Grievance not found."
-
             }
 
-        updated_description = (
-            row[0]
-            + "\n\nComment:\n"
-            + comment
-        )
+        updated_description = row["description"] + "\n\nComment:\n" + comment
 
-        cursor.execute(
-            """
+        cursor.execute("""
             UPDATE grievances
-            SET description=?
-            WHERE grievance_id=?
-            """,
-            (
-                updated_description,
-                grievance_id
-            )
-        )
+            SET description = %s
+            WHERE grievance_id = %s
+        """, (updated_description, grievance_id))
 
         conn.commit()
-
+        cursor.close()
         conn.close()
 
         return {
-
             "success": True,
-
             "message": "Comment added."
-
         }

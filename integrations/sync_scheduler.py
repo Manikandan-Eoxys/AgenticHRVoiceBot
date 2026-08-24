@@ -15,11 +15,11 @@ Usage:
 """
 
 import logging
-import sqlite3
 from datetime import datetime
 from config import Config
 from integrations.ifs_cloud_client import ifs_client
 from integrations.sql_server_client import sql_client
+from database.db import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +36,8 @@ def _sync_to_ifs():
     """
     Picks up leave_requests with ifs_sync_status='pending' and syncs them to IFS Cloud.
     """
-    db_path = Config.DATABASE_PATH
-    conn    = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor  = conn.cursor()
+    conn    = get_db_connection()
+    cursor  = conn.cursor(dictionary=True)
 
     cursor.execute("""
     SELECT lr.*, e.name AS employee_name
@@ -128,10 +126,8 @@ def _sync_to_sql():
     """
     Picks up leave_requests with sql_sync_status='pending' and syncs them to SQL Server.
     """
-    db_path = Config.DATABASE_PATH
-    conn    = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor  = conn.cursor()
+    conn    = get_db_connection()
+    cursor  = conn.cursor(dictionary=True)
 
     cursor.execute("""
     SELECT lr.*

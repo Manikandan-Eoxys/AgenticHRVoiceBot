@@ -7,7 +7,7 @@ openai
 
 python-dotenv
 
-sqlite-utils
+mysql-connector-python
 
 aiohttp
 

@@ -11,38 +11,29 @@ Handles:
   4. Notification triggers after decisions
 """
 
-import sqlite3
 from datetime import datetime, timedelta
 from config import Config
+from database.db import get_db_connection
 
 # Coverage threshold percentage string for messages
 _THRESHOLD_PCT = round(float(getattr(Config, "COVERAGE_THRESHOLD", 0.08)) * 100, 1)
 
-
-# --------------------------------------------------------
 # Exception type constants
-# --------------------------------------------------------
 EXC_MONDAY_FRIDAY       = "MondayAbsenceFridaySubmission"
 EXC_LAST_MINUTE         = "LastMinuteEmergency"
 EXC_FUNERAL             = "FuneralLeave"
 EXC_EMERGENCY           = "EmergencyLeave"
 EXC_COVERAGE_THRESHOLD  = "CoverageThresholdBreach"
-EXC_SAME_DAY_SICKNESS   = "SameDaySickness"      # NEW: sickness submitted on the day itself
-EXC_COMPASSIONATE       = "CompassionateLeave"   # NEW: compassionate/exceptional circumstances
+EXC_SAME_DAY_SICKNESS   = "SameDaySickness"
+EXC_COMPASSIONATE       = "CompassionateLeave"
 
-# Last-minute threshold: less than 2 hours notice
 LAST_MINUTE_HOURS = 2
 
 
 class ExceptionService:
 
-    def __init__(self):
-        self.db = Config.DATABASE_PATH
-
     def _connect(self):
-        conn = sqlite3.connect(self.db)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return get_db_connection()
 
     # ----------------------------------------------------------
     # 1. Detect Exception
@@ -307,30 +298,33 @@ class ExceptionService:
 
         # If rejected, restore leave balance
         if decision == "Rejected":
-            from_dt = datetime.strptime(exc["from_date"], "%Y-%m-%d")
-            to_dt   = datetime.strptime(exc["to_date"],   "%Y-%m-%d")
+            from_dt = datetime.strptime(str(exc["from_date"]), "%Y-%m-%d")
+            to_dt   = datetime.strptime(str(exc["to_date"]),   "%Y-%m-%d")
             days    = (to_dt - from_dt).days + 1
-            absence_type = exc["absence_type"]
-            col = "sick" if absence_type == "Sickness" else ("earned" if absence_type == "Earned" else "casual")
-            cursor.execute(
-                f"UPDATE leave_balance SET {col} = {col} + ? WHERE employee_id=?",
-                (days, exc["employee_id"]),
-            )
+            absence_type = exc.get("absence_type", "Casual")
+            code_map = {"sickness": "SL", "sick": "SL", "earned": "COMP_OFF"}
+            leave_code = code_map.get(str(absence_type).lower(), "CL")
+            cursor.execute("""
+                UPDATE leave_balances
+                SET used_days = GREATEST(0, used_days - %s)
+                WHERE employee_id = %s AND leave_code = %s
+            """, (days, str(exc["employee_id"]), leave_code))
 
         conn.commit()
+        cursor.close()
         conn.close()
 
         return {
             "success":         True,
             "exception_id":    exception_id,
-            "leave_request_id":exc["leave_request_id"],
+            "leave_request_id":exc.get("leave_request_id"),
             "employee_id":     exc["employee_id"],
-            "employee_name":   exc["employee_name"],
+            "employee_name":   exc.get("employee_name"),
             "decision":        decision,
             "notes":           notes,
             "decided_at":      decided_at,
             "message": (
-                f"Absence request for {exc['employee_name']} ({exc['from_date']} to {exc['to_date']}) "
+                f"Absence request for {exc.get('employee_name')} ({exc.get('from_date')} to {exc.get('to_date')}) "
                 f"has been {decision.lower()}."
             ),
         }
@@ -342,9 +336,10 @@ class ExceptionService:
         conn = self._connect()
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE exception_requests SET notified_employee=1 WHERE exception_id=?",
-            (exception_id,),
+            "UPDATE exception_requests SET notified_employee=1 WHERE exception_id=%s",
+            (str(exception_id),),
         )
         conn.commit()
+        cursor.close()
         conn.close()
         return {"success": True}

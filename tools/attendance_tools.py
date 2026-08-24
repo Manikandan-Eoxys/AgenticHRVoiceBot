@@ -14,9 +14,9 @@ Provides:
   7. get_exception_detail     — Retrieve detail on a specific exception request
 """
 
-import sqlite3
 from datetime import datetime
 from config import Config
+from database.db import get_db_connection
 from services.attendance_service import AttendanceService
 from services.exception_service import ExceptionService
 from services.workforce_planning_service import WorkforcePlanningService
@@ -28,7 +28,6 @@ from services.sql_server_service import SQLServerService
 class AttendanceTools:
 
     def __init__(self):
-        self.db                    = Config.DATABASE_PATH
         self.attendance_service    = AttendanceService()
         self.exception_service     = ExceptionService()
         self.workforce_service     = WorkforcePlanningService()
@@ -37,9 +36,7 @@ class AttendanceTools:
         self.sql_service           = SQLServerService()
 
     def _connect(self):
-        conn = sqlite3.connect(self.db)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return get_db_connection()
 
     # ──────────────────────────────────────────────────────────────────────────
     # 1. Submit Absence Request
@@ -83,7 +80,39 @@ class AttendanceTools:
         if not result.get("success"):
             return result
 
-        # Post-submission: trigger notifications if exception routed
+        # ── Always notify HR inbox for every submitted leave request ──────────
+        emp = self._connect()
+        try:
+            c = emp.cursor(dictionary=True)
+            c.execute(
+                "SELECT full_name FROM employees WHERE employee_id = %s",
+                (str(employee_id),)
+            )
+            emp_row = c.fetchone()
+            c.close()
+            emp.close()
+            employee_name = emp_row["full_name"] if emp_row else f"Employee {employee_id}"
+        except Exception:
+            employee_name = f"Employee {employee_id}"
+
+        try:
+            days_requested = result.get("days", 1)
+            self.notification_service.notify_hr_leave_request(
+                employee_id   = employee_id,
+                employee_name = employee_name,
+                leave_type    = absence_type,
+                from_date     = from_date,
+                to_date       = to_date,
+                days          = days_requested,
+                request_id    = result.get("request_id", 0),
+                reason        = reason,
+            )
+            result["hr_email_sent"] = True
+        except Exception as exc:
+            result["hr_email_sent"] = False
+            result["hr_email_error"] = str(exc)
+
+        # ── Notify Area Manager if this is an exception request ──────────────
         if result.get("exception_flag") and result.get("area_manager_id") and result.get("exception_id"):
             self.notification_service.notify_area_manager(
                 area_manager_id = result["area_manager_id"],
@@ -95,12 +124,13 @@ class AttendanceTools:
                 reason          = reason,
             )
 
-        # Trigger immediate IFS & SQL sync for non-exception approved requests
+        # ── IFS Cloud + SQL Server sync for non-exception approved requests ───
         if not result.get("exception_flag") and result.get("request_id"):
             self.ifs_service.sync_absence_to_ifs(result["request_id"])
             self.sql_service.sync_attendance_record(result["request_id"])
 
         return result
+
 
     # ──────────────────────────────────────────────────────────────────────────
     # 2. Check Team Coverage
@@ -175,12 +205,13 @@ class AttendanceTools:
         # Notify employee of the decision
         # Fetch leave request details for notification
         conn    = self._connect()
-        cursor  = conn.cursor()
+        cursor  = conn.cursor(dictionary=True)
         cursor.execute(
-            "SELECT from_date, to_date FROM leave_requests WHERE request_id=?",
+            "SELECT start_date AS from_date, end_date AS to_date FROM leave_requests WHERE request_id=%s",
             (result.get("leave_request_id"),),
         )
         lr = cursor.fetchone()
+        cursor.close()
         conn.close()
 
         if lr:
@@ -188,8 +219,8 @@ class AttendanceTools:
                 employee_id = result["employee_id"],
                 decision    = decision,
                 request_id  = result["leave_request_id"],
-                from_date   = lr["from_date"],
-                to_date     = lr["to_date"],
+                from_date   = str(lr["from_date"]),
+                to_date     = str(lr["to_date"]),
                 am_notes    = notes,
             )
             self.exception_service.mark_employee_notified(exception_id)
@@ -201,21 +232,22 @@ class AttendanceTools:
 
             # Trigger roster reallocation
             conn    = self._connect()
-            cursor  = conn.cursor()
+            cursor  = conn.cursor(dictionary=True)
             cursor.execute(
-                "SELECT from_date, to_date, employee_id FROM leave_requests WHERE request_id=?",
+                "SELECT start_date AS from_date, end_date AS to_date, employee_id FROM leave_requests WHERE request_id=%s",
                 (result["leave_request_id"],),
             )
             lr2 = cursor.fetchone()
             cursor.execute(
-                "SELECT field_manager_id FROM employees WHERE employee_id=?",
-                (result["employee_id"],),
+                "SELECT field_manager_id FROM employees WHERE employee_id=%s",
+                (str(result["employee_id"]),),
             )
             emp_row = cursor.fetchone()
+            cursor.close()
             conn.close()
 
-            if lr2 and emp_row and emp_row["field_manager_id"]:
-                dates = self.workforce_service.date_range(lr2["from_date"], lr2["to_date"])
+            if lr2 and emp_row and emp_row.get("field_manager_id"):
+                dates = self.workforce_service.date_range(str(lr2["from_date"]), str(lr2["to_date"]))
                 self.workforce_service.auto_reallocate_roster(
                     field_manager_id   = emp_row["field_manager_id"],
                     absent_employee_id = result["employee_id"],

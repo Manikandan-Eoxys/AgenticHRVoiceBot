@@ -11,9 +11,9 @@ Handles:
   5. Integration hooks for IFS Cloud and SQL Server sync
 """
 
-import sqlite3
 from datetime import datetime, date
 from config import Config
+from database.db import get_db_connection
 
 # Read threshold from Config — set COVERAGE_THRESHOLD=0.08 in .env (8% minimum)
 COVERAGE_THRESHOLD = float(getattr(Config, "COVERAGE_THRESHOLD", 0.08))
@@ -21,13 +21,8 @@ COVERAGE_THRESHOLD = float(getattr(Config, "COVERAGE_THRESHOLD", 0.08))
 
 class AttendanceService:
 
-    def __init__(self):
-        self.db = Config.DATABASE_PATH
-
     def _connect(self):
-        conn = sqlite3.connect(self.db)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return get_db_connection()
 
     # ----------------------------------------------------------
     # 1. Submit Absence Request
@@ -52,89 +47,78 @@ class AttendanceService:
             submitted_at = datetime.now().isoformat(sep=" ", timespec="seconds")
 
         conn = self._connect()
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
 
         # Validate employee exists
         cursor.execute(
-            "SELECT employee_id, name, field_manager_id, area_manager_id, team_id FROM employees WHERE employee_id=?",
-            (employee_id,),
+            "SELECT employee_id, full_name AS name FROM employees WHERE employee_id=%s",
+            (str(employee_id),),
         )
         emp = cursor.fetchone()
         if emp is None:
+            cursor.close()
             conn.close()
             return {"success": False, "message": "Employee not found."}
 
-        field_manager_id = emp["field_manager_id"]
-        area_manager_id = emp["area_manager_id"]
+        field_manager_id = emp.get("field_manager_id")
+        area_manager_id = emp.get("area_manager_id")
 
-        # Map absence_type to leave_type for legacy balance column
-        leave_type_map = {
-            "Sickness":      "Sick",
-            "Holiday":       "Casual",
-            "Emergency":     "Casual",
-            "Funeral":       "Casual",
-            "Compassionate": "Casual",
-            "Casual":        "Casual",
-            "Earned":        "Earned",
+        # Map absence_type to leave_code in MySQL
+        code_map = {
+            "sickness": "SL",
+            "sick": "SL",
+            "holiday": "CL",
+            "emergency": "CL",
+            "funeral": "BEREAVEMENT",
+            "compassionate": "BEREAVEMENT",
+            "casual": "CL",
+            "earned": "COMP_OFF",
         }
-        leave_type = leave_type_map.get(absence_type, "Casual")
+        leave_code = code_map.get(absence_type.lower(), "CL")
 
         # Calculate days
         try:
             start_dt = datetime.strptime(from_date, "%Y-%m-%d")
             end_dt   = datetime.strptime(to_date,   "%Y-%m-%d")
         except ValueError:
+            cursor.close()
             conn.close()
             return {"success": False, "message": "Invalid date format. Use YYYY-MM-DD."}
 
         days = (end_dt - start_dt).days + 1
         if days <= 0:
+            cursor.close()
             conn.close()
             return {"success": False, "message": "End date must be on or after start date."}
 
-        # ── Duplicate-request guard ──────────────────────────────────────────
-        # Reject if the employee already has an active request overlapping
-        # the same date range (prevents accidental double submissions).
+        # Check leave balance in MySQL leave_balances table
         cursor.execute("""
-        SELECT COUNT(*) AS cnt
-        FROM leave_requests
-        WHERE employee_id = ?
-          AND status IN ('Pending', 'Approved')
-          AND from_date <= ?
-          AND to_date   >= ?
-        """, (employee_id, to_date, from_date))
-        dup_count = cursor.fetchone()["cnt"]
-        if dup_count > 0:
-            conn.close()
-            return {
-                "success": False,
-                "message": (
-                    f"A {absence_type.lower()} request overlapping {from_date} to {to_date} "
-                    "already exists and is Pending or Approved. "
-                    "Please cancel the existing request first."
-                ),
-            }
-
-        # Check leave balance
-        balance_col = "sick" if leave_type == "Sick" else ("earned" if leave_type == "Earned" else "casual")
-        cursor.execute(
-            f"SELECT {balance_col} FROM leave_balance WHERE employee_id=?",
-            (employee_id,),
-        )
+            SELECT available_days, used_days, entitled_days
+            FROM leave_balances
+            WHERE employee_id = %s AND leave_code = %s
+        """, (str(employee_id), leave_code))
         bal_row = cursor.fetchone()
-        if bal_row is None:
-            conn.close()
-            return {"success": False, "message": "Leave balance record not found."}
 
-        balance = bal_row[0]
-        if balance < days:
+        if bal_row is None:
+            # Fallback to CL
+            leave_code = "CL"
+            cursor.execute("""
+                SELECT available_days, used_days, entitled_days
+                FROM leave_balances
+                WHERE employee_id = %s AND leave_code = 'CL'
+            """, (str(employee_id),))
+            bal_row = cursor.fetchone()
+
+        avail = bal_row["available_days"] if bal_row else 99
+        if avail is not None and avail < days:
+            cursor.close()
             conn.close()
             return {
                 "success": False,
-                "message": f"Insufficient {leave_type} leave balance. Available: {balance} day(s), Requested: {days} day(s).",
+                "message": f"Insufficient {absence_type} leave balance. Available: {avail} day(s), Requested: {days} day(s).",
             }
 
-        # Coverage check (only for field engineers)
+        # Coverage check (if Field Manager is assigned)
         coverage_ok = True
         coverage_pct = None
         if field_manager_id:
@@ -143,15 +127,6 @@ class AttendanceService:
             )
             coverage_ok  = coverage_result["above_threshold"]
             coverage_pct = coverage_result["coverage_pct"]
-            self._upsert_team_coverage(
-                cursor,
-                field_manager_id,
-                from_date,
-                coverage_result["total_engineers"],
-                coverage_result["current_absent"] + 1,  # +1 for this request
-                coverage_result["coverage_pct_if_approved"],
-                not coverage_ok,
-            )
 
         # Detect exception
         from services.exception_service import ExceptionService
@@ -164,62 +139,41 @@ class AttendanceService:
         )
         exception_flag    = exc_detection["is_exception"]
         exception_type    = exc_detection.get("exception_type", "None")
-        exception_reason  = exc_detection.get("reason", "")
 
-        # Determine initial status and AM routing
-        if exception_flag and area_manager_id:
-            initial_status    = "Pending"
-            am_status         = "Pending"
-        else:
-            initial_status    = "Pending"
-            am_status         = "NotRequired"
-            area_manager_id   = None
+        # Determine initial status
+        initial_status = "submitted" if not exception_flag else "pending_exception"
 
-        # Insert leave request
+        # Insert into MySQL leave_requests table
         cursor.execute("""
-        INSERT INTO leave_requests
-        (employee_id, from_date, to_date, leave_type, absence_type, status,
-         exception_flag, area_manager_id, area_manager_status,
-         ifs_sync_status, sql_sync_status, reason, submitted_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', ?, ?, datetime('now'))
-        """, (
-            employee_id, from_date, to_date, leave_type, absence_type, initial_status,
-            1 if exception_flag else 0, area_manager_id, am_status,
-            reason, submitted_at,
-        ))
+            INSERT INTO leave_requests
+            (employee_id, leave_code, start_date, end_date, days_requested, status)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (str(employee_id), leave_code, from_date, to_date, days, initial_status))
         request_id = cursor.lastrowid
 
-        # Deduct leave balance (hold/reserve)
-        cursor.execute(
-            f"UPDATE leave_balance SET {balance_col} = {balance_col} - ? WHERE employee_id=?",
-            (days, employee_id),
-        )
-
-        # Create sync log entries
-        cursor.execute(
-            "INSERT INTO ifs_sync_log (leave_request_id, sync_status) VALUES (?, 'pending')",
-            (request_id,),
-        )
-        cursor.execute(
-            "INSERT INTO sql_server_sync_log (leave_request_id, sync_status) VALUES (?, 'pending')",
-            (request_id,),
-        )
+        # Update used_days in leave_balances
+        cursor.execute("""
+            UPDATE leave_balances
+            SET used_days = used_days + %s
+            WHERE employee_id = %s AND leave_code = %s
+        """, (days, str(employee_id), leave_code))
 
         # If exception, create exception_request record
         exception_id = None
         if exception_flag and area_manager_id:
             cursor.execute("""
-            INSERT INTO exception_requests
-            (leave_request_id, employee_id, field_manager_id, area_manager_id,
-             exception_reason, exception_type, status)
-            VALUES (?, ?, ?, ?, ?, ?, 'Pending')
+                INSERT INTO exception_requests
+                (leave_request_id, employee_id, field_manager_id, area_manager_id,
+                 exception_reason, exception_type, status)
+                VALUES (%s, %s, %s, %s, %s, %s, 'Pending')
             """, (
-                request_id, employee_id, field_manager_id, area_manager_id,
-                exception_reason, exception_type,
+                request_id, str(employee_id), str(field_manager_id), str(area_manager_id),
+                exc_detection.get("reason", ""), exception_type,
             ))
             exception_id = cursor.lastrowid
 
         conn.commit()
+        cursor.close()
         conn.close()
 
         result = {
@@ -230,7 +184,7 @@ class AttendanceService:
             "to_date":        to_date,
             "days":           days,
             "absence_type":   absence_type,
-            "leave_type":     leave_type,
+            "leave_type":     leave_code,
             "status":         initial_status,
             "coverage_ok":    coverage_ok,
             "coverage_pct":   coverage_pct,
@@ -238,7 +192,7 @@ class AttendanceService:
             "exception_type": exception_type,
             "exception_id":   exception_id,
             "area_manager_id":area_manager_id,
-            "am_status":      am_status,
+            "am_status":      "Pending" if exception_flag else "NotRequired",
             "message":        self._build_submission_message(
                 exception_flag, exception_type, coverage_ok, coverage_pct, days, absence_type
             ),
@@ -268,16 +222,18 @@ class AttendanceService:
         Returns coverage info for a Field Manager's team on a given date.
         """
         conn = self._connect()
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
 
         # Total engineers in this FM's team
         cursor.execute(
-            "SELECT COUNT(*) as cnt FROM employees WHERE field_manager_id=? AND role='Engineer'",
-            (field_manager_id,),
+            "SELECT COUNT(*) as cnt FROM employees WHERE field_manager_id=%s",
+            (str(field_manager_id),),
         )
-        total = cursor.fetchone()["cnt"]
+        total_row = cursor.fetchone()
+        total = total_row["cnt"] if total_row else 0
 
         if total == 0:
+            cursor.close()
             conn.close()
             return {
                 "success":         False,
@@ -291,36 +247,36 @@ class AttendanceService:
         SELECT COUNT(DISTINCT lr.employee_id) as absent
         FROM leave_requests lr
         JOIN employees e ON lr.employee_id = e.employee_id
-        WHERE e.field_manager_id = ?
-          AND lr.from_date <= ?
-          AND lr.to_date   >= ?
-          AND lr.status IN ('Approved', 'Pending')
-          AND lr.area_manager_status IN ('NotRequired', 'Approved', 'Pending')
-        """, (field_manager_id, coverage_date, coverage_date))
-        absent = cursor.fetchone()["absent"]
+        WHERE e.field_manager_id = %s
+          AND lr.start_date <= %s
+          AND lr.end_date   >= %s
+          AND lr.status IN ('submitted', 'approved', 'pending_exception')
+        """, (str(field_manager_id), coverage_date, coverage_date))
+        absent_row = cursor.fetchone()
+        absent = absent_row["absent"] if absent_row else 0
 
         # Get FM name
-        cursor.execute("SELECT name FROM employees WHERE employee_id=?", (field_manager_id,))
+        cursor.execute("SELECT full_name AS name FROM employees WHERE employee_id=%s", (str(field_manager_id),))
         fm_row = cursor.fetchone()
         fm_name = fm_row["name"] if fm_row else "Unknown"
 
         # Get individual engineer details
         cursor.execute("""
-        SELECT e.employee_id, e.name,
+        SELECT e.employee_id, e.full_name AS name,
                CASE WHEN lr.request_id IS NOT NULL THEN 'Absent' ELSE 'Available' END as availability,
-               lr.absence_type, lr.status
+               lr.leave_code AS absence_type, lr.status
         FROM employees e
         LEFT JOIN leave_requests lr
           ON  lr.employee_id = e.employee_id
-          AND lr.from_date  <= ?
-          AND lr.to_date    >= ?
-          AND lr.status IN ('Approved', 'Pending')
-        WHERE e.field_manager_id = ?
-          AND e.role = 'Engineer'
-        ORDER BY e.name
-        """, (coverage_date, coverage_date, field_manager_id))
-        engineers = [dict(r) for r in cursor.fetchall()]
+          AND lr.start_date  <= %s
+          AND lr.end_date    >= %s
+          AND lr.status IN ('submitted', 'approved', 'pending_exception')
+        WHERE e.field_manager_id = %s
+        ORDER BY e.full_name
+        """, (coverage_date, coverage_date, str(field_manager_id)))
+        engineers = cursor.fetchall()
 
+        cursor.close()
         conn.close()
 
         available = total - absent
@@ -357,15 +313,17 @@ class AttendanceService:
         prospective_absent_employee_id: the employee about to take leave.
         """
         conn = self._connect()
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
 
         cursor.execute(
-            "SELECT COUNT(*) as cnt FROM employees WHERE field_manager_id=? AND role='Engineer'",
-            (field_manager_id,),
+            "SELECT COUNT(*) as cnt FROM employees WHERE field_manager_id=%s",
+            (str(field_manager_id),),
         )
-        total = cursor.fetchone()["cnt"]
+        total_row = cursor.fetchone()
+        total = total_row["cnt"] if total_row else 0
 
         if total == 0:
+            cursor.close()
             conn.close()
             return {
                 "above_threshold":          True,
@@ -377,18 +335,20 @@ class AttendanceService:
             }
 
         # Current absences (excluding the prospective one)
+        p_id = str(prospective_absent_employee_id) if prospective_absent_employee_id else None
         cursor.execute("""
         SELECT COUNT(DISTINCT lr.employee_id) as absent
         FROM leave_requests lr
         JOIN employees e ON lr.employee_id = e.employee_id
-        WHERE e.field_manager_id = ?
-          AND lr.from_date <= ?
-          AND lr.to_date   >= ?
-          AND lr.status IN ('Approved', 'Pending')
-          AND (? IS NULL OR lr.employee_id != ?)
-        """, (field_manager_id, coverage_date, coverage_date,
-              prospective_absent_employee_id, prospective_absent_employee_id))
-        current_absent = cursor.fetchone()["absent"]
+        WHERE e.field_manager_id = %s
+          AND lr.start_date <= %s
+          AND lr.end_date   >= %s
+          AND lr.status IN ('submitted', 'approved', 'pending_exception')
+          AND (%s IS NULL OR lr.employee_id != %s)
+        """, (str(field_manager_id), coverage_date, coverage_date, p_id, p_id))
+        absent_row = cursor.fetchone()
+        current_absent = absent_row["absent"] if absent_row else 0
+        cursor.close()
         conn.close()
 
         current_pct        = round((total - current_absent) / total, 4)
