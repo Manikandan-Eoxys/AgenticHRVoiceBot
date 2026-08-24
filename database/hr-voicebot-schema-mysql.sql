@@ -62,25 +62,26 @@ CREATE TABLE employees (
     designation_id INT NOT NULL REFERENCES designations(designation_id),
     join_date      DATE NOT NULL,
     status         VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','on_leave','exited')),
-    phone_number   VARCHAR(20)
+    phone_number   VARCHAR(20),
+    manager_id     VARCHAR(10) REFERENCES employees(employee_id)
 );
 
-INSERT INTO employees (employee_id, full_name, gender, email, department_id, designation_id, join_date, status, phone_number) VALUES
-('1001', 'Ravikala',    'F', 'ravikala@eoxys.com',    1, 1, '2023-03-31', 'active',   '9500000001'),
-('1002', 'Deepika',     'F', 'deepika@efabric.com',     1, 2, '2022-12-11', 'on_leave', '9500000002'),      
-('1003', 'Narmatha',    'F', 'narmatha@efabric.com',    1, 1, '2023-09-01', 'active',   '9500000003'),
-('1004', 'Hashir',      'M', 'hashir@efabric.com',      1, 1, '2024-02-21', 'active',   '9500000004'),
-('1005', 'Saikumar',    'M', 'saikumar@efabric.com',    1, 1, '2024-02-21', 'active',   '9500000005'),
-('1006', 'Bharath',     'M', 'bharath@efabric.com',     1, 1, '2024-02-21', 'active',   '9500000006'),
-('1007', 'Guna',        'M', 'guna@efabric.com',        1, 2, '2023-12-21', 'active',   '9500000007'),
-('1008', 'Shivaraj',    'M', 'shivaraj@efabric.com',    1, 1, '2025-02-01', 'active',   '9500000008'),
-('1009', 'Govindaraj',  'M', 'govindaraj@efabric.com',  1, 1, '2025-02-01', 'active',   '9500000009'),
-('1010', 'Charan',      'M', 'charan@efabric.com',      2, 3, '2024-07-01', 'active',   '9500000010'),
-('1011', 'Momin',       'M', 'momin@efabric.com',       2, 3, '2023-09-06', 'active',   '9500000011'),
-('1012', 'Satheesh',    'M', 'satheesh@efabric.com',    3, 4, '2023-04-07', 'active',   '9500000012'),
-('1013', 'Kamal',       'M', 'kamal@efabric.com',       1, 1, '2025-09-05', 'active',   '9786586806'),
-('1014', 'Manikandan',  'M', 'manikandan@efabric.com',  1, 1, '2025-09-05', 'active',   '8925355704'),
-('1015', 'Sujitsaju',   'M', 'sujitsaju@efabric.com',   3, 4, '2023-04-07', 'active',   '9500000015');
+INSERT INTO employees (employee_id, full_name, gender, email, department_id, designation_id, join_date, status, phone_number, manager_id) VALUES
+('1001', 'Ravikala',    'F', 'ravikala@eoxys.com',    1, 1, '2023-03-31', 'active',   '+919500000001', '1007'),
+('1002', 'Deepika',     'F', 'deepika@efabric.com',   1, 2, '2022-12-11', 'on_leave', '+919500000002', '1007'),
+('1003', 'Narmatha',    'F', 'narmatha@efabric.com',  1, 1, '2023-09-01', 'active',   '+919500000003', '1007'),
+('1004', 'Hashir',      'M', 'hashir@efabric.com',    1, 1, '2024-02-21', 'active',   '+919500000004', '1007'),
+('1005', 'Saikumar',    'M', 'saikumar@efabric.com',  1, 1, '2024-02-21', 'active',   '+919500000005', '1007'),
+('1006', 'Bharath',     'M', 'bharath@efabric.com',   1, 1, '2024-02-21', 'active',   '+919500000006', '1007'),
+('1007', 'Guna',        'M', 'guna@efabric.com',      1, 2, '2023-12-21', 'active',   '+917639878324', NULL),
+('1008', 'Shivaraj',    'M', 'shivaraj@efabric.com',  1, 1, '2025-02-01', 'active',   '+919500000008', '1007'),
+('1009', 'Govindaraj',  'M', 'govindaraj@efabric.com',1, 1, '2025-02-01', 'active',   '+919500000009', '1007'),
+('1010', 'Charan',      'M', 'charan@efabric.com',    2, 3, '2024-07-01', 'active',   '+919500000010', '1007'),
+('1011', 'Momin',       'M', 'momin@efabric.com',     2, 3, '2023-09-06', 'active',   '+919500000011', '1007'),
+('1012', 'Satheesh',    'M', 'satheesh@efabric.com',  3, 4, '2023-04-07', 'active',   '+919500000012', '1014'),
+('1013', 'Kamal',       'M', 'kamal@efabric.com',     1, 1, '2025-09-05', 'active',   '+919786586806', '1014'),
+('1014', 'Manikandan',  'M', 'manikandan@efabric.com',1, 1, '2025-09-05', 'active',   '+918925355704', NULL),
+('1015', 'Sujitsaju',   'M', 'sujitsaju@efabric.com', 3, 4, '2023-04-07', 'active',   '+919500000015', '1014');
 
 -- ============================================================
 -- 3. LEAVE POLICY (static reference text — 8 leave types)

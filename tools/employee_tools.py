@@ -27,11 +27,15 @@ class EmployeeTools:
                 e.employee_id,
                 e.full_name AS name,
                 e.email,
-                'HR Manager' AS manager,
+                e.phone_number,
+                COALESCE(m.full_name, 'HR Manager') AS manager,
+                COALESCE(m.phone_number, '') AS manager_phone,
+                m.employee_id AS manager_id,
                 d.department_name AS department,
                 ds.designation_name AS designation,
                 e.join_date AS joining_date
             FROM employees e
+            LEFT JOIN employees m ON e.manager_id = m.employee_id
             LEFT JOIN departments d ON e.department_id = d.department_id
             LEFT JOIN designations ds ON e.designation_id = ds.designation_id
             WHERE e.employee_id = %s
@@ -61,7 +65,10 @@ class EmployeeTools:
                 "employee_id": row["employee_id"],
                 "name": row["name"],
                 "email": row["email"],
+                "phone_number": row["phone_number"],
                 "manager": row["manager"],
+                "manager_id": row["manager_id"],
+                "manager_phone": row["manager_phone"],
                 "department": row["department"],
                 "designation": row["designation"],
                 "joining_date": joining_date,
@@ -105,7 +112,10 @@ class EmployeeTools:
         cursor = conn.cursor(dictionary=True)
 
         cursor.execute("""
-            SELECT full_name FROM employees WHERE employee_id = %s
+            SELECT m.full_name AS manager_name, m.phone_number AS manager_phone, m.employee_id AS manager_id
+            FROM employees e
+            LEFT JOIN employees m ON e.manager_id = m.employee_id
+            WHERE e.employee_id = %s
         """, (str(employee_id),))
 
         row = cursor.fetchone()
@@ -118,9 +128,56 @@ class EmployeeTools:
                 "message": "Employee not found."
             }
 
+        if not row["manager_id"]:
+            return {
+                "success": False,
+                "message": "No manager assigned to this employee."
+            }
+
+        mgr_phone = row["manager_phone"] or ""
+        if mgr_phone and not mgr_phone.startswith("+"):
+            mgr_phone = f"+91{mgr_phone}"
+
         return {
             "success": True,
-            "manager": "HR Manager"
+            "manager": row["manager_name"],
+            "manager_phone": mgr_phone,
+            "manager_id": row["manager_id"]
+        }
+
+    # -------------------------------------------------
+    # Get Manager's Phone Number (for conference call)
+    # -------------------------------------------------
+    def get_manager_phone(self, employee_id: int):
+        """Look up the phone number of the employee's direct manager."""
+        conn = self._connect()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT m.full_name AS manager_name, m.phone_number AS manager_phone
+            FROM employees e
+            INNER JOIN employees m ON e.manager_id = m.employee_id
+            WHERE e.employee_id = %s
+        """, (str(employee_id),))
+
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not row or not row["manager_phone"]:
+            return {
+                "success": False,
+                "message": "Manager phone number not found in the system."
+            }
+
+        mgr_phone = row["manager_phone"] or ""
+        if mgr_phone and not mgr_phone.startswith("+"):
+            mgr_phone = f"+91{mgr_phone}"
+
+        return {
+            "success": True,
+            "manager_name": row["manager_name"],
+            "manager_phone": mgr_phone
         }
 
     # -------------------------------------------------

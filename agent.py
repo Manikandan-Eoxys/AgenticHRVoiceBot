@@ -1094,56 +1094,199 @@ class HRAgent(Agent):
     async def transfer_call(
         self,
         context: RunContext,
-        phone_number: str = "+919500000001", # Default HR / Manager number
+        phone_number: str = "",
     ):
         """
-        Transfer the ongoing call to a human HR representative or manager.
+        Forward / transfer the ongoing call to the employee's manager or a
+        specific phone number.
+
+        - If the employee says "Transfer me to my manager" or "Forward my call"
+          — look up the manager's phone from the database automatically.
+        - If the employee provides an explicit number, use that instead.
+
         Examples:
         - Transfer me to HR.
+        - Forward my call to my manager.
         - Connect me to a human representative.
         - Call my manager.
+        - Transfer to +919791694339.
         """
         try:
-            lkapi = api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
-            await lkapi.sip.transfer_sip_participant(
-                api.TransferSIPParticipantRequest(
-                    participant_identity=context.participant.identity,
-                    transfer_to=f"tel:{phone_number}",
-                    play_dialtone=True
-                )
+            # ── Step 1: resolve target phone number ───────────────────────────
+            raw_input = (phone_number or "").replace(" ", "").strip()
+            digits_only = raw_input.replace("+", "").replace("-", "")
+
+            dial_number = ""
+            manager_name = ""
+
+            if digits_only.isdigit():
+                if len(digits_only) == 4:
+                    # 4-digit Employee ID (e.g. "1003") -> look up that employee's manager
+                    lookup = self.employee_service.employee_tool.get_manager_phone(digits_only)
+                    if lookup.get("success"):
+                        dial_number = lookup["manager_phone"].replace(" ", "")
+                        manager_name = lookup["manager_name"]
+                elif len(digits_only) == 10:
+                    dial_number = f"+91{digits_only}"
+                    manager_name = dial_number
+                elif len(digits_only) >= 11 and raw_input.startswith("+"):
+                    dial_number = raw_input
+                    manager_name = dial_number
+
+            if not dial_number:
+                # Fallback: look up authenticated employee's manager
+                emp_id = self.auth.employee_id
+                if not emp_id:
+                    return {
+                        "success": False,
+                        "message": "Please provide your Employee ID first so I can look up your manager's number."
+                    }
+
+                lookup = self.employee_service.employee_tool.get_manager_phone(emp_id)
+                if not lookup["success"]:
+                    return {
+                        "success": False,
+                        "message": lookup.get("message", "Could not find your manager's phone number.")
+                    }
+
+                dial_number = lookup["manager_phone"].replace(" ", "")
+                manager_name = lookup["manager_name"]
+            elif not manager_name:
+                manager_name = dial_number
+
+            # ── Step 2: resolve participant identity from job_ctx ─────────────
+            room = getattr(self.job_ctx, "room", None) if self.job_ctx else None
+            remote_parts = getattr(room, "remote_participants", {}) or {}
+
+            target_identity = None
+            for identity, p in remote_parts.items():
+                if identity.startswith("sip_") or getattr(p, "kind", None) == 3:
+                    target_identity = identity
+                    break
+
+            if not target_identity and remote_parts:
+                target_identity = list(remote_parts.keys())[0]
+
+            if not target_identity or not self.job_ctx:
+                print("[Transfer] No active SIP caller line found, falling back to Outbound Conference Bridge...")
+                return await self._conference_dial(dial_number, manager_name)
+
+            # ── Step 3: execute native SIP REFER transfer ─────────────────────
+            print(f"[Transfer] Executing job_ctx.transfer_sip_participant for '{target_identity}' to '{dial_number}'...")
+            await self.job_ctx.transfer_sip_participant(
+                participant=target_identity,
+                transfer_to=dial_number,
+                play_dialtone=True
             )
-            await lkapi.aclose()
-            return {"success": True, "message": f"Transferring your call to {phone_number}."}
+            print(f"[Transfer] Transfer request sent successfully for '{target_identity}' to '{dial_number}'")
+            return {
+                "success": True,
+                "message": f"Transferring your call to {manager_name} at {dial_number}. Please hold on."
+            }
         except Exception as e:
-            return {"success": False, "message": f"Failed to transfer call: {str(e)}"}
+            import traceback
+            print(f"[Transfer Warning] SIP REFER transfer encountered: {e}. Falling back to Outbound Conference Bridge...")
+            traceback.print_exc()
+            return await self._conference_dial(dial_number, manager_name)
+
+    async def _conference_dial(self, dial_number: str, label: str) -> dict:
+        """Shared helper: dial a number into the current room via outbound SIP trunk."""
+        try:
+            if self.job_ctx:
+                print(f"[Conference] Dialing '{dial_number}' into room '{self.job_ctx.room.name}' via job_ctx.add_sip_participant (Trunk: ST_CrytprUt4rGi)...")
+                await self.job_ctx.add_sip_participant(
+                    call_to=dial_number,
+                    trunk_id="ST_CrytprUt4rGi",
+                    participant_identity=f"conf_user_{dial_number}",
+                    participant_name=label
+                )
+            else:
+                async with api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) as lkapi:
+                    await lkapi.sip.create_sip_participant(
+                        api.CreateSIPParticipantRequest(
+                            sip_trunk_id="ST_CrytprUt4rGi",
+                            sip_call_to=dial_number,
+                            room_name="hr-sip-live",
+                            participant_identity=f"conf_user_{dial_number}"
+                        )
+                    )
+            return {
+                "success": True,
+                "message": f"Dialing {label} at {dial_number} into the conference. Please stay on the line."
+            }
+        except Exception as e:
+            import traceback
+            print(f"[Conference Error] Outbound SIP dial failed: {e}")
+            traceback.print_exc()
+            return {"success": False, "message": f"Failed to dial: {str(e)}"}
 
     @function_tool()
     async def add_participant_to_conference(
         self,
         context: RunContext,
-        phone_number: str,
+        phone_number: str = "",
     ):
         """
-        Dial an external phone number and add them into the current call as a 3-way conference.
+        Dial the employee's manager (or an external phone number) and add them
+        into the current call as a 3-way conference.
+
+        - If the employee says "Add my manager to this call" or "Conference in
+          my manager" — look up the manager's phone from the database automatically.
+        - If the employee provides an explicit phone number, use that instead.
 
         Examples:
-        - Add Area Manager to this call.
+        - Add my manager to this call.
+        - Conference in my manager.
+        - Add +919786586806 to this call.
         - Conference in employee 1002.
         """
         try:
-            lkapi = api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
-            await lkapi.sip.create_sip_participant(
-                api.CreateSIPParticipantRequest(
-                    sip_trunk_id="ST_YOUR_OUTBOUND_TRUNK_ID", # LiveKit Outbound SIP Trunk ID
-                    sip_call_to=phone_number,
-                    room_name=context.room.name,
-                    participant_identity=f"conf_user_{phone_number}"
-                )
-            )
-            await lkapi.aclose()
-            return {"success": True, "message": f"Dialing {phone_number} into the conference room."}
+            # ── Step 1: resolve the phone number to dial ─────────────────────
+            raw_input = (phone_number or "").replace(" ", "").strip()
+            digits_only = raw_input.replace("+", "").replace("-", "")
+
+            dial_number = ""
+            manager_name = ""
+
+            if digits_only.isdigit():
+                if len(digits_only) == 4:
+                    lookup = self.employee_service.employee_tool.get_manager_phone(digits_only)
+                    if lookup.get("success"):
+                        dial_number = lookup["manager_phone"].replace(" ", "")
+                        manager_name = lookup["manager_name"]
+                elif len(digits_only) == 10:
+                    dial_number = f"+91{digits_only}"
+                    manager_name = dial_number
+                elif len(digits_only) >= 11 and raw_input.startswith("+"):
+                    dial_number = raw_input
+                    manager_name = dial_number
+
+            if not dial_number:
+                emp_id = self.auth.employee_id
+                if not emp_id:
+                    return {
+                        "success": False,
+                        "message": "You need to be authenticated before I can add your manager. Please provide your Employee ID first."
+                    }
+
+                lookup = self.employee_service.employee_tool.get_manager_phone(emp_id)
+                if not lookup["success"]:
+                    return {
+                        "success": False,
+                        "message": lookup.get("message", "Could not find your manager's phone number.")
+                    }
+
+                dial_number = lookup["manager_phone"].replace(" ", "")
+                manager_name = lookup["manager_name"]
+            elif not manager_name:
+                manager_name = dial_number
+
+            # ── Step 2: dial into the conference room ─────────────────────────
+            return await self._conference_dial(dial_number, manager_name)
+
         except Exception as e:
             return {"success": False, "message": f"Failed to add conference participant: {str(e)}"}
+
 
 
 def _last_assistant_message(turn_ctx: ChatContext) -> str | None:
