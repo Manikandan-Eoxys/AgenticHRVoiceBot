@@ -499,8 +499,8 @@ class VoiceController:
         self._shutdown_requested = True
 
         if self.current_state == ControllerState.SESSION_ACTIVE:
-            print("📴 Call session disconnect requested")
-            print(f"➡️ VC Transition [pid={self._pid}]: {ControllerState.SESSION_ACTIVE.name} → {ControllerState.ENDING.name}")
+            logger.info("📴 Call session disconnect requested")
+            logger.info(f"➡️ VC Transition [pid={self._pid}]: {ControllerState.SESSION_ACTIVE.name} → {ControllerState.ENDING.name}")
             self._previous_state = ControllerState.SESSION_ACTIVE
             self.current_state = ControllerState.ENDING
             self._state_updated_at = time.time()
@@ -509,10 +509,10 @@ class VoiceController:
             self._active_agent = None
             self._active_session = None
             self._active_participant_identity = ""
-            print("🧹 Reset state for next call job")
+            logger.info("🧹 Reset state for next call job")
 
             self.next_state = ControllerState.READY
-            print(f"➡️ VC Transition [pid={self._pid}]: {ControllerState.ENDING.name} → {ControllerState.READY.name}")
+            logger.info(f"➡️ VC Transition [pid={self._pid}]: {ControllerState.ENDING.name} → {ControllerState.READY.name}")
             self.current_state = ControllerState.READY
             self._previous_state = ControllerState.ENDING
             self._state_updated_at = time.time()
@@ -543,17 +543,17 @@ class VoiceController:
         self.request_prewarm(proc)
 
         self.current_state = ControllerState.INITIALIZING
-        print(f"➡️ VC Transition [pid={self._pid}]: {ControllerState.UNINITIALIZED.name} → {self.current_state.name}")
+        logger.info(f"➡️ VC Transition [pid={self._pid}]: {ControllerState.UNINITIALIZED.name} → {self.current_state.name}")
         try:
             self._build_engines()
         except Exception as exc:
-            print(f"❌ Engine construction failed: {exc}")
+            logger.error(f"❌ Engine construction failed: {exc}")
             self._error_message = str(exc)
             self.current_state = ControllerState.ERROR
             raise
 
         self.current_state = ControllerState.PREWARMING
-        print(f"➡️ VC Transition [pid={self._pid}]: {ControllerState.INITIALIZING.name} → {self.current_state.name}")
+        logger.info(f"➡️ VC Transition [pid={self._pid}]: {ControllerState.INITIALIZING.name} → {self.current_state.name}")
         try:
             proc.userdata["llm"] = self.llm
             proc.userdata["stt"] = self.stt
@@ -561,15 +561,15 @@ class VoiceController:
 
             start_scheduler()
             atexit.register(stop_scheduler)
-            print("⏳ Background sync scheduler started.")
+            logger.info("⏳ Background sync scheduler started.")
         except Exception as exc:
-            print(f"❌ Prewarm failed: {exc}")
+            logger.error(f"❌ Prewarm failed: {exc}")
             self._error_message = str(exc)
             self.current_state = ControllerState.ERROR
             raise
 
         self.current_state = ControllerState.READY
-        print(f"➡️ VC Transition [pid={self._pid}]: {ControllerState.PREWARMING.name} → {self.current_state.name}")
+        logger.info(f"➡️ VC Transition [pid={self._pid}]: {ControllerState.PREWARMING.name} → {self.current_state.name}")
         self._previous_state = ControllerState.PREWARMING
         self._state_updated_at = time.time()
 
@@ -670,8 +670,8 @@ class VoiceController:
             # UNINITIALIZED
             # -----------------------
             case ControllerState.UNINITIALIZED:
-                print("🚀 Voice Controller FSM Started")
-                print("🔄 ControllerState.UNINITIALIZED")
+                logger.info("🚀 Voice Controller FSM Started")
+                logger.info("🔄 ControllerState.UNINITIALIZED")
                 self.next_state = ControllerState.INITIALIZING
 
             # -----------------------
@@ -682,7 +682,7 @@ class VoiceController:
                     self._build_engines()
                     self.next_state = ControllerState.PREWARMING
                 except Exception as exc:
-                    print(f"❌ Engine construction failed: {exc}")
+                    logger.error(f"❌ Engine construction failed: {exc}")
                     self._error_message = str(exc)
                     self.next_state = ControllerState.ERROR
 
@@ -698,12 +698,12 @@ class VoiceController:
 
                     start_scheduler()
                     atexit.register(stop_scheduler)
-                    print("⏳ Background sync scheduler started.")
+                    logger.info("⏳ Background sync scheduler started.")
 
                     self._prime_ollama_model()
                     self.next_state = ControllerState.READY
                 except Exception as exc:
-                    print(f"❌ Prewarm failed: {exc}")
+                    logger.error(f"❌ Prewarm failed: {exc}")
                     self._error_message = str(exc)
                     self.next_state = ControllerState.ERROR
 
@@ -723,7 +723,7 @@ class VoiceController:
                     ctx, agent_instance, proc = job
                     self._active_ctx = ctx
                     self._active_agent = agent_instance
-                    print(f"📞 Job received for room '{ctx.room.name if ctx.room else 'pending'}'")
+                    logger.info(f"📞 Job received for room '{ctx.room.name if ctx.room else 'pending'}'")
                     self.next_state = ControllerState.CONNECTING
                 else:
                     self.next_state = ControllerState.READY
@@ -735,18 +735,18 @@ class VoiceController:
                 try:
                     ctx = self._active_ctx
                     await ctx.connect()
-                    print("🔗 Connected to LiveKit room.")
+                    logger.info("🔗 Connected to LiveKit room.")
 
                     participant = await ctx.wait_for_participant()
                     self._active_participant_identity = participant.identity
-                    print(f"🙋 Participant joined: {participant.identity}")
+                    logger.info(f"🙋 Participant joined: {participant.identity}")
 
                     llm = ctx.proc.userdata.get("llm", self.llm) if ctx.proc else self.llm
                     stt = ctx.proc.userdata.get("stt", self.stt) if ctx.proc else self.stt
                     tts = ctx.proc.userdata.get("tts", self.tts) if ctx.proc else self.tts
 
                     if not all([llm, stt, tts]):
-                        print("⚠️ Pipeline engines missing from proc.userdata — building fresh.")
+                        logger.warning("⚠️ Pipeline engines missing from proc.userdata — building fresh.")
                         self._build_engines()
                         llm, stt, tts = self.llm, self.stt, self.tts
 
@@ -765,11 +765,11 @@ class VoiceController:
                         room=ctx.room,
                         agent=self._active_agent,
                     )
-                    print("🎙️ Agent voice session running.")
+                    logger.info("🎙️ Agent voice session running.")
 
                     self.next_state = ControllerState.SESSION_ACTIVE
                 except Exception as exc:
-                    print(f"❌ Connect/session start failed: {exc}")
+                    logger.error(f"❌ Connect/session start failed: {exc}")
                     self._error_message = str(exc)
                     self.next_state = ControllerState.ERROR
 
@@ -778,7 +778,7 @@ class VoiceController:
             # -----------------------
             case ControllerState.SESSION_ACTIVE:
                 if self._shutdown_requested:
-                    print("📴 Call session disconnect requested")
+                    logger.info("📴 Call session disconnect requested")
                     self.next_state = ControllerState.ENDING
                 else:
                     self.next_state = ControllerState.SESSION_ACTIVE
@@ -792,21 +792,21 @@ class VoiceController:
                 self._active_agent = None
                 self._active_session = None
                 self._active_participant_identity = ""
-                print("🧹 Reset state for next call job")
+                logger.info("🧹 Reset state for next call job")
                 self.next_state = ControllerState.READY
 
             # -----------------------
             # ERROR — terminal-ish; log and idle here
             # -----------------------
             case ControllerState.ERROR:
-                print(f"🛑 ControllerState.ERROR: {self._error_message}")
+                logger.error(f"🛑 ControllerState.ERROR: {self._error_message}")
                 self.next_state = ControllerState.ERROR
 
         # -----------------------
         # TRANSITION
         # -----------------------
         if self.current_state != self.next_state:
-            print(f"➡️ VC Transition [pid={self._pid}]: {self.current_state.name} → {self.next_state.name}")
+            logger.info(f"➡️ VC Transition [pid={self._pid}]: {self.current_state.name} → {self.next_state.name}")
             self._previous_state = self.current_state
             self._state_updated_at = time.time()
 

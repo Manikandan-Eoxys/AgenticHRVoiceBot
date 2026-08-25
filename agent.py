@@ -7,7 +7,10 @@ LiveKit Agents v1.6.5
 """
 
 import asyncio
+import logging
 import time
+
+logger = logging.getLogger(__name__)
 
 from livekit.agents import (
     Agent,
@@ -80,6 +83,11 @@ class HRAgent(Agent):
         # ── NEW: consecutive LLM failure tracking ───────────────────────
         self._llm_failure_count = 0
 
+        # ── NEW: Conference & Call Transfer state tracking ──────────────
+        self._conference_active = False
+        self._conference_participant_identity: str | None = None
+        self._main_caller_identity: str | None = None
+
     async def on_enter(self):
         """Greet the user when the session starts, and start the idle watchdog.
 
@@ -91,10 +99,12 @@ class HRAgent(Agent):
         self._last_activity = time.time()
         self._idle_task = asyncio.create_task(self._idle_watchdog())
 
-        # ── Detect if this session arrived via a SIP trunk (e.g. Plivo) ──
+        # ── Detect main caller & attach room disconnect listener ──────────
         is_sip_call = False
         try:
             for participant in self.session.room.remote_participants.values():
+                if not self._main_caller_identity:
+                    self._main_caller_identity = participant.identity
                 if participant.identity.startswith("sip_"):
                     is_sip_call = True
                     import logging
@@ -106,15 +116,27 @@ class HRAgent(Agent):
         except Exception:
             pass  # room not yet fully populated — safe to ignore
 
+        try:
+            if hasattr(self, "session") and self.session and self.session.room:
+                @self.session.room.on("participant_disconnected")
+                def _on_participant_disconnected(participant):
+                    self._handle_participant_disconnected(participant)
+        except Exception as exc:
+            logger.warning(f"Could not attach room disconnect listener: {exc}")
+
         # Give SIP media a moment to stabilise before speaking
         if is_sip_call:
             await asyncio.sleep(1.0)
 
-        await self.session.say(
+        greeting = (
             "Hello! I'm HR Buddy, your Agentic HR Voice Assistant. "
             "I can help you with leave requests, absence management, "
             "team coverage, HR policies, and more. "
-            "How can I help you today?",
+            "How can I help you today?"
+        )
+        logger.info(f"🤖 [Conversation Assistant]: {greeting}")
+        await self.session.say(
+            greeting,
             allow_interruptions=True,
         )
 
@@ -141,6 +163,44 @@ class HRAgent(Agent):
         text = (new_message.text_content or "").strip()
         if not text:
             return
+
+        logger.info(f"🗣️ [Conversation User]: {text}")
+
+        # ── Conference Mute Guard ─────────────────────────────────────────
+        # If a 3-way conference call is active (e.g. manager is on the line),
+        # suppress the agent from speaking or calling tools until manager leaves.
+        if self._conference_active:
+            logger.info(f"🗣️ [Conference Active - Agent Silent]: {text}")
+            raise StopResponse()
+
+    def _handle_participant_disconnected(self, participant):
+        """Called when any remote participant leaves the LiveKit room."""
+        identity = getattr(participant, "identity", "")
+        logger.info(f"👤 Room participant disconnected: {identity}")
+
+        if self._conference_active:
+            if (
+                (self._conference_participant_identity and identity == self._conference_participant_identity)
+                or identity.startswith("conf_user_")
+                or (self._main_caller_identity and identity != self._main_caller_identity)
+            ):
+                logger.info(f"📞 Conference participant '{identity}' left call. Agent resuming takeover...")
+                self._conference_active = False
+                self._conference_participant_identity = None
+                asyncio.create_task(self._takeover_after_conference())
+
+    async def _takeover_after_conference(self):
+        """Announce agent takeover after conference participant hangs up."""
+        await asyncio.sleep(1.0)
+        msg = "The conference call has ended. I am back on the line — how else can I help you today?"
+        logger.info(f"🤖 [Agent Takeover]: {msg}")
+        await self.session.say(msg, allow_interruptions=True)
+
+    async def _delayed_transfer_hangup(self, delay: float = 3.0):
+        """Hang up the agent after call transfer so the agent leaves the line completely."""
+        logger.info(f"📞 Call transfer successful. Agent hanging up in {delay} seconds...")
+        await asyncio.sleep(delay)
+        await self._end_call()
 
         # If the assistant's last message was a follow-up question
         # (employee ID, confirmation, dates, OTP, etc.), treat this reply
@@ -836,6 +896,19 @@ class HRAgent(Agent):
         After calling this, the employee is immediately authenticated.
         No OTP is required.
         """
+        # ── Single Authentication Per Conversation ──────────────────────
+        # If the employee has already been verified in this session, return
+        # immediate success without asking for their ID again.
+        if self.auth.authenticated:
+            if employee_id is None or int(employee_id) == int(self.auth.employee_id):
+                return {
+                    "success": True,
+                    "message": f"Employee {self.auth.employee_name} (ID: {self.auth.employee_id}) is ALREADY verified for this entire conversation. Do not ask for ID again.",
+                    "employee_id": self.auth.employee_id,
+                    "employee_name": self.auth.employee_name,
+                    "already_authenticated": True,
+                }
+
         if employee_id is None:
             return {
                 "success": False,
@@ -858,7 +931,7 @@ class HRAgent(Agent):
 
         return {
             "success": True,
-            "message": f"Welcome {employee_name}. You are now verified.",
+            "message": f"Welcome {employee_name}. You are now verified for this conversation.",
             "employee_id": employee_id,
             "employee_name": employee_name,
         }
@@ -1168,36 +1241,43 @@ class HRAgent(Agent):
                 target_identity = list(remote_parts.keys())[0]
 
             if not target_identity or not self.job_ctx:
-                print("[Transfer] No active SIP caller line found, falling back to Outbound Conference Bridge...")
+                logger.warning("[Transfer] No active SIP caller line found, falling back to Outbound Conference Bridge...")
                 return await self._conference_dial(dial_number, manager_name)
 
             # ── Step 3: execute native SIP REFER transfer ─────────────────────
-            print(f"[Transfer] Executing job_ctx.transfer_sip_participant for '{target_identity}' to '{dial_number}'...")
+            logger.info(f"[Transfer] Executing job_ctx.transfer_sip_participant for '{target_identity}' to '{dial_number}'...")
             await self.job_ctx.transfer_sip_participant(
                 participant=target_identity,
                 transfer_to=dial_number,
                 play_dialtone=True
             )
-            print(f"[Transfer] Transfer request sent successfully for '{target_identity}' to '{dial_number}'")
+            logger.info(f"[Transfer] Transfer request sent successfully for '{target_identity}' to '{dial_number}'")
+            # Schedule delayed hangup so agent completely leaves the line after transfer
+            asyncio.create_task(self._delayed_transfer_hangup(delay=3.0))
             return {
                 "success": True,
                 "message": f"Transferring your call to {manager_name} at {dial_number}. Please hold on."
             }
         except Exception as e:
-            import traceback
-            print(f"[Transfer Warning] SIP REFER transfer encountered: {e}. Falling back to Outbound Conference Bridge...")
-            traceback.print_exc()
+            import traceback as _tb
+            logger.warning(f"[Transfer Warning] SIP REFER transfer encountered: {e}. Falling back to Outbound Conference Bridge...", exc_info=True)
             return await self._conference_dial(dial_number, manager_name)
 
     async def _conference_dial(self, dial_number: str, label: str) -> dict:
         """Shared helper: dial a number into the current room via outbound SIP trunk."""
         try:
+            clean_num = dial_number.replace("+", "").replace(" ", "")
+            conf_identity = f"conf_user_{clean_num}"
+            self._conference_participant_identity = conf_identity
+            self._conference_active = True
+            logger.info(f"📞 Conference mode activated for participant '{conf_identity}'. Agent on silent listen mode.")
+
             if self.job_ctx:
-                print(f"[Conference] Dialing '{dial_number}' into room '{self.job_ctx.room.name}' via job_ctx.add_sip_participant (Trunk: ST_CrytprUt4rGi)...")
+                logger.info(f"[Conference] Dialing '{dial_number}' into room '{self.job_ctx.room.name}' via job_ctx.add_sip_participant...")
                 await self.job_ctx.add_sip_participant(
                     call_to=dial_number,
                     trunk_id="ST_CrytprUt4rGi",
-                    participant_identity=f"conf_user_{dial_number}",
+                    participant_identity=conf_identity,
                     participant_name=label
                 )
             else:
@@ -1207,17 +1287,17 @@ class HRAgent(Agent):
                             sip_trunk_id="ST_CrytprUt4rGi",
                             sip_call_to=dial_number,
                             room_name="hr-sip-live",
-                            participant_identity=f"conf_user_{dial_number}"
+                            participant_identity=conf_identity
                         )
                     )
             return {
                 "success": True,
-                "message": f"Dialing {label} at {dial_number} into the conference. Please stay on the line."
+                "message": f"Dialing {label} at {dial_number} into the conference. Please stay on the line. I will be on mute during your conversation."
             }
         except Exception as e:
-            import traceback
-            print(f"[Conference Error] Outbound SIP dial failed: {e}")
-            traceback.print_exc()
+            self._conference_active = False
+            self._conference_participant_identity = None
+            logger.error(f"[Conference Error] Outbound SIP dial failed: {e}", exc_info=True)
             return {"success": False, "message": f"Failed to dial: {str(e)}"}
 
     @function_tool()
