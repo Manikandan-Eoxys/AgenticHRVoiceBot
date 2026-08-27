@@ -44,6 +44,12 @@ import hr_tools
 from security.call_blocklist import is_call_blocked, is_number_blocked
 from config import LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
 from services.session_recorder import SessionRecorder
+from services.monitoring_handler import install_monitoring_handler
+
+try:
+    install_monitoring_handler()
+except Exception:
+    pass
 
 # Load environment variables
 _env_path = Path(__file__).resolve().parent / ".env"

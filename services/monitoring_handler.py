@@ -72,15 +72,16 @@ class MonitoringHandler(logging.Handler):
 
     def __init__(
         self,
-        url: str = "http://192.168.0.230:8570/api/logs",
-        service_name: str = "AgenticHRVoiceBot",
+        url: Optional[str] = None,
+        service_name: Optional[str] = None,
         timeout: int = 5,
         queue_size: int = 500,
         allowed_prefixes: Optional[tuple] = None,
     ):
         super().__init__()
-        self.url = url
-        self.service_name = service_name
+        import os
+        self.url = url or os.getenv("MONITORING_LOG_URL", "http://192.168.0.230:8570/api/logs")
+        self.service_name = service_name or os.getenv("MONITORING_SERVICE_NAME", "AgenticHRVoiceBot")
         self.timeout = timeout
         self.allowed_prefixes = allowed_prefixes
 
@@ -204,8 +205,8 @@ class MonitoringHandler(logging.Handler):
 # ---------------------------------------------------------------------------
 
 def install_monitoring_handler(
-    url: str = "http://192.168.0.230:8570/api/logs",
-    service_name: str = "AgenticHRVoiceBot",
+    url: Optional[str] = None,
+    service_name: Optional[str] = None,
     level: int = logging.DEBUG,
     allowed_prefixes: Optional[tuple] = None,
 ) -> MonitoringHandler:
