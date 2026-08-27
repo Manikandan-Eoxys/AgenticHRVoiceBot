@@ -27,6 +27,7 @@ from config import (
     LIVEKIT_URL,
     LIVEKIT_API_KEY,
     LIVEKIT_API_SECRET,
+    WORKER_AGENT_NAME,
     Config,
 )
 
@@ -52,7 +53,7 @@ PLIVO_SIP_IPS = [
 ]
 
 # ── Agent name (must match agent_name in main.py WorkerOptions) ────────────
-AGENT_NAME = "hr-voice-agent"
+AGENT_NAME = WORKER_AGENT_NAME
 
 # ── Room name prefix for individual calls ──────────────────────────────────
 # Each caller gets a room like "plivo-hr-call-<random-id>"

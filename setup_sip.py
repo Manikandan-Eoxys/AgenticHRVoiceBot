@@ -7,7 +7,7 @@ Configures authentication (user: 100, pass: 1234) so MicroSIP connects seamlessl
 
 import asyncio
 from livekit import api
-from config import LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+from config import LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, WORKER_AGENT_NAME
 
 
 async def main():
@@ -60,7 +60,7 @@ async def main():
                     )
                 ),
                 room_config=api.RoomConfiguration(
-                    agents=[api.RoomAgentDispatch(agent_name="hr-voice-agent")]
+                    agents=[api.RoomAgentDispatch(agent_name=WORKER_AGENT_NAME)]
                 ),
                 trunk_ids=[trunk_id],
             )

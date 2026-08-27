@@ -13,9 +13,18 @@ schemes, employee_schemes, insurance_plans, employee_insurance,
 leave_requests — plus all seed data) and executes it, statement by
 statement, against your MySQL server.
  
-Keeping the schema in one .sql file means hr_tools.py (which queries
-this schema directly) and this initializer can never drift out of
-sync with each other — edit the .sql file, rerun this script, done.
+Keeping the schema in one .sql file means tools/employee_tools.py and
+tools/leave_tools.py (which query this schema directly) and this
+initializer can never drift out of sync with each other — edit the
+.sql file, rerun this script, done.
+ 
+NOTE: this schema only defines employees/leave data (departments,
+designations, employees, leave_policy, leave_balances, schemes,
+employee_schemes, insurance_plans, employee_insurance, leave_requests).
+It has no grievances or calendar_events tables, and no attendance/
+exception/roster columns — tools/grievance_tools.py, calendar_tools.py,
+and attendance_tools.py need those added before they'll work against
+this database.
  
 Usage:
     python database/db.py            # (re)builds hr_voicebot from scratch,
@@ -52,11 +61,11 @@ DB_CONFIG = {
 # reconnect to and report on) — must match the CREATE DATABASE name
 # inside the .sql file itself (hr_voicebot).
 DATABASE_NAME = os.environ.get("MYSQL_DATABASE", "hr_voicebot")
-
+ 
 # The .sql file lives right next to this one, inside database/.
 SCHEMA_PATH = Path(__file__).resolve().parent / "hr-voicebot-schema-mysql.sql"
-
-
+ 
+ 
 def get_db_connection():
     """Returns an active MySQL database connection."""
     config = {
@@ -66,8 +75,8 @@ def get_db_connection():
         "database": DATABASE_NAME,
     }
     return mysql.connector.connect(**config)
-
-
+ 
+ 
 def _split_statements(sql_text: str) -> list[str]:
     """
     Splits the .sql file into individual statements on ';', tracking

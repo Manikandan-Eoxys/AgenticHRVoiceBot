@@ -17,7 +17,7 @@ Returns:
 
 import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from livekit import api
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,7 +26,9 @@ from config import (
     LIVEKIT_API_KEY,
     LIVEKIT_API_SECRET,
     LIVEKIT_URL,
+    WORKER_AGENT_NAME,
 )
+from security.call_blocklist import is_number_blocked
 
 app = FastAPI()
 
@@ -41,6 +43,11 @@ app.add_middleware(
 
 @app.get("/getToken")
 async def get_token(name: str):
+    if is_number_blocked(name):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied: Identity/number '{name}' is in the blocked list.",
+        )
 
     # Fresh unique room per session — guarantees agent is always dispatched
     room_name = f"hr-room-{uuid.uuid4().hex[:8]}"
@@ -68,7 +75,7 @@ async def get_token(name: str):
         .with_room_config(
             api.RoomConfiguration(
                 agents=[
-                    api.RoomAgentDispatch(agent_name="hr-voice-agent")
+                    api.RoomAgentDispatch(agent_name=WORKER_AGENT_NAME)
                 ]
             )
         )
@@ -93,6 +100,12 @@ async def get_sip_token(name: str):
     so TranscriptionReceived events fire correctly and the transcript is
     visible in the UI.
     """
+    if is_number_blocked(name):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied: Identity/number '{name}' is in the blocked list.",
+        )
+
     room_name = "hr-sip-live"   # must match setup_sip.py SIP_ROOM
 
     token = (

@@ -658,6 +658,57 @@ Room token valid
 
 ---
 
+---
+
+# Call Rejection & Number Blocklist
+
+You can reject incoming (SIP / WebRTC) or outgoing calls from specific phone numbers or caller IDs until they are removed.
+
+### 1. Using the CLI Script (`manage_blocked_numbers.py`)
+```bash
+# List all blocked numbers
+python manage_blocked_numbers.py list
+
+# Block one or more numbers / SIP IDs
+python manage_blocked_numbers.py add +919876543210 101
+
+# Check if a number is blocked
+python manage_blocked_numbers.py check +919876543210
+
+# Remove / unblock a number
+python manage_blocked_numbers.py remove +919876543210
+
+# Clear all blocked numbers
+python manage_blocked_numbers.py clear
+```
+
+### 2. In Python Code (`security/call_blocklist.py`)
+Add numbers directly to `BLOCKED_NUMBERS`:
+```python
+BLOCKED_NUMBERS: set[str] = {
+    "+919876543210",
+    "101",
+}
+```
+
+### 3. In JSON Storage (`data/blocked_numbers.json`)
+```json
+[
+  "+919876543210",
+  "101"
+]
+```
+
+### 4. Via Environment Variable (`.env`)
+```bash
+BLOCKED_PHONE_NUMBERS=+919876543210,+1234567890,101
+```
+
+When a blocked number calls in via SIP or WebRTC, LiveKit immediately rejects the job request / hangs up the room and logs:
+`🚫 [CALL REJECTED] Rejecting call in room ... Blocked number/caller: ...`
+
+---
+
 # Future Improvements
 
 - Function calling with Ollama

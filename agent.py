@@ -1,1384 +1,808 @@
-
 """
 agent.py
 
 HR Voice Agent
-LiveKit Agents v1.6.5
+LiveKit Agents v1.6.10
+
+Matches the exact conversation flow and tools:
+- Identity verification with readback and identity locking
+- Full leave management (balance inquiry, policy lookup, two-step availability & submission)
+- MySQL balance updates and automated email notification
+- Call transfer to coordinator with ringback audio and audio muting
+- Keypad DTMF fallback if spoken ID fails
+- End-of-call disconnect with hangup tone
 """
 
 import asyncio
+import json
 import logging
+import os
 import time
+from datetime import date, timedelta
+from pathlib import Path
 
-logger = logging.getLogger(__name__)
+import aiohttp
+import numpy as np
+from dotenv import load_dotenv
 
+from livekit import agents, api, rtc
+from livekit.protocol import egress as egress_proto
 from livekit.agents import (
-    Agent,
-    RunContext,
-    function_tool,
+    AgentServer, AgentSession, Agent, inference, room_io,
+    TurnHandlingOptions, function_tool, RunContext,
 )
-from livekit import api
+from livekit.agents.beta.workflows.dtmf_inputs import GetDtmfTask
+
+# Try importing ai_coustics plugin if installed
+try:
+    from livekit.plugins import ai_coustics
+    HAS_AI_COUSTICS = True
+except ImportError:
+    HAS_AI_COUSTICS = False
+
+import hr_tools
+from security.call_blocklist import is_call_blocked, is_number_blocked
 from config import LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
-from livekit.agents.llm import ChatContext, ChatMessage, StopResponse
+from services.session_recorder import SessionRecorder
 
-from services.employee_service import EmployeeService
-from services.leave_service import LeaveService
-from services.grievance_service import GrievanceService
-from services.policy_service import PolicyService
-from services.calendar_service import CalendarService
-from memory.conversation_memory import ConversationMemory
+# Load environment variables
+_env_path = Path(__file__).resolve().parent / ".env"
+if not _env_path.exists():
+    _env_path = Path(__file__).resolve().parent / ".env.local"
+load_dotenv(_env_path)
 
-from security.auth_service import AuthService
-from security.auth_session import AuthSession
-from config import SYSTEM_PROMPT
-from modules.topic_guard import classify as _classify_topic
+logger = logging.getLogger("agent")
 
-from tools.attendance_tools import AttendanceTools
+_hung_up_rooms: set[str] = set()
 
 
-# ============================================================================
-# WATCHDOG TUNABLES
-# ============================================================================
-IDLE_WARNING_SECONDS = 60   # nudge the employee if this quiet
-IDLE_TIMEOUT_SECONDS = 90   # end the call if still quiet after this
-IDLE_POLL_SECONDS = 10       # how often the watchdog checks
+def _tone_samples(sample_rate: int, freq: float, duration_s: float, amplitude: int = 6000) -> np.ndarray:
+    """Generates one pure sine tone as int16 PCM samples with fade in/out."""
+    n = int(sample_rate * duration_s)
+    t = np.arange(n) / sample_rate
+    wave = amplitude * np.sin(2 * np.pi * freq * t)
+    fade = min(n // 10, 480)
+    if fade > 0:
+        ramp = np.linspace(0, 1, fade)
+        wave[:fade] *= ramp
+        wave[-fade:] *= ramp[::-1]
+    return wave.astype(np.int16)
 
-LLM_FAILURE_LIMIT = 3        # consecutive LLM failures before ending the call
+
+async def _play_hangup_tone(job_ctx: agents.JobContext) -> None:
+    """Plays a short two-tone 'call ended' beep into the room right before hanging up."""
+    try:
+        sample_rate = 48000
+        source = rtc.AudioSource(sample_rate, 1)
+        track = rtc.LocalAudioTrack.create_audio_track("hangup-tone", source)
+        options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
+        publication = await job_ctx.room.local_participant.publish_track(track, options)
+
+        samples = np.concatenate([
+            _tone_samples(sample_rate, 480, 0.2),
+            np.zeros(int(sample_rate * 0.05), dtype=np.int16),
+            _tone_samples(sample_rate, 620, 0.2),
+        ])
+
+        frame = rtc.AudioFrame.create(sample_rate, 1, len(samples))
+        np.copyto(np.frombuffer(frame.data, dtype=np.int16), samples)
+        await source.capture_frame(frame)
+
+        await asyncio.sleep(len(samples) / sample_rate + 0.15)
+        await job_ctx.room.local_participant.unpublish_track(publication.sid)
+    except Exception:
+        logger.exception("Failed to play hangup tone (continuing to hang up anyway).")
 
 
-class HRAgent(Agent):
+async def _ringback_loop(job_ctx: agents.JobContext, stop_event: asyncio.Event) -> None:
+    """Plays a repeating ring tone into the room while an outbound call (e.g. to the coordinator) is dialing."""
+    publication = None
+    try:
+        sample_rate = 48000
+        source = rtc.AudioSource(sample_rate, 1)
+        track = rtc.LocalAudioTrack.create_audio_track("ringback-tone", source)
+        options = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
+        publication = await job_ctx.room.local_participant.publish_track(track, options)
 
-    def __init__(self):
+        ring_cycle = np.concatenate([
+            _tone_samples(sample_rate, 440, 1.0, amplitude=4500),
+            np.zeros(int(sample_rate * 3.0), dtype=np.int16),
+        ])
+        frame = rtc.AudioFrame.create(sample_rate, 1, len(ring_cycle))
+
+        while not stop_event.is_set():
+            np.copyto(np.frombuffer(frame.data, dtype=np.int16), ring_cycle)
+            await source.capture_frame(frame)
+            for _ in range(40):
+                if stop_event.is_set():
+                    break
+                await asyncio.sleep(0.1)
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("Ringback tone failed (continuing without it).")
+    finally:
+        if publication is not None:
+            try:
+                await job_ctx.room.local_participant.unpublish_track(publication.sid)
+            except Exception:
+                logger.exception("Failed to unpublish ringback track (non-fatal).")
+
+
+async def _hangup(job_ctx: agents.JobContext) -> None:
+    """Ends the call by deleting the room."""
+    room_name = job_ctx.room.name
+    if room_name in _hung_up_rooms:
+        return
+    _hung_up_rooms.add(room_name)
+    await _play_hangup_tone(job_ctx)
+    try:
+        await job_ctx.api.room.delete_room(
+            api.DeleteRoomRequest(room=room_name)
+        )
+        logger.info(f"Call ended: room {room_name} deleted.")
+    except Exception as e:
+        already_gone = isinstance(e, aiohttp.ClientError) or "disconnected" in str(e).lower()
+        if already_gone:
+            logger.info(f"Room {room_name} already ended (hangup was redundant): {e}")
+        else:
+            logger.exception(f"FAILED to hang up call for room {room_name}: {e}")
+
+
+async def _start_call_recording(job_ctx: agents.JobContext) -> str | None:
+    """Starts recording the room's audio via LiveKit Egress."""
+    if not RECORDINGS_S3_BUCKET:
+        logger.info("RECORDINGS_S3_BUCKET not set — skipping call recording.")
+        return None
+    room_name = job_ctx.room.name
+    s3_key = f"recordings/{room_name}-{int(time.time())}.ogg"
+    try:
+        s3_upload = egress_proto.S3Upload(
+            bucket=RECORDINGS_S3_BUCKET,
+            region=RECORDINGS_S3_REGION,
+            access_key=RECORDINGS_S3_ACCESS_KEY,
+            secret=RECORDINGS_S3_SECRET_KEY,
+        )
+        if RECORDINGS_S3_ENDPOINT:
+            s3_upload.endpoint = RECORDINGS_S3_ENDPOINT
+            s3_upload.force_path_style = True
+        info = await job_ctx.api.egress.start_room_composite_egress(
+            egress_proto.RoomCompositeEgressRequest(
+                room_name=room_name,
+                audio_only=True,
+                file_outputs=[
+                    egress_proto.EncodedFileOutput(
+                        file_type=egress_proto.EncodedFileType.OGG,
+                        filepath=s3_key,
+                        s3=s3_upload,
+                    )
+                ],
+            )
+        )
+        logger.info(f"Recording started: egress_id={info.egress_id}, s3_key={s3_key}")
+        return info.egress_id
+    except Exception:
+        logger.exception("Failed to start call recording (continuing without it).")
+        return None
+
+
+async def _stop_call_recording(job_ctx: agents.JobContext, egress_id: str) -> None:
+    """Stops an in-progress recording and kicks off download-and-cleanup."""
+    try:
+        await job_ctx.api.egress.stop_egress(
+            egress_proto.StopEgressRequest(egress_id=egress_id)
+        )
+        logger.info(f"Recording stopped: egress_id={egress_id}")
+    except Exception:
+        logger.exception(f"Failed to stop egress {egress_id} (may still be running).")
+
+    download_task = asyncio.create_task(_download_and_cleanup_recording(job_ctx, egress_id))
+
+    async def _wait_for_recording_download(*_args) -> None:
+        try:
+            await download_task
+        except Exception:
+            logger.exception(f"Recording download task for {egress_id} failed during shutdown wait.")
+
+    job_ctx.add_shutdown_callback(_wait_for_recording_download)
+
+
+async def _download_and_cleanup_recording(job_ctx: agents.JobContext, egress_id: str) -> None:
+    """Polls until egress finishes, downloads from S3 into RECORDINGS_LOCAL_DIR, then deletes S3 copy."""
+    try:
+        import boto3
+    except ImportError:
+        logger.warning("boto3 not installed — skipping recording download.")
+        return
+
+    s3_key = None
+    for _ in range(60):
+        await asyncio.sleep(2.0)
+        try:
+            result = await job_ctx.api.egress.list_egress(
+                egress_proto.ListEgressRequest(egress_id=egress_id)
+            )
+        except Exception:
+            logger.exception(f"Failed to poll egress {egress_id} status.")
+            return
+        if not result.items:
+            continue
+        info = result.items[0]
+        if info.status == egress_proto.EgressStatus.EGRESS_COMPLETE:
+            if info.file_results:
+                s3_key = info.file_results[0].filename
+            break
+        if info.status in (egress_proto.EgressStatus.EGRESS_FAILED, egress_proto.EgressStatus.EGRESS_ABORTED):
+            logger.error(f"Egress {egress_id} ended with status {info.status}: {info.error}")
+            return
+
+    if not s3_key:
+        logger.error(f"Egress {egress_id} never reached COMPLETE within timeout.")
+        return
+
+    try:
+        os.makedirs(RECORDINGS_LOCAL_DIR, exist_ok=True)
+        local_path = os.path.join(RECORDINGS_LOCAL_DIR, os.path.basename(s3_key))
+        s3 = boto3.client(
+            "s3",
+            region_name=RECORDINGS_S3_REGION,
+            endpoint_url=RECORDINGS_S3_ENDPOINT or None,
+            aws_access_key_id=RECORDINGS_S3_ACCESS_KEY,
+            aws_secret_access_key=RECORDINGS_S3_SECRET_KEY,
+        )
+        await asyncio.to_thread(s3.download_file, RECORDINGS_S3_BUCKET, s3_key, local_path)
+        await asyncio.to_thread(s3.delete_object, Bucket=RECORDINGS_S3_BUCKET, Key=s3_key)
+        logger.info(f"Recording saved to {local_path} and removed from S3.")
+    except Exception:
+        logger.exception(f"Failed to download/cleanup recording {s3_key} from S3.")
+
+
+COORDINATOR_PHONE_NUMBER = os.environ.get("COORDINATOR_PHONE_NUMBER", "+918925355704")
+OUTBOUND_TRUNK_ID = os.environ.get("LIVEKIT_OUTBOUND_TRUNK_ID", "ST_48TbGFJbEJvV")
+COORDINATOR_DIAL_TIMEOUT_SECONDS = 30
+
+RECORDINGS_S3_BUCKET = os.environ.get("RECORDINGS_S3_BUCKET", "")
+RECORDINGS_S3_REGION = os.environ.get("RECORDINGS_S3_REGION", "us-east-1")
+RECORDINGS_S3_ENDPOINT = os.environ.get("RECORDINGS_S3_ENDPOINT", "")
+RECORDINGS_S3_ACCESS_KEY = os.environ.get("RECORDINGS_S3_ACCESS_KEY", "")
+RECORDINGS_S3_SECRET_KEY = os.environ.get("RECORDINGS_S3_SECRET_KEY", "")
+RECORDINGS_LOCAL_DIR = os.environ.get(
+    "RECORDINGS_LOCAL_DIR",
+    str(Path(__file__).resolve().parent / "Recordings"),
+)
+
+
+INBOUND_INSTRUCTIONS = """You are a helpful HR voice assistant.
+
+            Today's actual date is {today_str}. Use this as ground truth for
+            every relative date the caller mentions — "today", "tomorrow",
+            "day after tomorrow", "next Friday", a bare "the 15th", and so
+            on. Do not guess or fall back on any other date — always compute
+            relative to {today_str}. If the caller gives a date without a
+            year (e.g. "May 15" or "the 27th"), use the current year from
+            {today_str} unless the caller says otherwise, and if that date
+            has already passed this year, ask the caller to confirm whether
+            they mean this year or next year rather than assuming.
+
+            Identity first, with verification: at the very start of every
+            call, ask the caller for their employee ID before doing
+            anything else. Employee IDs are 4-digit numbers from 1001 to
+            1015. Callers often say the digits one at a time (for example
+            "one zero zero one") — always convert this to the plain
+            numeric string "1001" before calling any tool, never pass the
+            spoken words through as-is. Once given, call get_employee_by_id
+            right away. That tool gives you a name to read back — say it
+            out loud as a verification question, e.g. "This is employee ID 1001,
+            Ravikala, is that correct?" and wait for an explicit yes
+            before doing anything else on their behalf. As soon as they
+            say yes, immediately call confirm_employee_identity with that
+            same ID — this locks the call to that employee. Every leave,
+            balance, insurance, and scheme tool will refuse to run for
+            any other employee ID for the rest of the call, even if the
+            caller mentions one — do not try to work around this by
+            re-verifying a different ID mid-call unless the caller
+            explicitly says they are a different person and you restart
+            verification from the beginning for them. If they say no to
+            the readback, ask for the correct employee ID and verify
+            again. Never look someone up by name — always by employee
+            ID. If a caller gives a name instead of an ID, ask them for
+            their employee ID.
+
+            If get_employee_by_id finds no match for a spoken ID, do not
+            just ask the caller to repeat themselves — speech misrecognition
+            (e.g. hearing "1015" as "1017") is a common cause and repeating
+            rarely fixes it. Instead offer them the option to enter their
+            employee ID using their phone's keypad, and if they agree, call
+            collect_employee_id_via_keypad. Use exactly what it returns as
+            the employee ID and call get_employee_by_id again with it.
+
+            Leave requests — checking policy or balance: there are 8
+            possible leave types — Casual Leave, Sick Leave, Maternity
+            Leave, Paternity Leave, Comp Off, Bereavement Leave, Short
+            Leave (hourly or half-day), and Leave Without Pay. If a
+            caller asks about "leave" or "my balance" without saying
+            which kind, call list_leave_types and ask them which one they
+            mean before answering. Once they specify a type, use
+            get_leave_balance for that one type, or get_all_leave_balances
+            if they want a full summary across all types that apply to
+            them. For policy questions (how many days, eligibility, how
+            it works), use get_leave_policy. Maternity only applies to
+            employees enrolled in that scheme, and Paternity only to male
+            employees — if a type does not apply to the caller, say so
+            plainly, without guessing why.
+
+            Leave requests — actually applying for time off: when a
+            caller wants to take leave on specific dates (for example
+            "I want sick leave on August 27 and 28"), this is a two-step
+            flow:
+              1. Convert whatever dates they say into YYYY-MM-DD format
+                 (assume the current year unless they say otherwise), then
+                 call check_leave_availability with their employee ID,
+                 leave type, start date, and end date. Read back exactly
+                 what it reports — how many days are available and how
+                 many are being requested — and ask the caller if they
+                 are ready to go ahead. If it reports there is not enough
+                 balance, say so plainly and do not offer to submit it.
+              2. Only after the caller explicitly confirms yes, ask them
+                 for a brief reason if they have not already given one,
+                 then call confirm_leave_request with the same employee
+                 ID, leave type, and dates, plus the reason. This is what
+                 actually records the request, updates their balance, and
+                 emails HR — do not call it before the caller has said
+                 yes, and do not call check_leave_availability and treat
+                 that alone as submission. After confirm_leave_request
+                 succeeds, tell the caller their request has been
+                 submitted and HR has been notified by email.
+
+            If a caller's answer doesn't make sense mid-flow (for example
+            you asked which leave type and got something garbled or
+            unrelated back — this can happen with phone call audio),
+            do not abandon what you were doing and give a generic "how
+            can I help" response. Stay on the exact question you asked,
+            say you didn't quite catch that, and ask it again in a
+            slightly different way. Only give up on a specific step and
+            ask what they need generally if this happens repeatedly (three
+            or more times) on the same question.
+
+            You can also look up an employee's department and designation,
+            and scheme enrollments (like EPF, Maternity Benefit, or
+            Paternity Benefit), using your tools. Only answer from what
+            the tools return — never guess an employee's details.
+
+            Insurance: the company offers 3 office health insurance
+            plans. If a caller asks generally what insurance is
+            available, use list_insurance_plans and name all 3 with
+            their coverage amounts. If a caller asks about their own
+            insurance, use get_insurance_info with their employee ID —
+            it tells you how many plans exist in total, which ones they
+            personally have applied for, and which one(s) they have
+            claimed. Report exactly what the tool returns; having
+            applied for fewer than all 3, or claimed none, is normal and
+            not a problem to flag.
+
+            Talking to the coordinator: if the caller says something like
+            "I need to talk to the coordinator" or "connect me to a real
+            person", do not just transfer them immediately. First say
+            you'll forward the call to the coordinator and ask them to
+            say "yes, proceed" to confirm. Only once they explicitly
+            confirm — a plain "yes" is enough, do not require the exact
+            phrase — call transfer_to_coordinator. That tool dials the
+            coordinator into this same call and tells you whether they
+            answered. If they answered, say a brief single line like
+            "Connecting you now" and then stop talking — do not keep
+            responding to what the caller and coordinator say to each
+            other, and do not call end_call while they're talking. If
+            the tool reports the coordinator did not answer, tell the
+            caller plainly that the coordinator isn't available right
+            now, and ask whether they'd like you to try again immediately
+            or would rather call back later — do not claim you connected
+            them if you did not.
+
+            Your responses are concise, to the point, and without any
+            complex formatting or punctuation including emojis, asterisks,
+            or other symbols. You are professional, warm, and clear.
+
+            Ending the call: once the caller has nothing further and you've
+            said a closing goodbye (for any kind of call — a leave request,
+            a balance check, an insurance question, anything), call
+            end_call right after that goodbye. This hangs up the phone
+            line so the call doesn't stay open and billing after the
+            conversation is actually finished. Only call it once, and only
+            after your goodbye has been said — never mid-conversation."""
+
+
+OUTBOUND_LEAVE_VERIFICATION_INSTRUCTIONS = """You are an HR voice assistant making an OUTBOUND call — you called
+            {employee_name}, employee ID {employee_id}, they did not call you.
+
+            Today's actual date is {today_str}. Use this as ground truth for
+            any relative date you need to reason about.
+
+            Start of call — verify you reached the right person: greet them
+            by name and identify yourself, then ask them to confirm their
+            identity, for example: "Hello, is this {employee_name}? I'm
+            calling from HR, I wanted to verify a few details with you." If
+            they say yes, immediately call confirm_employee_identity with
+            employee_id "{employee_id}" — this must happen before any leave
+            tool. If they say this isn't {employee_name}, apologize for the
+            wrong number, do not discuss any leave or personal details, and
+            call end_call.
+
+            Once identity is confirmed, call get_pending_leave_request with
+            employee_id "{employee_id}" to find out which request you're
+            calling about. Read back the dates it returns and tell them
+            plainly, for example: "I'm calling because your leave request
+            for August 27 to August 29 is currently pending approval." —
+            using the actual dates the tool gave you, not a placeholder.
+            Then ask: "Can you give me a brief
+            reason for this leave, to help get it approved?" Once they give
+            a reason (or explicitly say they'd rather not), call
+            record_leave_verification_reason with the request_id from the
+            lookup and their reason (empty string if they declined). Make
+            clear this records their reason for HR's review — it does not
+            itself approve the leave.
+
+            If get_pending_leave_request finds nothing pending, tell them
+            plainly there's no pending leave request on file right now,
+            apologize for the confusion, and move to ending the call.
+
+            Talking to the coordinator: if they ask to talk to the
+            coordinator directly instead of you, follow the same
+            confirm-then-transfer flow as inbound calls — ask them to say
+            "yes, proceed", then call transfer_to_coordinator.
+
+            Your responses are concise, natural for a phone call, and
+            without any complex formatting, emojis, or asterisks. You are
+            professional, warm, and clear.
+
+            Ending the call: once you've covered the reason for the call
+            and the person has nothing further, say a brief closing
+            goodbye and then call end_call right after it. Only call it
+            once, and only after the goodbye has actually been said."""
+
+
+class Assistant(Agent):
+    def __init__(self, job_ctx: agents.JobContext, call_metadata: dict | None = None) -> None:
+        self._job_ctx = job_ctx
+        today_str = date.today().strftime("%A, %B %-d, %Y")
+        call_metadata = call_metadata or {}
+        call_type = call_metadata.get("call_type")
+
+        if call_type == "leave_verification":
+            instructions = OUTBOUND_LEAVE_VERIFICATION_INSTRUCTIONS.format(
+                today_str=today_str,
+                employee_name=call_metadata.get("employee_name", "there"),
+                employee_id=call_metadata.get("employee_id", ""),
+            )
+        else:
+            instructions = INBOUND_INSTRUCTIONS.format(today_str=today_str)
 
         super().__init__(
-            instructions=SYSTEM_PROMPT
+            instructions=instructions,
+            tools=hr_tools.ALL_TOOLS,
         )
 
-        self.memory = ConversationMemory()
+    @function_tool()
+    async def end_call(self, context: RunContext) -> None:
+        """Call this exactly once, as the very last action of the call,
+        immediately after you've said your closing goodbye and the caller
+        has nothing further to ask. Hangs up the phone line."""
+        await context.wait_for_playout()
+        await _hangup(self._job_ctx)
 
-        self.auth_service = AuthService()
-        self.auth = AuthSession()
+    @function_tool()
+    async def collect_employee_id_via_keypad(self, context: RunContext) -> str:
+        """Use this when a spoken employee ID didn't match any employee on
+        file, or when the caller explicitly asks to type or key in their ID.
+        Prompts the caller to enter their 4-digit employee ID on their
+        phone keypad, reads it back for confirmation, and returns the digit string."""
+        result = await GetDtmfTask(
+            num_digits=4,
+            chat_ctx=context.session.chat_ctx.copy(
+                exclude_instructions=True,
+                exclude_function_call=True,
+            ),
+            ask_for_confirmation=True,
+            extra_instructions=(
+                "Ask the caller to enter their 4-digit employee ID using "
+                "their phone keypad, or say it slowly one digit at a time "
+                "if they'd rather speak it. Read the digits back to "
+                "confirm before finishing."
+            ),
+        )
+        return result.user_input
 
-        self.employee_service = EmployeeService()
-        self.leave_service = LeaveService()
-        self.grievance_service = GrievanceService()
-        self.policy_service = PolicyService()
-        self.calendar_service = CalendarService()
+    @function_tool()
+    async def transfer_to_coordinator(self, context: RunContext) -> str:
+        """Call this ONLY after the caller has explicitly confirmed
+        (e.g. said 'yes, proceed') that they want to be connected to
+        the coordinator. Dials the coordinator's phone number into
+        this same call with a ring tone while dialing."""
+        if is_number_blocked(COORDINATOR_PHONE_NUMBER):
+            logger.warning(f"🚫 Coordinator transfer blocked: {COORDINATOR_PHONE_NUMBER} is in blocklist.")
+            return "The transfer cannot be completed because the coordinator's number is currently blocked."
 
-        self.attendance_tools = AttendanceTools()
+        room = self._job_ctx.room
+        identity = f"coordinator-{int(time.time())}"
+        # ── Check recording mode: if cutoff, stop recording before dialing coordinator ──
+        rec_mode = os.environ.get("RECORDING_COORDINATOR_MODE", "record_all").strip().lower()
+        if rec_mode == "cutoff" and getattr(context.session, "recorder", None):
+            logger.info("🛑 [Transfer] Mode is 'cutoff': stopping recorder before coordinator pick.")
+            await context.session.recorder.stop()
 
-        # ── NEW: set by main.py's entrypoint right after HRAgent() is
-        # constructed. Gives the agent a way to end its own call (idle
-        # timeout / repeated LLM failure) via the same room-disconnect
-        # path a normal hangup uses, so the existing FSM
-        # (SESSION_ACTIVE -> ENDING -> READY) fires unchanged.
-        self.job_ctx = None
+        # ── Start Ringback / Dialtone Beep into the Room ───────────────────────
+        stop_ringback = asyncio.Event()
+        ringback_task = asyncio.create_task(_ringback_loop(self._job_ctx, stop_ringback))
 
-        # ── NEW: idle watchdog state ────────────────────────────────────
-        self._last_activity: float = time.time()
-        self._idle_task: asyncio.Task | None = None
-        self._warned_idle = False
-        self._call_ending = False  # guards against double-ending
-
-        # ── NEW: consecutive LLM failure tracking ───────────────────────
-        self._llm_failure_count = 0
-
-        # ── NEW: Conference & Call Transfer state tracking ──────────────
-        self._conference_active = False
-        self._conference_participant_identity: str | None = None
-        self._main_caller_identity: str | None = None
-
-    async def on_enter(self):
-        """Greet the user when the session starts, and start the idle watchdog.
-
-        SIP callers (Plivo) need a brief settling delay (~1 s) after the
-        SIP INVITE / 200 OK exchange before audio can flow cleanly.
-        We detect SIP participants by checking for the 'sip:' identity
-        prefix that LiveKit sets automatically on bridged participants.
-        """
-        self._last_activity = time.time()
-        self._idle_task = asyncio.create_task(self._idle_watchdog())
-
-        # ── Detect main caller & attach room disconnect listener ──────────
-        is_sip_call = False
         try:
-            for participant in self.session.room.remote_participants.values():
-                if not self._main_caller_identity:
-                    self._main_caller_identity = participant.identity
-                if participant.identity.startswith("sip_"):
-                    is_sip_call = True
-                    import logging
-                    logging.getLogger(__name__).info(
-                        "[HRAgent] SIP/Plivo caller detected: %s",
-                        participant.identity,
+            async with api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) as lkapi:
+                await lkapi.sip.create_sip_participant(
+                    api.CreateSIPParticipantRequest(
+                        sip_trunk_id=OUTBOUND_TRUNK_ID,
+                        sip_call_to=COORDINATOR_PHONE_NUMBER,
+                        room_name=room.name,
+                        participant_identity=identity,
+                        participant_name="Coordinator",
+                        wait_until_answered=True,
+                        ringing_timeout=timedelta(seconds=COORDINATOR_DIAL_TIMEOUT_SECONDS),
                     )
-                    break
-        except Exception:
-            pass  # room not yet fully populated — safe to ignore
-
-        try:
-            if hasattr(self, "session") and self.session and self.session.room:
-                @self.session.room.on("participant_disconnected")
-                def _on_participant_disconnected(participant):
-                    self._handle_participant_disconnected(participant)
-        except Exception as exc:
-            logger.warning(f"Could not attach room disconnect listener: {exc}")
-
-        # Give SIP media a moment to stabilise before speaking
-        if is_sip_call:
-            await asyncio.sleep(1.0)
-
-        greeting = (
-            "Hello! I'm HR Buddy, your Agentic HR Voice Assistant. "
-            "I can help you with leave requests, absence management, "
-            "team coverage, HR policies, and more. "
-            "How can I help you today?"
-        )
-        logger.info(f"🤖 [Conversation Assistant]: {greeting}")
-        await self.session.say(
-            greeting,
-            allow_interruptions=True,
-        )
-
-    # ------------------------------------------------------------------
-    # Code-enforced HR-only guardrail + activity tracking.
-    #
-    # Runs the instant the user finishes speaking, BEFORE the LLM is
-    # invoked — so it can't be skipped by a model that decides not to
-    # call check_topic(). If the message is off-topic, we speak the
-    # refusal directly and raise StopResponse() so the LLM never runs
-    # for this turn at all. Otherwise we return and the normal flow
-    # continues exactly as before.
-    # ------------------------------------------------------------------
-    async def on_user_turn_completed(
-        self,
-        turn_ctx: ChatContext,
-        new_message: ChatMessage,
-    ) -> None:
-        # NEW: any real user turn resets the idle clock, regardless of
-        # whether it ends up HR-relevant or not — the employee IS present.
-        self._last_activity = time.time()
-        self._warned_idle = False
-
-        text = (new_message.text_content or "").strip()
-        if not text:
-            return
-
-        logger.info(f"🗣️ [Conversation User]: {text}")
-
-        # ── Conference Mute Guard ─────────────────────────────────────────
-        # If a 3-way conference call is active (e.g. manager is on the line),
-        # suppress the agent from speaking or calling tools until manager leaves.
-        if self._conference_active:
-            logger.info(f"🗣️ [Conference Active - Agent Silent]: {text}")
-            raise StopResponse()
-
-    def _handle_participant_disconnected(self, participant):
-        """Called when any remote participant leaves the LiveKit room."""
-        identity = getattr(participant, "identity", "")
-        logger.info(f"👤 Room participant disconnected: {identity}")
-
-        if self._conference_active:
-            if (
-                (self._conference_participant_identity and identity == self._conference_participant_identity)
-                or identity.startswith("conf_user_")
-                or (self._main_caller_identity and identity != self._main_caller_identity)
-            ):
-                logger.info(f"📞 Conference participant '{identity}' left call. Agent resuming takeover...")
-                self._conference_active = False
-                self._conference_participant_identity = None
-                asyncio.create_task(self._takeover_after_conference())
-
-    async def _takeover_after_conference(self):
-        """Announce agent takeover after conference participant hangs up."""
-        await asyncio.sleep(1.0)
-        msg = "The conference call has ended. I am back on the line — how else can I help you today?"
-        logger.info(f"🤖 [Agent Takeover]: {msg}")
-        await self.session.say(msg, allow_interruptions=True)
-
-    async def _delayed_transfer_hangup(self, delay: float = 3.0):
-        """Hang up the agent after call transfer so the agent leaves the line completely."""
-        logger.info(f"📞 Call transfer successful. Agent hanging up in {delay} seconds...")
-        await asyncio.sleep(delay)
-        await self._end_call()
-
-        # If the assistant's last message was a follow-up question
-        # (employee ID, confirmation, dates, OTP, etc.), treat this reply
-        # as an in-context continuation and skip the guard. Without this,
-        # plain answers like "one zero zero one", "yes", or spoken dates
-        # get wrongly rejected because they contain no HR keyword on
-        # their own — even though they're clearly part of an HR task
-        # already in progress.
-        last_assistant_text = _last_assistant_message(turn_ctx)
-        if last_assistant_text and last_assistant_text.rstrip().endswith("?"):
-            return  # let the LLM handle it normally, no guard check needed
-
-        result = _classify_topic(text)
-
-        if not result["allowed"]:
-            await self.session.say(result["message"], allow_interruptions=True)
-            raise StopResponse()
-
-    # ------------------------------------------------------------------
-    # NEW: idle watchdog — ends the call if the employee goes quiet.
-    # ------------------------------------------------------------------
-    async def _idle_watchdog(self):
-        try:
-            while True:
-                await asyncio.sleep(IDLE_POLL_SECONDS)
-
-                if self._call_ending:
-                    return
-
-                idle_for = time.time() - self._last_activity
-
-                if idle_for > IDLE_WARNING_SECONDS and not self._warned_idle:
-                    self._warned_idle = True
-                    await self.session.say(
-                        "Are you still there? I'll end this session shortly "
-                        "if I don't hear from you.",
-                        allow_interruptions=True,
-                    )
-
-                if idle_for > IDLE_TIMEOUT_SECONDS:
-                    await self.session.say(
-                        "I haven't heard from you in a while, so I'll end "
-                        "this session now. Feel free to reach out again "
-                        "anytime.",
-                        allow_interruptions=False,
-                    )
-                    await self._end_call()
-                    return
-        except asyncio.CancelledError:
-            # Normal shutdown path (employee hung up, call ended cleanly) —
-            # nothing to clean up beyond letting the task exit.
-            raise
-
-    # ------------------------------------------------------------------
-    # NEW: LLM-failure watchdog hooks.
-    #
-    # Wire _on_llm_success() into whatever marks a turn as having
-    # completed cleanly, and _on_llm_failure() into wherever your LLM
-    # call raises (e.g. OllamaLLMStream._run()'s except blocks in
-    # ollama_llm.py, or an AgentSession error event if your installed
-    # livekit-agents version exposes one). Without a real hook, this
-    # logic simply never triggers — it is not self-wiring.
-    # ------------------------------------------------------------------
-    def on_llm_success(self):
-        self._llm_failure_count = 0
-
-    async def on_llm_failure(self):
-        self._llm_failure_count += 1
-
-        if self._llm_failure_count >= LLM_FAILURE_LIMIT:
-            await self.session.say(
-                "I'm having trouble processing requests right now. "
-                "I'll end this session — please try again in a few minutes.",
-                allow_interruptions=False,
-            )
-            await self._end_call()
-        else:
-            await self.session.say(
-                "Sorry, I had trouble with that. Could you say it again?",
-                allow_interruptions=True,
-            )
-
-    # ------------------------------------------------------------------
-    # NEW: end the call through the same path a normal hangup uses.
-    # ------------------------------------------------------------------
-    async def _end_call(self):
-        if self._call_ending:
-            return
-        self._call_ending = True
-
-        if self._idle_task:
-            self._idle_task.cancel()
-
-        if self.job_ctx is not None and self.job_ctx.room is not None:
-            # Routing through room.disconnect() means the existing
-            # ctx.add_shutdown_callback(self.request_shutdown) in
-            # voice_controller.py fires the same way it does for a
-            # normal employee-initiated hangup, so SESSION_ACTIVE ->
-            # ENDING -> READY happens unchanged.
-            await self.job_ctx.room.disconnect()
-        else:
-            # Defensive fallback — should not normally happen if
-            # main.py sets agent_instance.job_ctx before start_session().
-            import logging
-            logging.getLogger(__name__).warning(
-                "[HRAgent] _end_call() invoked but job_ctx is not set; "
-                "cannot disconnect the room programmatically."
-            )
-
-    async def on_exit(self):
-        """Best-effort cleanup if the Agent base class calls this on teardown."""
-        if self._idle_task:
-            self._idle_task.cancel()
-
-    ####################################################################
-    # GUARDRAIL
-    ####################################################################
-
-    @function_tool()
-    async def check_topic(
-        self,
-        context: RunContext,
-        user_message: str,
-    ):
-        """
-        MANDATORY GUARDRAIL — Call this tool FIRST whenever the user's request
-        is ambiguous, seems unrelated to HR, or touches any of the following:
-
-        - Weather, geography, science
-        - Politics, current events, news
-        - Finance, stocks, cryptocurrency
-        - Sports, entertainment, movies, music
-        - Recipes, food, restaurants
-        - Travel, tourism, hotels
-        - Programming, coding, software
-        - Medical or legal advice
-        - Jokes, stories, poems, creative writing
-        - General knowledge or trivia
-
-        This tool classifies the message and either:
-          - Returns allowed=True  -> proceed normally
-          - Returns allowed=False -> speak the 'message' field verbatim and stop
-
-        DO NOT skip this tool for borderline requests.
-        DO NOT answer non-HR questions even if you think you know the answer.
-        """
-        result = _classify_topic(user_message)
-        return result
-
-    ####################################################################
-    # EMPLOYEE
-    ####################################################################
-
-    @function_tool()
-    async def get_employee(
-        self,
-        context: RunContext,
-        employee_id: int | None = None,
-    ):
-        """
-        Retrieve complete information for an employee using their employee ID.
-
-        Use this tool whenever the user asks for details about a specific employee
-        and already provides the employee ID.
-
-        Examples:
-        - Show employee 1001.
-        - Get details of employee ID 1045.
-        - What is the information for employee 2005?
-
-        Do NOT use this tool if the user only provides a name.
-        Use search_employee instead.
-        """
-        if employee_id is None:
-            return {"success": False, "message": "What's the employee ID?"}
-        return self.employee_service.get_employee(employee_id)
-
-    @function_tool()
-    async def search_employee(
-        self,
-        context: RunContext,
-        name: str,
-    ):
-        """
-        Search employees by first name or last name.
-
-        Use this tool whenever the user mentions an employee name instead of an ID.
-
-        Examples:
-        - Find John.
-        - Search employee named Alice.
-        - Do we have an employee called David?
-        - Show me Ravi.
-
-        Returns one or more matching employees.
-
-        Do NOT use when an employee ID is available.
-        """
-        return self.employee_service.search_employee(name)
-
-    @function_tool()
-    async def employee_summary(
-        self,
-        context: RunContext,
-        employee_id: int | None = None,
-    ):
-        """
-        Retrieve a short summary of an employee.
-
-        Includes information such as:
-        - Name
-        - Department
-        - Designation
-        - Manager
-        - Contact information
-
-        Use this when the user asks for an overview instead of complete employee details.
-
-        Examples:
-        - Give me a summary of employee 1005.
-        - Tell me about employee 1005.
-        """
-        if employee_id is None:
-            return {"success": False, "message": "What's the employee ID?"}
-        return self.employee_service.get_employee_summary(employee_id)
-
-    @function_tool()
-    async def list_employees(
-        self,
-        context: RunContext,
-    ):
-        """
-        Retrieve a list of all employees.
-
-        Use only when the user explicitly asks to list employees.
-
-        Examples:
-        - List all employees.
-        - Show every employee.
-        - Display employee directory.
-        """
-        return self.employee_service.list_employees()
-
-    ####################################################################
-    # LEAVE
-    ####################################################################
-
-    @function_tool()
-    async def leave_balance(
-        self,
-        context: RunContext,
-        employee_id: int | None = None,
-    ):
-        """
-        Retrieve the available leave balance for an employee.
-        Requires the employee to be verified first.
-
-        Examples:
-        - How many casual leaves do I have?
-        - What's my leave balance?
-        - Remaining annual leave?
-        - Sick leave left?
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity first. What's your employee ID?"
-            }
-        # Use the verified identity — never trust an ID the model supplies
-        # separately, since that's exactly how a stranger's balance could
-        # get returned without anyone confirming who they actually are.
-        employee_id = self.auth.employee_id
-        return self.leave_service.check_leave_balance(employee_id)
-
-    @function_tool()
-    async def apply_leave(
-        self,
-        context: RunContext,
-        from_date: str,
-        to_date: str,
-        leave_type: str,
-    ):
-        """
-        Submit a leave or absence request for the authenticated employee.
-
-        Delegates to the full absence pipeline which:
-          - Checks team coverage threshold
-          - Detects exception scenarios and routes to Area Manager
-          - Syncs to IFS Cloud and SQL Server
-
-        leave_type / absence_type must be one of:
-          'Sickness', 'Holiday', 'Emergency', 'Funeral',
-          'Compassionate', 'Casual', 'Earned'
-
-        Always ask for confirmation before calling this tool.
-
-        Examples:
-        - I want leave tomorrow.
-        - Apply casual leave.
-        - Book annual leave.
-        - I need holiday from Monday to Friday.
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity first. What is your employee ID?"
-            }
-        # Delegate to the full absence pipeline (coverage check, exception
-        # detection, IFS/SQL sync) rather than the legacy LeaveService path.
-        return self.attendance_tools.submit_absence_request(
-            employee_id  = self.auth.employee_id,
-            absence_type = leave_type,
-            from_date    = from_date,
-            to_date      = to_date,
-            reason       = "",
-        )
-
-    @function_tool()
-    async def cancel_leave(
-        self,
-        context: RunContext,
-        request_id: int,
-    ):
-        """
-        Cancel an existing leave request.
-
-        Use only after the employee provides the leave request ID.
-
-        Examples:
-        - Cancel my leave.
-        - Withdraw leave request 25.
-        - Delete my leave application.
-
-        Requires authentication.
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity first by providing your employee ID."
-            }
-        return self.leave_service.cancel_leave(request_id)
-
-    @function_tool()
-    async def leave_history(
-        self,
-        context: RunContext,
-        employee_id: int | None = None,
-    ):
-        """
-        Retrieve the leave history for the authenticated employee.
-
-        Examples:
-        - Show my leave history.
-        - Previous leave applications.
-        - What leave have I taken this year?
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity first. What's your employee ID?"
-            }
-        employee_id = self.auth.employee_id
-        return self.leave_service.leave_history(employee_id)
-
-    ####################################################################
-    # GRIEVANCE
-    ####################################################################
-
-    @function_tool()
-    async def raise_grievance(
-        self,
-        context: RunContext,
-        category: str,
-        description: str,
-        anonymous: bool = False,
-    ):
-        """
-        Create a new grievance for the authenticated employee.
-
-        Use only after collecting:
-        - Category
-        - Description
-        - Anonymous or not
-
-        Always ask for confirmation before submitting.
-
-        Examples:
-        - I want to report harassment.
-        - Raise a grievance.
-        - Report a workplace issue.
-        - File a complaint.
-
-        Requires authentication.
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity first by providing your employee ID."
-            }
-        return self.grievance_service.create_grievance(
-            self.auth.employee_id,
-            category,
-            description,
-            anonymous,
-        )
-
-    @function_tool()
-    async def grievance_status(
-        self,
-        context: RunContext,
-        grievance_id: int | None = None,
-    ):
-        """
-        Retrieve the status of a grievance using its grievance ID.
-
-        Examples:
-        - Check grievance 45.
-        - What's the status of my complaint?
-        - Has grievance 20 been resolved?
-        """
-        if grievance_id is None:
-            return {"success": False, "message": "What's the grievance ID?"}
-        return self.grievance_service.get_grievance(grievance_id)
-
-    @function_tool()
-    async def employee_grievances(
-        self,
-        context: RunContext,
-        employee_id: int | None = None,
-    ):
-        """
-        Retrieve all grievances submitted by the authenticated employee.
-
-        Examples:
-        - Show my grievances.
-        - List my complaints.
-        - My grievance history.
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity first. What's your employee ID?"
-            }
-        employee_id = self.auth.employee_id
-        return self.grievance_service.list_employee_grievances(employee_id)
-
-    @function_tool()
-    async def escalate_grievance(
-        self,
-        context: RunContext,
-        grievance_id: int,
-    ):
-        """
-        Escalate an existing grievance.
-
-        Use only after confirming with the employee.
-
-        Examples:
-        - Escalate grievance 24.
-        - I want HR management to review my complaint.
-
-        Requires authentication.
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity first by providing your employee ID."
-            }
-        return self.grievance_service.escalate_grievance(grievance_id)
-
-    ####################################################################
-    # POLICY
-    ####################################################################
-
-    @function_tool()
-    async def get_policy(
-        self,
-        context: RunContext,
-        policy_name: str,
-    ):
-        """
-        Retrieve the full HR policy for a specific topic.
-
-        Use when the user asks about one known policy.
-
-        Examples:
-        - Explain maternity leave policy.
-        - What is the work from home policy?
-        - Show me the attendance policy.
-        - Explain casual leave policy.
-
-        Never invent policy information.
-        Always use this tool.
-        """
-        return self.policy_service.get_policy(policy_name)
-
-    @function_tool()
-    async def search_policy(
-        self,
-        context: RunContext,
-        keyword: str,
-    ):
-        """
-        Search HR policies using keywords.
-
-        Use when the user is unsure of the exact policy name.
-
-        Examples:
-        - Policies related to leave.
-        - Travel policies.
-        - Remote work.
-        - Insurance.
-        - Performance review.
-
-        Return matching policies.
-        """
-        return self.policy_service.search_policy(keyword)
-
-    @function_tool()
-    async def leave_eligibility(
-        self,
-        context: RunContext,
-        leave_type: str,
-        years_of_service: int,
-    ):
-        """
-        Check whether an employee is eligible for a specific leave type.
-
-        Requires:
-        - Leave type
-        - Years of service
-
-        Examples:
-        - Am I eligible for maternity leave?
-        - Can a new employee take earned leave?
-        - Eligibility for paternity leave.
-        """
-        return self.policy_service.check_leave_eligibility(
-            leave_type,
-            years_of_service,
-        )
-
-    @function_tool()
-    async def list_policies(
-        self,
-        context: RunContext,
-    ):
-        """
-        Retrieve a list of all available HR policies.
-
-        Use only when the employee asks to browse policies.
-
-        Examples:
-        - List all HR policies.
-        - What policies are available?
-        - Show company policies.
-        """
-        return self.policy_service.list_policies()
-
-    ####################################################################
-    # CALENDAR
-    ####################################################################
-
-    @function_tool()
-    async def schedule_meeting(
-        self,
-        context: RunContext,
-        title: str,
-        event_date: str,
-        event_time: str,
-        duration: int = 30,
-    ):
-        """
-        Schedule a meeting for the authenticated employee.
-
-        Collect:
-        - Meeting title
-        - Date
-        - Time
-        - Duration
-
-        Always confirm before scheduling.
-
-        Examples:
-        - Schedule a meeting tomorrow.
-        - Book a meeting with HR.
-        - Create an interview meeting.
-
-        Requires authentication.
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity first by providing your employee ID."
-            }
-        return self.calendar_service.schedule_meeting(
-            self.auth.employee_id,
-            title,
-            event_date,
-            event_time,
-            duration,
-        )
-
-    @function_tool()
-    async def cancel_meeting(
-        self,
-        context: RunContext,
-        event_id: int,
-    ):
-        """
-        Cancel an existing meeting.
-
-        Requires the meeting ID.
-
-        Examples:
-        - Cancel meeting 35.
-        - Delete tomorrow's meeting.
-
-        Requires authentication.
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity first by providing your employee ID."
-            }
-        return self.calendar_service.cancel_meeting(event_id)
-
-    @function_tool()
-    async def upcoming_meetings(
-        self,
-        context: RunContext,
-        employee_id: int | None = None,
-    ):
-        """
-        Retrieve all upcoming meetings for the authenticated employee.
-
-        Examples:
-        - My meetings.
-        - What's on my calendar?
-        - Upcoming meetings.
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity first. What's your employee ID?"
-            }
-        employee_id = self.auth.employee_id
-        return self.calendar_service.upcoming_meetings(employee_id)
-
-    @function_tool()
-    async def available_slots(
-        self,
-        context: RunContext,
-        employee_id: int,
-        event_date: str,
-    ):
-        """
-        Retrieve available meeting time slots for a specific day.
-
-        Requires:
-        - Employee ID
-        - Date
-
-        Examples:
-        - Free slots tomorrow.
-        - When am I available on Monday?
-        - Available meeting times.
-        """
-        return self.calendar_service.available_slots(
-            employee_id,
-            event_date,
-        )
-
-    ####################################################################
-    # SECURITY
-    ####################################################################
-
-    @function_tool()
-    async def verify_employee(
-        self,
-        context: RunContext,
-        employee_id: int | None = None,
-    ):
-        """
-        Verify an employee by their Employee ID.
-
-        Use before any operation that modifies data (leave, grievance, etc.).
-
-        Examples:
-        - My employee ID is 1001.
-        - Employee number 2045.
-
-        After calling this, the employee is immediately authenticated.
-        No OTP is required.
-        """
-        # ── Single Authentication Per Conversation ──────────────────────
-        # If the employee has already been verified in this session, return
-        # immediate success without asking for their ID again.
-        if self.auth.authenticated:
-            if employee_id is None or int(employee_id) == int(self.auth.employee_id):
-                return {
-                    "success": True,
-                    "message": f"Employee {self.auth.employee_name} (ID: {self.auth.employee_id}) is ALREADY verified for this entire conversation. Do not ask for ID again.",
-                    "employee_id": self.auth.employee_id,
-                    "employee_name": self.auth.employee_name,
-                    "already_authenticated": True,
-                }
-
-        if employee_id is None:
-            return {
-                "success": False,
-                "message": "Before I proceed, I'll need to verify your identity. What's your Employee ID?",
-            }
-
-        result = self.auth_service.begin_verification(employee_id)
-
-        if not result["success"]:
-            return result
-
-        employee = result.get("employee", {})
-        employee_name = (
-            employee.get("name")
-            or employee.get("employee_name")
-            or "Employee"
-        )
-
-        self.auth.login(employee_id, employee_name)
-
-        return {
-            "success": True,
-            "message": f"Welcome {employee_name}. You are now verified for this conversation.",
-            "employee_id": employee_id,
-            "employee_name": employee_name,
-        }
-
-    ####################################################################
-    # ATTENDANCE MANAGEMENT
-    ####################################################################
-
-    @function_tool()
-    async def submit_absence_request(
-        self,
-        context: RunContext,
-        absence_type: str,
-        from_date: str,
-        to_date: str,
-        reason: str = "",
-    ):
-        """
-        Submit an absence request for the authenticated field engineer.
-
-        REQUIRES AUTHENTICATION before calling.
-
-        absence_type must be one of:
-          'Sickness'  — calling in sick on the day
-          'Holiday'   — planned annual / casual holiday
-          'Emergency' — unexpected emergency (short notice)
-          'Funeral'   — bereavement or funeral leave
-          'Casual'    — casual day off
-          'Earned'    — earned / annual leave
-
-        from_date and to_date must be in YYYY-MM-DD format.
-
-        The system will automatically:
-          - Check team coverage (80% minimum threshold)
-          - Detect if the request requires Area Manager approval
-          - Route exceptions to the Area Manager
-          - Update IFS Cloud and SQL Server after approval
-
-        Examples:
-          - I'm sick today, please log it.
-          - I want to book holiday from 2026-08-05 to 2026-08-07.
-          - Emergency leave for tomorrow.
-          - My father passed away, I need funeral leave.
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity first. What is your employee ID?"
-            }
-        return self.attendance_tools.submit_absence_request(
-            employee_id  = self.auth.employee_id,
-            absence_type = absence_type,
-            from_date    = from_date,
-            to_date      = to_date,
-            reason       = reason,
-        )
-
-    @function_tool()
-    async def check_team_coverage(
-        self,
-        context: RunContext,
-        field_manager_id: int,
-        coverage_date: str,
-    ):
-        """
-        Check the attendance coverage percentage for a Field Manager's team on a given date.
-
-        Returns:
-          - Total engineers in the team
-          - Number available (not on leave)
-          - Number absent (on approved/pending leave)
-          - Coverage percentage
-          - Whether coverage is above the 80% minimum threshold
-          - A list of each engineer's status
-
-        Use when a Field Manager asks:
-          - How many of my team are in today?
-          - What is my team's coverage on Monday?
-          - Can I approve another absence?
-          - Are we below threshold for this week?
-
-        coverage_date must be in YYYY-MM-DD format.
-        """
-        return self.attendance_tools.check_team_coverage(
-            field_manager_id = field_manager_id,
-            coverage_date    = coverage_date,
-        )
-
-    @function_tool()
-    async def get_team_roster(
-        self,
-        context: RunContext,
-        field_manager_id: int,
-        roster_date: str,
-    ):
-        """
-        Retrieve the full daily roster for a Field Manager's team.
-
-        Shows each engineer's shift status:
-          - Scheduled (available)
-          - OnLeave (absence approved)
-          - The type of leave if absent
-
-        Use when a Field Manager asks:
-          - Show me the roster for Monday.
-          - Who is in tomorrow?
-          - Which engineers are on leave this week?
-
-        roster_date must be in YYYY-MM-DD format.
-        """
-        return self.attendance_tools.get_team_roster(
-            field_manager_id = field_manager_id,
-            roster_date      = roster_date,
-        )
-
-    @function_tool()
-    async def list_pending_exceptions(
-        self,
-        context: RunContext,
-        area_manager_id: int,
-    ):
-        """
-        Retrieve all exception absence requests that are pending the Area Manager's decision.
-
-        Returns each exception with:
-          - Exception ID
-          - Employee name and dates
-          - Type of exception (e.g. FuneralLeave, CoverageThresholdBreach)
-          - Reason for the exception
-
-        Use when an Area Manager asks:
-          - What exceptions are waiting for my approval?
-          - Show me pending absence approvals.
-          - Do I have any requests to review?
-        """
-        return self.attendance_tools.list_pending_exceptions(
-            area_manager_id = area_manager_id,
-        )
-
-    @function_tool()
-    async def approve_exception(
-        self,
-        context: RunContext,
-        exception_id: int,
-        decision: str,
-        notes: str = "",
-    ):
-        """
-        Area Manager approves or rejects an exception absence request.
-
-        REQUIRES AUTHENTICATION.
-
-        decision must be 'Approved' or 'Rejected'.
-        notes: optional reason or comments.
-
-        After the decision:
-          - The employee is notified automatically.
-          - If Approved: IFS Cloud and SQL Server are updated.
-          - If Approved: Roster is automatically reallocated.
-          - If Rejected: The employee's leave balance is restored.
-
-        Examples:
-          - Approve exception 2.
-          - Reject exception 3 — insufficient notice given.
-          - I approve the funeral leave request.
-        """
-        if not self.auth.authenticated:
-            return {
-                "success": False,
-                "message": "Please verify your identity as an Area Manager first."
-            }
-        return self.attendance_tools.approve_exception(
-            exception_id    = exception_id,
-            area_manager_id = self.auth.employee_id,
-            decision        = decision,
-            notes           = notes,
-        )
-
-    @function_tool()
-    async def get_all_teams_coverage(
-        self,
-        context: RunContext,
-        target_date: str,
-    ):
-        """
-        Get a coverage summary across ALL Field Manager teams for a given date.
-
-        Useful for Area Managers and operations staff to spot teams at risk of
-        falling below the attendance threshold.
-
-        Returns for each team:
-          - Field Manager name
-          - Total engineers / available / absent
-          - Coverage percentage
-          - Whether they are below threshold
-
-        Examples:
-          - How are all teams covered today?
-          - Which teams are at risk this week?
-          - Give me the operations coverage overview for Monday.
-
-        target_date must be in YYYY-MM-DD format.
-        """
-        return self.attendance_tools.get_all_teams_coverage(
-            target_date = target_date,
-        )
-
-    @function_tool()
-    async def get_exception_detail(
-        self,
-        context: RunContext,
-        exception_id: int,
-    ):
-        """
-        Retrieve full details of a specific exception absence request.
-
-        Returns:
-          - Employee name and dates
-          - Exception type and reason
-          - Area Manager assigned and current status
-          - AM decision and notes (if decided)
-
-        Use when an Area Manager or Field Manager asks:
-          - Tell me about exception 3.
-          - What is the detail of exception request 7?
-          - Show me the exception for employee 1023.
-        """
-        return self.attendance_tools.get_exception_detail(
-            exception_id = exception_id,
-        )
-
-    @function_tool()
-    async def transfer_call(
-        self,
-        context: RunContext,
-        phone_number: str = "",
-    ):
-        """
-        Forward / transfer the ongoing call to the employee's manager or a
-        specific phone number.
-
-        - If the employee says "Transfer me to my manager" or "Forward my call"
-          — look up the manager's phone from the database automatically.
-        - If the employee provides an explicit number, use that instead.
-
-        Examples:
-        - Transfer me to HR.
-        - Forward my call to my manager.
-        - Connect me to a human representative.
-        - Call my manager.
-        - Transfer to +919791694339.
-        """
-        try:
-            # ── Step 1: resolve target phone number ───────────────────────────
-            raw_input = (phone_number or "").replace(" ", "").strip()
-            digits_only = raw_input.replace("+", "").replace("-", "")
-
-            dial_number = ""
-            manager_name = ""
-
-            if digits_only.isdigit():
-                if len(digits_only) == 4:
-                    # 4-digit Employee ID (e.g. "1003") -> look up that employee's manager
-                    lookup = self.employee_service.employee_tool.get_manager_phone(digits_only)
-                    if lookup.get("success"):
-                        dial_number = lookup["manager_phone"].replace(" ", "")
-                        manager_name = lookup["manager_name"]
-                elif len(digits_only) == 10:
-                    dial_number = f"+91{digits_only}"
-                    manager_name = dial_number
-                elif len(digits_only) >= 11 and raw_input.startswith("+"):
-                    dial_number = raw_input
-                    manager_name = dial_number
-
-            if not dial_number:
-                # Fallback: look up authenticated employee's manager
-                emp_id = self.auth.employee_id
-                if not emp_id:
-                    return {
-                        "success": False,
-                        "message": "Please provide your Employee ID first so I can look up your manager's number."
-                    }
-
-                lookup = self.employee_service.employee_tool.get_manager_phone(emp_id)
-                if not lookup["success"]:
-                    return {
-                        "success": False,
-                        "message": lookup.get("message", "Could not find your manager's phone number.")
-                    }
-
-                dial_number = lookup["manager_phone"].replace(" ", "")
-                manager_name = lookup["manager_name"]
-            elif not manager_name:
-                manager_name = dial_number
-
-            # ── Step 2: resolve participant identity from job_ctx ─────────────
-            room = getattr(self.job_ctx, "room", None) if self.job_ctx else None
-            remote_parts = getattr(room, "remote_participants", {}) or {}
-
-            target_identity = None
-            for identity, p in remote_parts.items():
-                if identity.startswith("sip_") or getattr(p, "kind", None) == 3:
-                    target_identity = identity
-                    break
-
-            if not target_identity and remote_parts:
-                target_identity = list(remote_parts.keys())[0]
-
-            if not target_identity or not self.job_ctx:
-                logger.warning("[Transfer] No active SIP caller line found, falling back to Outbound Conference Bridge...")
-                return await self._conference_dial(dial_number, manager_name)
-
-            # ── Step 3: execute native SIP REFER transfer ─────────────────────
-            logger.info(f"[Transfer] Executing job_ctx.transfer_sip_participant for '{target_identity}' to '{dial_number}'...")
-            await self.job_ctx.transfer_sip_participant(
-                participant=target_identity,
-                transfer_to=dial_number,
-                play_dialtone=True
-            )
-            logger.info(f"[Transfer] Transfer request sent successfully for '{target_identity}' to '{dial_number}'")
-            # Schedule delayed hangup so agent completely leaves the line after transfer
-            asyncio.create_task(self._delayed_transfer_hangup(delay=3.0))
-            return {
-                "success": True,
-                "message": f"Transferring your call to {manager_name} at {dial_number}. Please hold on."
-            }
-        except Exception as e:
-            import traceback as _tb
-            logger.warning(f"[Transfer Warning] SIP REFER transfer encountered: {e}. Falling back to Outbound Conference Bridge...", exc_info=True)
-            return await self._conference_dial(dial_number, manager_name)
-
-    async def _conference_dial(self, dial_number: str, label: str) -> dict:
-        """Shared helper: dial a number into the current room via outbound SIP trunk."""
-        try:
-            clean_num = dial_number.replace("+", "").replace(" ", "")
-            conf_identity = f"conf_user_{clean_num}"
-            self._conference_participant_identity = conf_identity
-            self._conference_active = True
-            logger.info(f"📞 Conference mode activated for participant '{conf_identity}'. Agent on silent listen mode.")
-
-            if self.job_ctx:
-                logger.info(f"[Conference] Dialing '{dial_number}' into room '{self.job_ctx.room.name}' via job_ctx.add_sip_participant...")
-                await self.job_ctx.add_sip_participant(
-                    call_to=dial_number,
-                    trunk_id="ST_CrytprUt4rGi",
-                    participant_identity=conf_identity,
-                    participant_name=label
                 )
-            else:
-                async with api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) as lkapi:
-                    await lkapi.sip.create_sip_participant(
-                        api.CreateSIPParticipantRequest(
-                            sip_trunk_id="ST_CrytprUt4rGi",
-                            sip_call_to=dial_number,
-                            room_name="hr-sip-live",
-                            participant_identity=conf_identity
-                        )
-                    )
-            return {
-                "success": True,
-                "message": f"Dialing {label} at {dial_number} into the conference. Please stay on the line. I will be on mute during your conversation."
-            }
         except Exception as e:
-            self._conference_active = False
-            self._conference_participant_identity = None
-            logger.error(f"[Conference Error] Outbound SIP dial failed: {e}", exc_info=True)
-            return {"success": False, "message": f"Failed to dial: {str(e)}"}
+            stop_ringback.set()
+            await ringback_task
+            logger.warning(f"⚠️ [Transfer] Coordinator at {COORDINATOR_PHONE_NUMBER} did not answer or failed: {e}")
+            return (
+                "The coordinator did not answer, or the call could not "
+                "connect. Tell the caller this plainly and ask if they'd "
+                "like you to try again now, or would rather call back "
+                "later. Do not say they were connected."
+            )
 
-    @function_tool()
-    async def add_participant_to_conference(
-        self,
-        context: RunContext,
-        phone_number: str = "",
-    ):
-        """
-        Dial the employee's manager (or an external phone number) and add them
-        into the current call as a 3-way conference.
+        stop_ringback.set()
+        await ringback_task
+        logger.info(f"✅ [Transfer] Coordinator {identity} answered and joined room {room.name}.")
 
-        - If the employee says "Add my manager to this call" or "Conference in
-          my manager" — look up the manager's phone from the database automatically.
-        - If the employee provides an explicit phone number, use that instead.
+        context.session.coordinator_connected = True
 
-        Examples:
-        - Add my manager to this call.
-        - Conference in my manager.
-        - Add +919786586806 to this call.
-        - Conference in employee 1002.
-        """
+        handle = context.session.say(
+            "Connecting you to the coordinator now.",
+            allow_interruptions=False,
+        )
+        await handle.wait_for_playout()
+        context.session.input.set_audio_enabled(False)
+        context.session.output.set_audio_enabled(False)
+
+        egress_id = await _start_call_recording(self._job_ctx)
+        context.session.recording_egress_id = egress_id
+
+        return (
+            "Coordinator connected and the handoff line has already been "
+            "spoken by this tool. The agent is now muted at the code "
+            "level -- do not attempt to say anything else."
+        )
+
+
+server = AgentServer()
+
+# Run DB startup check once at worker startup
+hr_tools.run_startup_check()
+
+agent_worker_name = os.environ.get("WORKER_AGENT_NAME", "my-agent")
+
+
+async def on_job_request(job_req: agents.JobRequest) -> None:
+    """Evaluates incoming job requests and immediately rejects blocked numbers/callers."""
+    blocked, matched_id = is_call_blocked(job_req)
+    if blocked:
+        logger.warning(
+            f"🚫 [CALL REJECTED] Job request {job_req.id} rejected. Blocked number/caller: '{matched_id}'."
+        )
+        await job_req.reject()
+        return
+
+    logger.info(f"Accepted job request {job_req.id} for room {job_req.job.room.name}.")
+    await job_req.accept()
+
+
+@server.rtc_session(agent_name=agent_worker_name, on_request=on_job_request)
+async def my_agent(ctx: agents.JobContext):
+    # ------------------------------------------------------------------
+    # 1. Immediate Call Blocklist Check upon Room Entry
+    # ------------------------------------------------------------------
+    blocked, matched_id = is_call_blocked(ctx)
+    if blocked:
+        logger.warning(
+            f"🚫 [CALL REJECTED] Rejecting call in room {ctx.room.name}. "
+            f"Caller/participant '{matched_id}' is in the blocked list. Hanging up immediately."
+        )
+        await _hangup(ctx)
+        return
+
+    tts_voice = os.environ.get("TTS_VOICE", "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc")
+    tts_model = os.environ.get("TTS_MODEL", "cartesia/sonic-3")
+    llm_model = os.environ.get("LIVEKIT_LLM_MODEL", "google/gemma-4-31b-it")
+
+    stt_lang = os.environ.get("DEEPGRAM_LANGUAGE", "en")
+
+    session = AgentSession(
+        stt=inference.STT(model="deepgram/nova-3", language=stt_lang),
+        llm=inference.LLM(model=llm_model),
+        tts=inference.TTS(
+            model=tts_model,
+            voice=tts_voice,
+        ),
+        turn_handling=TurnHandlingOptions(
+            turn_detection=inference.TurnDetector(),
+            endpointing={"min_delay": 0.5, "max_delay": 1.8},
+        ),
+    )
+
+    IDLE_HANGUP_SECONDS = float(os.environ.get("IDLE_HANGUP_SECONDS", "30.0"))
+    _agent_busy = True
+    _last_activity = time.monotonic()
+
+    def _log_state(reason: str):
+        logger.debug(f"Watchdog: {reason} (agent_busy={_agent_busy}).")
+
+    @session.on("user_input_transcribed")
+    def _on_user_input(ev):
+        nonlocal _last_activity
+        _last_activity = time.monotonic()
+        if getattr(ev, "is_final", False) and getattr(ev, "transcript", ""):
+            logger.info(f"🗣️ [User Spoke]: \"{ev.transcript}\"")
+        _log_state("caller spoke (transcription)")
+
+    @session.on("user_state_changed")
+    def _on_user_state(ev):
+        nonlocal _last_activity
+        _last_activity = time.monotonic()
+        _log_state(f"user state -> {ev.new_state}")
+
+    @session.on("agent_state_changed")
+    def _on_agent_state(ev):
+        nonlocal _agent_busy, _last_activity
+        _agent_busy = ev.new_state in ("thinking", "speaking", "initializing")
+        _last_activity = time.monotonic()
+        _log_state(f"agent state -> {ev.new_state}")
+
+    @session.on("function_tools_executed")
+    def _on_tools_executed(ev):
+        nonlocal _last_activity
+        _last_activity = time.monotonic()
+        _log_state("tool call completed")
+
+    @session.on("conversation_item_added")
+    def _on_item_added(ev):
+        nonlocal _last_activity
+        _last_activity = time.monotonic()
+        _log_state("conversation item added")
+
+    async def _on_coordinator_left():
+        nonlocal _agent_busy, _last_activity
+        logger.info("Coordinator left the call — re-engaging with the caller.")
+        session.coordinator_connected = False
+        session.input.set_audio_enabled(True)
+        session.output.set_audio_enabled(True)
+        egress_id = getattr(session, "recording_egress_id", None)
+        if egress_id:
+            session.recording_egress_id = None
+            await _stop_call_recording(ctx, egress_id)
+        _agent_busy = True
+        _last_activity = time.monotonic()
+        await session.generate_reply(
+            instructions=(
+                "The call with the coordinator has just ended. Tell the "
+                "caller the coordinator call is complete, then ask if "
+                "there's anything else you can help with, or if they'd "
+                "like to end the call now."
+            )
+        )
+
+    def _on_participant_disconnected(participant: rtc.RemoteParticipant):
+        if participant.identity.startswith("coordinator-"):
+            asyncio.create_task(_on_coordinator_left())
+        else:
+            # Only hang up if all remote callers have left
+            remaining = [p for p in ctx.room.remote_participants.values() if p.identity != participant.identity and not p.identity.startswith("coordinator-")]
+            if not remaining:
+                logger.info(f"Caller {participant.identity} disconnected — ending the call.")
+
+                async def _stop_recording_then_hangup():
+                    try:
+                        await recorder.stop()
+                    except Exception as err:
+                        logger.warning(f"Error finalizing recorder: {err}")
+                    egress_id = getattr(session, "recording_egress_id", None)
+                    if egress_id:
+                        session.recording_egress_id = None
+                        await _stop_call_recording(ctx, egress_id)
+                    await _hangup(ctx)
+
+                asyncio.create_task(_stop_recording_then_hangup())
+
+    ctx.room.on("participant_disconnected", _on_participant_disconnected)
+
+    def _on_participant_connected(participant: rtc.RemoteParticipant):
+        blocked, matched_id = is_call_blocked(participant)
+        if blocked:
+            logger.warning(
+                f"🚫 [CALL REJECTED] Blocked participant joined room {ctx.room.name}: '{matched_id}'. Hanging up."
+            )
+            asyncio.create_task(_hangup(ctx))
+
+    ctx.room.on("participant_connected", _on_participant_connected)
+
+    async def _idle_watchdog_loop():
+        nonlocal _agent_busy
+        while True:
+            await asyncio.sleep(1.0)
+            if getattr(session, "coordinator_connected", False):
+                continue
+            # If agent is busy (generating, speaking, initializing) or user is speaking, reset timer
+            if _agent_busy or session.agent_state in ("thinking", "speaking", "initializing") or session.user_state == "speaking":
+                _last_activity = time.monotonic()
+                continue
+            idle_for = time.monotonic() - _last_activity
+            if idle_for >= IDLE_HANGUP_SECONDS:
+                logger.info(
+                    f"Caller silent and agent idle for {idle_for:.1f}s — hanging up automatically."
+                )
+                await _hangup(ctx)
+                return
+
+    asyncio.create_task(_idle_watchdog_loop())
+
+    try:
+        call_metadata = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
+    except (json.JSONDecodeError, TypeError):
+        logger.warning(f"Could not parse job metadata as JSON: {ctx.job.metadata!r}")
+        call_metadata = {}
+
+    audio_input_opts = None
+    if HAS_AI_COUSTICS:
         try:
-            # ── Step 1: resolve the phone number to dial ─────────────────────
-            raw_input = (phone_number or "").replace(" ", "").strip()
-            digits_only = raw_input.replace("+", "").replace("-", "")
-
-            dial_number = ""
-            manager_name = ""
-
-            if digits_only.isdigit():
-                if len(digits_only) == 4:
-                    lookup = self.employee_service.employee_tool.get_manager_phone(digits_only)
-                    if lookup.get("success"):
-                        dial_number = lookup["manager_phone"].replace(" ", "")
-                        manager_name = lookup["manager_name"]
-                elif len(digits_only) == 10:
-                    dial_number = f"+91{digits_only}"
-                    manager_name = dial_number
-                elif len(digits_only) >= 11 and raw_input.startswith("+"):
-                    dial_number = raw_input
-                    manager_name = dial_number
-
-            if not dial_number:
-                emp_id = self.auth.employee_id
-                if not emp_id:
-                    return {
-                        "success": False,
-                        "message": "You need to be authenticated before I can add your manager. Please provide your Employee ID first."
-                    }
-
-                lookup = self.employee_service.employee_tool.get_manager_phone(emp_id)
-                if not lookup["success"]:
-                    return {
-                        "success": False,
-                        "message": lookup.get("message", "Could not find your manager's phone number.")
-                    }
-
-                dial_number = lookup["manager_phone"].replace(" ", "")
-                manager_name = lookup["manager_name"]
-            elif not manager_name:
-                manager_name = dial_number
-
-            # ── Step 2: dial into the conference room ─────────────────────────
-            return await self._conference_dial(dial_number, manager_name)
-
+            audio_input_opts = room_io.AudioInputOptions(
+                noise_cancellation=ai_coustics.audio_enhancement(
+                    model=ai_coustics.EnhancerModel.QUAIL_L,
+                ),
+            )
         except Exception as e:
-            return {"success": False, "message": f"Failed to add conference participant: {str(e)}"}
+            logger.warning(f"Could not initialize ai_coustics: {e}")
+            audio_input_opts = None
+
+    room_opts = room_io.RoomOptions(
+        close_on_disconnect=False,
+        audio_input=audio_input_opts if audio_input_opts else room_io.AudioInputOptions(),
+    )
+
+    await session.start(
+        room=ctx.room,
+        agent=Assistant(ctx, call_metadata=call_metadata),
+        room_options=room_opts,
+    )
+
+    # Start local session recording (MP3 audio and Conversation_log)
+    recorder = SessionRecorder()
+    session.recorder = recorder
+    await recorder.start(ctx, session)
+
+    # Allow SIP media stream 1s to settle before speaking initial greeting
+    is_sip = any(p.identity.startswith("sip_") for p in ctx.room.remote_participants.values())
+    if is_sip:
+        await asyncio.sleep(1.0)
+
+    if call_metadata.get("call_type") == "leave_verification":
+        employee_name = call_metadata.get("employee_name", "there")
+        await session.generate_reply(
+            instructions=(
+                f"Greet {employee_name} and ask them to confirm their "
+                f"identity before discussing anything, per your instructions."
+            )
+        )
+    else:
+        await session.generate_reply(
+            instructions="Greet the caller and ask for their employee ID to get started."
+        )
 
 
-
-def _last_assistant_message(turn_ctx: ChatContext) -> str | None:
-    """
-    Walk backwards through the chat context and return the text of the
-    most recent assistant message, or None if there isn't one yet.
-    Defensive about attribute names in case your installed livekit-agents
-    version structures ChatContext.items slightly differently.
-    """
-    items = getattr(turn_ctx, "items", None) or []
-    for item in reversed(items):
-        role = getattr(item, "role", None)
-        if role == "assistant":
-            return getattr(item, "text_content", None) or ""
-    return None
+if __name__ == "__main__":
+    agents.cli.run_app(server)

@@ -43,6 +43,7 @@ dist/
 node_modules/
 npm-debug.log*
 
-# Ollama binaries
-bin/lib/ollama/
-.env
+# Recordings
+Recordings/
+*.bak
+*.bak*
