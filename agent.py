@@ -46,12 +46,46 @@ IDLE_POLL_SECONDS = 10       # how often the watchdog checks
 LLM_FAILURE_LIMIT = 3        # consecutive LLM failures before ending the call
 
 
+from datetime import datetime, timedelta
+from modules.date_utils import normalize_date
+
+def get_system_prompt_with_date() -> str:
+    """Dynamically prepends current real-time clock and date reference rules to SYSTEM_PROMPT."""
+    now = datetime.now()
+    today_iso = now.strftime("%Y-%m-%d")
+    tomorrow_iso = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    day_after_tomorrow_iso = (now + timedelta(days=2)).strftime("%Y-%m-%d")
+
+    date_header = f"""========================================================================
+CURRENT REAL-TIME SYSTEM CLOCK & DATE REFERENCE
+========================================================================
+TODAY'S FULL DATE            : {now.strftime('%A, %B %d, %Y')}
+TODAY'S ISO DATE (YYYY-MM-DD): {today_iso}
+CURRENT YEAR                 : {now.year}
+CURRENT MONTH                : {now.strftime('%B')} ({now.month:02d})
+CURRENT DAY OF WEEK          : {now.strftime('%A')}
+
+RELATIVE DATE CONVERSIONS FOR TODAY ({today_iso}):
+  - "today"                   -> {today_iso}
+  - "tomorrow"                -> {tomorrow_iso}
+  - "day after tomorrow"      -> {day_after_tomorrow_iso}
+
+CRITICAL MANDATORY DATE RULES:
+1. ALWAYS convert relative dates ("tomorrow", "day after tomorrow", "next Thursday", "next Friday", etc.) using TODAY'S DATE ({today_iso}) as the reference point.
+2. NEVER use past years (like 2023, 2024, or 2025). The current year is strictly {now.year}.
+3. Format all start_date and end_date arguments as valid YYYY-MM-DD strings using current year {now.year}.
+========================================================================
+
+"""
+    return date_header + SYSTEM_PROMPT
+
+
 class HRAgent(Agent):
 
     def __init__(self):
 
         super().__init__(
-            instructions=SYSTEM_PROMPT
+            instructions=get_system_prompt_with_date()
         )
 
         self.memory = ConversationMemory()
@@ -508,13 +542,15 @@ class HRAgent(Agent):
                 "success": False,
                 "message": "Please verify your identity first. What is your employee ID?"
             }
-        # Delegate to the full absence pipeline (coverage check, exception
-        # detection, IFS/SQL sync) rather than the legacy LeaveService path.
+        # Normalize relative date strings and auto-correct outdated years (e.g. 2023 -> 2026)
+        from_date_clean = normalize_date(from_date)
+        to_date_clean   = normalize_date(to_date)
+
         return self.attendance_tools.submit_absence_request(
             employee_id  = self.auth.employee_id,
             absence_type = leave_type,
-            from_date    = from_date,
-            to_date      = to_date,
+            from_date    = from_date_clean,
+            to_date      = to_date_clean,
             reason       = "",
         )
 
@@ -981,11 +1017,14 @@ class HRAgent(Agent):
                 "success": False,
                 "message": "Please verify your identity first. What is your employee ID?"
             }
+        from_date_clean = normalize_date(from_date)
+        to_date_clean   = normalize_date(to_date)
+
         return self.attendance_tools.submit_absence_request(
             employee_id  = self.auth.employee_id,
             absence_type = absence_type,
-            from_date    = from_date,
-            to_date      = to_date,
+            from_date    = from_date_clean,
+            to_date      = to_date_clean,
             reason       = reason,
         )
 
