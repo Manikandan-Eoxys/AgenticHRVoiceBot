@@ -35,9 +35,9 @@ from typing import Optional
 _LEVEL_MAP = {
     logging.DEBUG: "DEBUG",
     logging.INFO: "INFO",
-    logging.WARNING: "WARNING",
+    logging.WARNING: "WARN",
     logging.ERROR: "ERROR",
-    logging.CRITICAL: "CRITICAL",
+    logging.CRITICAL: "FATAL",
 }
 
 
@@ -152,6 +152,8 @@ class MonitoringHandler(logging.Handler):
             "service": self.service_name,
             "applicationName": self.service_name,
             "environment": "development",
+            "agent": "hr-voice-agent",
+            "tenant": "default",
             "level": level_str,
             "module": record.module,
             "lineno": record.lineno,

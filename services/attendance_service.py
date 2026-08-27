@@ -14,6 +14,7 @@ Handles:
 from datetime import datetime, date
 from config import Config
 from database.db import get_db_connection
+from modules.date_utils import normalize_date
 
 # Read threshold from Config — set COVERAGE_THRESHOLD=0.08 in .env (8% minimum)
 COVERAGE_THRESHOLD = float(getattr(Config, "COVERAGE_THRESHOLD", 0.08))
@@ -78,8 +79,10 @@ class AttendanceService:
 
         # Calculate days
         try:
-            start_dt = datetime.strptime(from_date, "%Y-%m-%d")
-            end_dt   = datetime.strptime(to_date,   "%Y-%m-%d")
+            from_date = normalize_date(from_date)
+            to_date   = normalize_date(to_date)
+            start_dt  = datetime.strptime(from_date, "%Y-%m-%d")
+            end_dt    = datetime.strptime(to_date,   "%Y-%m-%d")
         except ValueError:
             cursor.close()
             conn.close()
