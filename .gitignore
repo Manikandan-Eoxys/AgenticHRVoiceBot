@@ -49,3 +49,6 @@ Recordings/
 *.bak*
 
 bin/lib/
+
+#Backup files
+Backup/
