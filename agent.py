@@ -42,9 +42,15 @@ except ImportError:
 
 import hr_tools
 from security.call_blocklist import is_call_blocked, is_number_blocked
-from config import LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+from config import (
+    LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
+    DEEPGRAM_API_KEY, OLLAMA_MODEL, OLLAMA_BASE_URL,
+)
 from services.session_recorder import SessionRecorder
 from services.monitoring_handler import install_monitoring_handler
+from controllers.voice_controller import VoiceController
+from ollama_llm import OllamaLLM, FallbackLLM
+from livekit.plugins.deepgram import STT, TTS as DeepgramTTS
 
 try:
     install_monitoring_handler()
@@ -589,6 +595,10 @@ class Assistant(Agent):
 
 server = AgentServer()
 
+# Instantiate global voice_controller and run worker startup prewarm
+voice_controller = VoiceController()
+voice_controller.on_worker_start()
+
 # Run DB startup check once at worker startup
 hr_tools.run_startup_check()
 
@@ -607,10 +617,14 @@ async def on_job_request(job_req: agents.JobRequest) -> None:
 
     logger.info(f"Accepted job request {job_req.id} for room {job_req.job.room.name}.")
     await job_req.accept()
+    voice_controller.on_job_accepted(job_req.job.room.name)
 
 
 @server.rtc_session(agent_name=agent_worker_name, on_request=on_job_request)
 async def my_agent(ctx: agents.JobContext):
+    # Trigger VoiceController FSM: READY -> CONNECTING
+    voice_controller.on_call_start(ctx.room.name)
+
     # ------------------------------------------------------------------
     # 1. Immediate Call Blocklist Check upon Room Entry
     # ------------------------------------------------------------------
@@ -626,16 +640,19 @@ async def my_agent(ctx: agents.JobContext):
     tts_voice = os.environ.get("TTS_VOICE", "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc")
     tts_model = os.environ.get("TTS_MODEL", "cartesia/sonic-3")
     llm_model = os.environ.get("LIVEKIT_LLM_MODEL", "google/gemma-4-31b-it")
-
     stt_lang = os.environ.get("DEEPGRAM_LANGUAGE", "en")
 
+    # Engines: Direct Deepgram STT/TTS (avoids 429) + FallbackLLM (Cloud -> Ollama)
+    stt_engine = STT(api_key=DEEPGRAM_API_KEY, model="nova-3", language=stt_lang)
+    cloud_llm = inference.LLM(model=llm_model)
+    local_ollama = OllamaLLM(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
+    llm_engine = FallbackLLM(primary_llm=cloud_llm, fallback_llm=local_ollama)
+    tts_engine = DeepgramTTS(api_key=DEEPGRAM_API_KEY)
+
     session = AgentSession(
-        stt=inference.STT(model="deepgram/nova-3", language=stt_lang),
-        llm=inference.LLM(model=llm_model),
-        tts=inference.TTS(
-            model=tts_model,
-            voice=tts_voice,
-        ),
+        stt=stt_engine,
+        llm=llm_engine,
+        tts=tts_engine,
         turn_handling=TurnHandlingOptions(
             turn_detection=inference.TurnDetector(),
             endpointing={"min_delay": 0.5, "max_delay": 1.8},
@@ -668,6 +685,7 @@ async def my_agent(ctx: agents.JobContext):
         nonlocal _agent_busy, _last_activity
         _agent_busy = ev.new_state in ("thinking", "speaking", "initializing")
         _last_activity = time.monotonic()
+        voice_controller.on_agent_substate_changed(ev.new_state)
         _log_state(f"agent state -> {ev.new_state}")
 
     @session.on("function_tools_executed")
@@ -711,6 +729,7 @@ async def my_agent(ctx: agents.JobContext):
             remaining = [p for p in ctx.room.remote_participants.values() if p.identity != participant.identity and not p.identity.startswith("coordinator-")]
             if not remaining:
                 logger.info(f"Caller {participant.identity} disconnected — ending the call.")
+                voice_controller.on_call_end()
 
                 async def _stop_recording_then_hangup():
                     try:
@@ -734,6 +753,8 @@ async def my_agent(ctx: agents.JobContext):
                 f"🚫 [CALL REJECTED] Blocked participant joined room {ctx.room.name}: '{matched_id}'. Hanging up."
             )
             asyncio.create_task(_hangup(ctx))
+        else:
+            voice_controller.on_participant_joined(participant.identity)
 
     ctx.room.on("participant_connected", _on_participant_connected)
 

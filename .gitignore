@@ -47,3 +47,5 @@ npm-debug.log*
 Recordings/
 *.bak
 *.bak*
+
+bin/lib/

@@ -88,7 +88,6 @@ async def get_token(name: str):
         "ws_url": LIVEKIT_URL,
     }
 
-
 @app.get("/getSipToken")
 async def get_sip_token(name: str):
     """

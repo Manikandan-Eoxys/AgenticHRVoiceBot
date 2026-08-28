@@ -408,3 +408,92 @@ class OllamaLLM(LLM):
             base_url=self._base_url,
             think=self._think,
         )
+
+
+# ============================================================================
+# HYBRID / FALLBACK LLM WRAPPER
+# ============================================================================
+class FallbackLLMStream(LLMStream):
+    """
+    Stream wrapper that attempts primary LLM (e.g. LiveKit Cloud / OpenAI) and
+    automatically falls back to local OllamaLLM if primary LLM raises 429/quota/error.
+    """
+
+    def __init__(
+        self,
+        fallback_obj: "FallbackLLM",
+        *,
+        chat_ctx: ChatContext,
+        tools=None,
+        conn_options: APIConnectOptions = APIConnectOptions(),
+        **kwargs,
+    ) -> None:
+        super().__init__(fallback_obj, chat_ctx=chat_ctx, tools=tools or [], conn_options=conn_options)
+        self._fallback_obj = fallback_obj
+        self._chat_ctx = chat_ctx
+        self._tools = tools
+        self._kwargs = kwargs
+
+    async def _run(self) -> None:
+        if not self._fallback_obj._primary_degraded:
+            try:
+                primary_stream = self._fallback_obj.primary_llm.chat(
+                    chat_ctx=self._chat_ctx,
+                    tools=self._tools,
+                    **self._kwargs,
+                )
+                async for chunk in primary_stream:
+                    self._event_ch.send_nowait(chunk)
+                return
+            except Exception as exc:
+                logger.warning(
+                    "[FallbackLLM] Primary LLM stream failed (%s). "
+                    "Automatically falling back to local OllamaLLM...",
+                    exc,
+                )
+                self._fallback_obj._primary_degraded = True
+
+        # Fallback to local OllamaLLM
+        fallback_stream = self._fallback_obj.fallback_llm.chat(
+            chat_ctx=self._chat_ctx,
+            tools=self._tools,
+            **self._kwargs,
+        )
+        async for chunk in fallback_stream:
+            self._event_ch.send_nowait(chunk)
+
+
+class FallbackLLM(LLM):
+    """
+    Hybrid / Automatic Fallback LLM.
+    Tries primary_llm (e.g., LiveKit Cloud Hosted LLM / OpenAI).
+    If primary_llm fails due to 429 Too Many Requests / Quota Exceeded / connection error,
+    it seamlessly falls back to fallback_llm (local OllamaLLM).
+    """
+
+    def __init__(self, primary_llm: LLM, fallback_llm: LLM) -> None:
+        super().__init__()
+        self.primary_llm = primary_llm
+        self.fallback_llm = fallback_llm
+        self._primary_degraded = False
+
+    @property
+    def model(self) -> str:
+        active = self.fallback_llm if self._primary_degraded else self.primary_llm
+        return getattr(active, "model", "fallback-llm")
+
+    def chat(
+        self,
+        *,
+        chat_ctx: ChatContext,
+        tools=None,
+        conn_options: APIConnectOptions = APIConnectOptions(),
+        **kwargs,
+    ) -> LLMStream:
+        return FallbackLLMStream(
+            self,
+            chat_ctx=chat_ctx,
+            tools=tools,
+            conn_options=conn_options,
+            **kwargs,
+        )
