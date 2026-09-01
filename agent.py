@@ -21,6 +21,8 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
+from typing import Optional, Dict, Any, List, Tuple
+
 import aiohttp
 import numpy as np
 from dotenv import load_dotenv
@@ -49,6 +51,7 @@ from config import (
 from services.session_recorder import SessionRecorder
 from services.monitoring_handler import install_monitoring_handler
 from controllers.voice_controller import VoiceController
+from controllers.global_monitor_fsm import GlobalMonitorFSM
 from ollama_llm import OllamaLLM, FallbackLLM
 from livekit.plugins.deepgram import STT, TTS as DeepgramTTS
 
@@ -604,6 +607,20 @@ hr_tools.run_startup_check()
 
 agent_worker_name = os.environ.get("WORKER_AGENT_NAME", "my-agent")
 
+# Global Monitor FSM — will be started as asyncio task on first call
+_global_fsm_task: Optional[asyncio.Task] = None
+
+
+def _ensure_global_fsm_running() -> None:
+    """Lazily starts the GlobalMonitorFSM run_loop() asyncio task once."""
+    global _global_fsm_task
+    if _global_fsm_task is None or _global_fsm_task.done():
+        _global_fsm_task = asyncio.create_task(
+            GlobalMonitorFSM.instance().run_loop(),
+            name="GlobalMonitorFSM",
+        )
+        logger.info("🌐 [GlobalFSM] run_loop() task started.")
+
 
 async def on_job_request(job_req: agents.JobRequest) -> None:
     """Evaluates incoming job requests and immediately rejects blocked numbers/callers."""
@@ -622,7 +639,10 @@ async def on_job_request(job_req: agents.JobRequest) -> None:
 
 @server.rtc_session(agent_name=agent_worker_name, on_request=on_job_request)
 async def my_agent(ctx: agents.JobContext):
-    # Trigger VoiceController FSM: READY -> CONNECTING
+    # Start global FSM loop (idempotent — only creates task once)
+    _ensure_global_fsm_running()
+
+    # Trigger VoiceController FSM: READY → CONNECTING
     voice_controller.on_call_start(ctx.room.name)
 
     # ------------------------------------------------------------------

@@ -43,6 +43,7 @@ from config import (
     SYSTEM_PROMPT,
 )
 from integrations.sync_scheduler import start_scheduler, stop_scheduler
+from controllers.global_monitor_fsm import GlobalMonitorFSM
 
 logger = logging.getLogger(__name__)
 
@@ -107,8 +108,15 @@ class VoiceController:
 
         import os
         self._pid = os.getpid()
+        self._room_name: str = ""
+        self._agent_id: str = str(self._pid)
 
-        logger.info(f"[FSM] Controller initialized in state: {self.current_state.name}")
+        logger.info(f"[FSM] Controller initialized [pid={self._pid}] in state: {self.current_state.name}")
+        # Register this agent with the global monitor
+        GlobalMonitorFSM.instance().on_agent_event(
+            agent_id=self._agent_id,
+            state=self.current_state,
+        )
 
     # -----------------------
     # EXTERNAL ENTRY POINTS
@@ -198,24 +206,36 @@ class VoiceController:
 
         self.current_state = ControllerState.READY
         logger.info(f"➡️ VC Transition [pid={self._pid}]: PREWARMING → READY [System ready for call jobs]")
+        self._report_to_global_fsm()
 
     def on_job_accepted(self, room_name: str = "") -> None:
         """Called when an incoming call job request is accepted."""
         old = self.current_state
+        if room_name:
+            self._room_name = room_name
+            self._agent_id = f"{self._pid}:{room_name}"
         self.current_state = ControllerState.JOB_ACCEPTED
-        logger.info(f"➡️ VC Transition [pid={self._pid}]: {old.name} → JOB_ACCEPTED (Room: '{room_name}')")
+        tag = f"pid={self._pid}" + (f" | room='{self._room_name}'" if self._room_name else "")
+        logger.info(f"➡️ VC Transition [{tag}]: {old.name} → JOB_ACCEPTED")
+        self._report_to_global_fsm(room=room_name)
 
     def on_call_start(self, room_name: str = "") -> None:
         """Called when a call enters the room."""
         old = self.current_state
+        if room_name:
+            self._room_name = room_name
+            self._agent_id = f"{self._pid}:{room_name}"
         self.current_state = ControllerState.CONNECTING
-        logger.info(f"➡️ VC Transition [pid={self._pid}]: {old.name} → CONNECTING (Room: '{room_name}')")
+        tag = f"pid={self._pid}" + (f" | room='{self._room_name}'" if self._room_name else "")
+        logger.info(f"➡️ VC Transition [{tag}]: {old.name} → CONNECTING")
+        self._report_to_global_fsm(room=room_name)
 
     def on_participant_joined(self, identity: str = "") -> None:
         """Called when caller audio stream is active."""
         old = self.current_state
         self.current_state = ControllerState.SESSION_ACTIVE
         logger.info(f"➡️ VC Transition [pid={self._pid}]: {old.name} → SESSION_ACTIVE (Participant: '{identity}')")
+        self._report_to_global_fsm(participant=identity)
 
     def on_agent_substate_changed(self, substate: str) -> None:
         """Tracks active turn sub-states: LISTENING, THINKING, SPEAKING."""
@@ -230,15 +250,19 @@ class VoiceController:
         if self.current_state != target:
             old = self.current_state
             self.current_state = target
-            logger.info(f"➡️ VC Transition [pid={self._pid}]: {old.name} → {target.name}")
+            tag = f"pid={self._pid}" + (f" | room='{self._room_name}'" if self._room_name else "")
+            logger.info(f"➡️ VC Transition [{tag}]: {old.name} → {target.name}")
+            self._report_to_global_fsm()
 
     def on_call_end(self) -> None:
         """Called when call ends or participant disconnects."""
         old = self.current_state
         self.current_state = ControllerState.ENDING
         logger.info(f"➡️ VC Transition [pid={self._pid}]: {old.name} → ENDING")
+        self._report_to_global_fsm()
         self.current_state = ControllerState.READY
         logger.info(f"➡️ VC Transition [pid={self._pid}]: ENDING → READY [Reset for next call]")
+        self._report_to_global_fsm()
 
     def on_error(self, error: Exception) -> None:
         """Called when an unhandled error occurs."""
@@ -246,6 +270,7 @@ class VoiceController:
         old = self.current_state
         self.current_state = ControllerState.ERROR
         logger.error(f"➡️ VC Transition [pid={self._pid}]: {old.name} → ERROR ({error})")
+        self._report_to_global_fsm()
 
     async def start_session(self, ctx: JobContext, agent_instance: Any) -> AgentSession:
         """Runs READY → CONNECTING → SESSION_ACTIVE and returns active AgentSession."""
@@ -455,9 +480,33 @@ class VoiceController:
                 self.next_state = ControllerState.ERROR
 
         if self.current_state != self.next_state:
-            logger.info(f"➡️ VC Transition [pid={self._pid}]: {self.current_state.name} → {self.next_state.name}")
+            tag = f"pid={self._pid}" + (f" | room='{self._room_name}'" if self._room_name else "")
+            logger.info(f"➡️ VC Transition [{tag}]: {self.current_state.name} → {self.next_state.name}")
             self._previous_state = self.current_state
             self._state_updated_at = time.time()
 
         self.current_state = self.next_state
+        self._report_to_global_fsm()
         await asyncio.sleep(0.05)
+
+    # ── Global FSM reporting helper ───────────────────────────────────────
+    def _report_to_global_fsm(
+        self,
+        room: str = "",
+        participant: str = "",
+    ) -> None:
+        """
+        Reports the current state of this VoiceController to the
+        process-level GlobalMonitorFSM.  Called after every state
+        transition.  Non-blocking (dict write under a lock).
+        """
+        try:
+            GlobalMonitorFSM.instance().on_agent_event(
+                agent_id=getattr(self, "_agent_id", str(self._pid)),
+                state=self.current_state,
+                room=room or getattr(self, "_room_name", "") or "",
+                participant=participant or getattr(self, "_active_participant_identity", ""),
+            )
+        except Exception as exc:
+            # Global FSM reporting must never crash the voice agent
+            logger.debug(f"[GlobalFSM] report skipped: {exc}")

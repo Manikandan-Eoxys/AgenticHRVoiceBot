@@ -29,6 +29,7 @@ from config import (
     WORKER_AGENT_NAME,
 )
 from security.call_blocklist import is_number_blocked
+from routers.monitor_router import router as monitor_router
 
 app = FastAPI()
 
@@ -39,6 +40,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount routers
+app.include_router(monitor_router)
 
 
 @app.get("/getToken")
