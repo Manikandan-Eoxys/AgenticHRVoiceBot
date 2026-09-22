@@ -1,0 +1,46 @@
+; ============================================================================
+; Asterisk PJSIP Configuration for Softphone Testing
+; Target Path: /etc/asterisk/pjsip.conf
+; ============================================================================
+
+; ----------------------------------------------------------------------------
+; UDP Transport (Listens on port 5060 for all IPv4 interfaces)
+; ----------------------------------------------------------------------------
+[transport-udp]
+type=transport
+protocol=udp
+bind=0.0.0.0:5060
+
+; ----------------------------------------------------------------------------
+; Endpoint Template (Default audio codecs & configuration)
+; ----------------------------------------------------------------------------
+[endpoint-template](!)
+type=endpoint
+context=from-internal
+disallow=all
+allow=ulaw
+allow=alaw
+allow=slin
+direct_media=no
+rtp_symmetric=yes
+force_rport=yes
+rewrite_contact=yes
+
+; ----------------------------------------------------------------------------
+; Softphone Extension 1001 Configuration
+; (Use Username: 1001 / Password: 1001pass in Zoiper / MicroSIP / Linphone)
+; ----------------------------------------------------------------------------
+[1001](endpoint-template)
+auth=auth1001
+aors=1001
+
+[auth1001]
+type=auth
+auth_type=userpass
+username=1001
+password=1001pass
+
+[1001]
+type=aor
+max_contacts=2
+remove_existing=yes

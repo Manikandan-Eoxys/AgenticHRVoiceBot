@@ -1,0 +1,27 @@
+; ============================================================================
+; Asterisk Dialplan Configuration for LiveKit HR Voice Bot ARI Bridge
+; Target Path: /etc/asterisk/extensions.conf
+; ============================================================================
+
+[general]
+static=yes
+writeprotect=no
+
+[from-internal]
+; ----------------------------------------------------------------------------
+; Extension 1000: Direct route to HR Voice Bot (ARI Stasis)
+; Dialing 1000 from softphone (e.g. extension 1001) invokes Stasis(hr_voicebot).
+; ----------------------------------------------------------------------------
+exten => 1000,1,NoOp(--- Incoming Call to HR Voice Bot (ARI Stasis) ---)
+ same => n,Answer()
+ same => n,Stasis(hr_voicebot)
+ same => n,NoOp(--- Call session completed by ARI Stasis / LiveKit Agent ---)
+ same => n,Hangup()
+
+; ----------------------------------------------------------------------------
+; Inbound PSTN DID / Pattern-matched Route to HR Voice Bot
+; ----------------------------------------------------------------------------
+exten => _+X.,1,NoOp(--- Inbound PSTN Call from ${CALLERID(num)} to HR Bot ---)
+ same => n,Answer()
+ same => n,Stasis(hr_voicebot)
+ same => n,Hangup()

@@ -1,0 +1,16 @@
+; ============================================================================
+; Asterisk REST Interface (ARI) Configuration
+; Target Path: /etc/asterisk/ari.conf
+; ============================================================================
+
+[general]
+enabled=yes
+pretty=yes
+allowed_origins=*
+
+; Match ARI credentials defined in config.py / .env
+[asterisk]
+type=user
+read_only=no
+password=asterisk
+password_format=plain

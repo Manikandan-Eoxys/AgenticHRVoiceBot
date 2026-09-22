@@ -19,6 +19,10 @@ python-dateutil
 
 loguru
 
+# Audio signal processing / polyphase resampling
+scipy
+numpy
+
 # Background sync scheduler (IFS Cloud + SQL Server periodic sync)
 apscheduler>=3.10.0
 

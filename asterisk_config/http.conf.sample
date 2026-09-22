@@ -1,0 +1,13 @@
+; ============================================================================
+; Asterisk HTTP & WebSocket Configuration for ARI Interface
+; Target Path: /etc/asterisk/http.conf
+; ============================================================================
+
+[general]
+enabled=yes
+bindaddr=0.0.0.0
+bindport=8088
+sessionlimit=100
+sessioninactivity=300
+sessionkeepalive=300
+tlsenable=no

@@ -136,6 +136,22 @@ class Config:
     # ------------------------------------------------------------------
     RECORDING_COORDINATOR_MODE = os.getenv("RECORDING_COORDINATOR_MODE", "record_all")
  
+    # ------------------------------------------------------------------
+    # Asterisk AudioBridge & ARI Settings
+    # ------------------------------------------------------------------
+    AST_BRIDGE_HOST           = os.getenv("AST_BRIDGE_HOST", "0.0.0.0")           # bind address
+    AST_BRIDGE_ADVERTISE_HOST = os.getenv("AST_BRIDGE_ADVERTISE_HOST", "127.0.0.1") # advertised address for Asterisk
+    AST_BRIDGE_PORT           = int(os.getenv("AST_BRIDGE_PORT", "9090"))
+    AST_SAMPLE_RATE           = int(os.getenv("AST_SAMPLE_RATE", "8000"))
+    AST_ROOM_PREFIX           = os.getenv("AST_ROOM_PREFIX", "asterisk-hr")
+ 
+    # ARI (Asterisk REST Interface) Configuration
+    ARI_URL      = os.getenv("ARI_URL", "http://127.0.0.1:8088/ari")
+    ARI_WS_URL   = os.getenv("ARI_WS_URL", "ws://127.0.0.1:8088/ari/events")
+    ARI_USER     = os.getenv("ARI_USER", "asterisk")
+    ARI_PASSWORD = os.getenv("ARI_PASSWORD", "asterisk")
+    ARI_APP_NAME = os.getenv("ARI_APP_NAME", "hr_voicebot")
+ 
  
 # ---------------------------------------------------------
 # Module-level aliases (imported directly by main.py etc.)
@@ -177,6 +193,20 @@ SIP_ROOM_PREFIX    = Config.SIP_ROOM_PREFIX
  
 # Worker dispatch identity
 WORKER_AGENT_NAME = Config.WORKER_AGENT_NAME
-
+ 
 # Recording coordinator mode
 RECORDING_COORDINATOR_MODE = Config.RECORDING_COORDINATOR_MODE
+ 
+# Asterisk AudioBridge
+AST_BRIDGE_HOST           = Config.AST_BRIDGE_HOST
+AST_BRIDGE_ADVERTISE_HOST = Config.AST_BRIDGE_ADVERTISE_HOST
+AST_BRIDGE_PORT           = Config.AST_BRIDGE_PORT
+AST_SAMPLE_RATE           = Config.AST_SAMPLE_RATE
+AST_ROOM_PREFIX           = Config.AST_ROOM_PREFIX
+ 
+# Asterisk ARI Settings
+ARI_URL      = Config.ARI_URL
+ARI_WS_URL   = Config.ARI_WS_URL
+ARI_USER     = Config.ARI_USER
+ARI_PASSWORD = Config.ARI_PASSWORD
+ARI_APP_NAME = Config.ARI_APP_NAME
