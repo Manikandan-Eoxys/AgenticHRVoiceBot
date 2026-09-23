@@ -193,9 +193,7 @@ def run_startup_check() -> None:
     finally:
         conn.close()
  
-    logger.info("Connected to %s — %d employee(s) found:", target, len(rows))
-    for r in rows:
-        print(f"    {r['employee_id']}  {r['full_name']}")
+    logger.info("Connected to %s — %d employee(s) found.", target, len(rows))
     if not rows:
         logger.warning(
             "0 employees found. Either the schema was never imported, "

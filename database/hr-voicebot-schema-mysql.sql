@@ -69,7 +69,7 @@ CREATE TABLE employees (
 INSERT INTO employees (employee_id, full_name, gender, email, department_id, designation_id, join_date, status, phone_number, manager_id) VALUES
 ('1001', 'Ravikala',    'F', 'ravikala@eoxys.com',    1, 1, '2023-03-31', 'active',   '+919500000001', '1007'),
 ('1002', 'Deepika',     'F', 'deepika@efabric.com',   1, 2, '2022-12-11', 'on_leave', '+919500000002', '1007'),
-('1003', 'Narmatha',    'F', 'narmatha@efabric.com',  1, 1, '2023-09-01', 'active',   '+919500000003', '1007'),
+('1003', 'Narmatha',    'F', 'narmatha@eoxys.com',    1, 1, '2023-09-01', 'active',   '+919500000003', '1007'),
 ('1004', 'Hashir',      'M', 'hashir@efabric.com',    1, 1, '2024-02-21', 'active',   '+919500000004', '1007'),
 ('1005', 'Saikumar',    'M', 'saikumar@efabric.com',  1, 1, '2024-02-21', 'active',   '+919500000005', '1007'),
 ('1006', 'Bharath',     'M', 'bharath@efabric.com',   1, 1, '2024-02-21', 'active',   '+919500000006', '1007'),
@@ -80,7 +80,7 @@ INSERT INTO employees (employee_id, full_name, gender, email, department_id, des
 ('1011', 'Momin',       'M', 'momin@efabric.com',     2, 3, '2023-09-06', 'active',   '+919500000011', '1007'),
 ('1012', 'Satheesh',    'M', 'satheesh@efabric.com',  3, 4, '2023-04-07', 'active',   '+919500000012', '1014'),
 ('1013', 'Kamal',       'M', 'kamal@efabric.com',     1, 1, '2025-09-05', 'active',   '+919786586806', '1014'),
-('1014', 'Manikandan',  'M', 'manikandan@efabric.com',1, 1, '2025-09-05', 'active',   '+918925355704', NULL),
+('1014', 'Manikandan',  'M', 'manikandan@eoxys.com',  1, 1, '2025-09-05', 'active',   '+918925355704', NULL),
 ('1015', 'Sujitsaju',   'M', 'sujitsaju@efabric.com', 3, 4, '2023-04-07', 'active',   '+919500000015', '1014');
 
 -- ============================================================
@@ -257,26 +257,233 @@ INSERT INTO employee_insurance (employee_id, plan_code, applied_date, claimed, c
 ('1010', 'ACCIDENT',   '2024-07-15', TRUE,  '2025-03-22');
 
 -- ============================================================
--- 7. LEAVE REQUESTS — ledger for requests submitted through the
--- voice agent's check-availability -> confirm -> email flow.
--- Confirming a request increments leave_balances.used_days for the
--- matching employee/leave_code.
+-- 7. CORE HR POLICIES (5 Official Policies)
+-- 1. Leave & Holiday Policy
+-- 2. Attendance & Regularization Policy
+-- 3. Work From Home / Hybrid Work Policy
+-- 4. Payroll & Salary Policy
+-- 5. Code of Conduct & Grievance Policy
 -- ============================================================
-CREATE TABLE leave_requests (
-    request_id      INT AUTO_INCREMENT PRIMARY KEY,
-    employee_id     VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
-    leave_code      VARCHAR(20) NOT NULL REFERENCES leave_policy(leave_code),
-    start_date      DATE NOT NULL,
-    end_date        DATE NOT NULL,
-    days_requested  INT NOT NULL,
-    reason          VARCHAR(255),
-    status          VARCHAR(20) NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted','approved','rejected')),
-    notified_email  VARCHAR(150),
-    requested_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE hr_policies (
+    policy_code     VARCHAR(30) PRIMARY KEY,
+    policy_name     VARCHAR(100) NOT NULL,
+    category        VARCHAR(50) NOT NULL,
+    summary         TEXT NOT NULL,
+    details         TEXT NOT NULL
 );
 
+INSERT INTO hr_policies (policy_code, policy_name, category, summary, details) VALUES
+('LEAVE_HOLIDAY', 'Leave & Holiday Policy', 'Leave Management',
+ 'Covers annual leave entitlements (CL, SL, Maternity, Paternity, Comp Off, Bereavement, Short Leave, LWP), carry-forward rules, and public holidays.',
+ 'Casual Leave (CL): 10-12 days per year for urgent personal matters, no carry-forward to the next calendar year. Sick Leave (SL): 10-12 days per year; medical certificate required for absence exceeding 2 consecutive days. Maternity Leave: 26 weeks statutory paid leave for eligible female employees. Paternity Leave: 15 days for male employees. Comp Off: 1 day granted for working on a declared holiday or weekend with prior approval. Short Leave: up to 2 hours or half-day for partial workday emergencies. Earned leaves can be carried forward up to a maximum of 30 days. All declared public holidays are paid days off.'),
+
+('ATTENDANCE_REG', 'Attendance & Regularization Policy', 'Attendance',
+ 'Governs daily working hours (9:00 AM - 6:00 PM), grace periods, late mark penalties, and attendance regularization requests.',
+ 'Standard office working hours are 9:00 AM to 6:00 PM, Monday through Friday (8 working hours plus 1 hour lunch/break). A 15-minute grace period applies in the morning, meaning check-ins up to 9:15 AM are not marked late. Arrival between 9:16 AM and 10:00 AM is logged as a late mark. Accumulating 3 late marks in a single month results in a half-day salary or leave deduction. If an employee forgets to punch in or punch out, or biometric fails, they can submit an Attendance Regularization request within 2 business days. Maximum 3 regularizations allowed per calendar month with manager approval.'),
+
+('WFH_HYBRID', 'Work From Home / Hybrid Work Policy', 'Workplace Flexibility',
+ 'Specifies hybrid work eligibility, monthly WFH quotas, core active hours, and manager approval requirements.',
+ 'Full-time confirmed employees who have completed their probation period are eligible for hybrid work. Eligible employees may work from home up to 2 days per week or up to 8 days per calendar month. WFH applications must be submitted at least 24 hours in advance and require manager approval. Employees working from home must be available during core hours (9:30 AM to 5:30 PM), be reachable via phone, email, and Slack/Teams, and submit an end-of-day summary.'),
+
+('PAYROLL_SALARY', 'Payroll & Salary Policy', 'Compensation & Benefits',
+ 'Details salary payment schedules, statutory deductions (PF, PT, TDS), payslip distribution, and payroll discrepancy resolutions.',
+ 'Monthly salaries are disbursed directly to employee bank accounts on the last working day of every calendar month. Statutory deductions include Provident Fund (EPF at 12% of basic wage), Professional Tax (PT, Rs.200), and Tax Deducted at Source (TDS based on income tax slab). Unpaid leave (LWP) is deducted at a daily rate based on gross salary. Monthly payslips are generated and made available on the 1st of every month via the HR portal and emailed to registered email addresses. Employees may raise a payroll ticket for any salary discrepancies or deduction inquiries.'),
+
+('CONDUCT_GRIEVANCE', 'Code of Conduct & Grievance Policy', 'Workplace Ethics & Relations',
+ 'Defines workplace code of conduct, dress code, company asset rules, conflict of interest, and confidential grievance escalation.',
+ 'Dress code: Business casuals Monday through Thursday, smart casuals on Fridays. Company laptops and digital assets are for authorized company business only; VPN usage is mandatory when accessing company systems remotely. Conflicts of interest and external employment are strictly prohibited without written approval. The company maintains zero tolerance for harassment, discrimination, or abusive behavior. Sensitive complaints (harassment, manager disputes, misconduct) are escalated confidentially to senior HR and the Internal Complaints Committee (ICC) for investigation within 3 to 5 business days.');
+
 -- ============================================================
--- 8. CALENDAR EVENTS
+-- 8. COMPANY HOLIDAYS (2026 Calendar)
+-- ============================================================
+CREATE TABLE company_holidays (
+    holiday_id      INT AUTO_INCREMENT PRIMARY KEY,
+    holiday_name    VARCHAR(100) NOT NULL,
+    holiday_date    DATE NOT NULL UNIQUE,
+    holiday_day     VARCHAR(20) NOT NULL,
+    is_mandatory    BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+INSERT INTO company_holidays (holiday_name, holiday_date, holiday_day, is_mandatory) VALUES
+('New Year''s Day',                   '2026-01-01', 'Thursday',  TRUE),
+('Republic Day',                     '2026-01-26', 'Monday',    TRUE),
+('Maha Shivratri',                  '2026-03-03', 'Tuesday',   TRUE),
+('Eid-ul-Fitr',                     '2026-03-20', 'Friday',    TRUE),
+('Good Friday',                      '2026-04-03', 'Friday',    TRUE),
+('Tamil New Year / Ambedkar Jayanti', '2026-04-14', 'Tuesday',   TRUE),
+('May Day / Labour Day',             '2026-05-01', 'Friday',    TRUE),
+('Independence Day',                 '2026-08-15', 'Saturday',  TRUE),
+('Gandhi Jayanti',                   '2026-10-02', 'Friday',    TRUE),
+('Ayudha Pooja / Dussehra',         '2026-10-20', 'Tuesday',   TRUE),
+('Diwali / Deepavali',               '2026-11-08', 'Sunday',    TRUE),
+('Christmas',                        '2026-12-25', 'Friday',    TRUE);
+
+-- ============================================================
+-- 9. ATTENDANCE RECORDS (Recent Biometric & Status Log)
+-- ============================================================
+CREATE TABLE attendance_records (
+    record_id       INT AUTO_INCREMENT PRIMARY KEY,
+    employee_id     VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
+    record_date     DATE NOT NULL,
+    check_in        TIME NULL,
+    check_out       TIME NULL,
+    total_hours     DECIMAL(4,2) NULL,
+    status          VARCHAR(20) NOT NULL CHECK (status IN ('Present', 'Absent', 'Late', 'Half_Day', 'Holiday', 'On_Leave')),
+    late_minutes    INT NOT NULL DEFAULT 0,
+    remarks         VARCHAR(255) NULL,
+    UNIQUE KEY (employee_id, record_date)
+);
+
+INSERT INTO attendance_records (employee_id, record_date, check_in, check_out, total_hours, status, late_minutes, remarks) VALUES
+('1001', '2026-09-17', NULL, NULL, NULL, 'Absent', 0, 'No biometric punch recorded'),
+('1001', '2026-09-16', '09:35:00', '18:15:00', 8.67, 'Late', 20, 'Arrived 20 mins past grace period'),
+('1001', '2026-09-15', '08:55:00', '18:05:00', 9.17, 'Present', 0, 'On time'),
+('1001', '2026-09-14', '09:05:00', '18:00:00', 8.92, 'Present', 0, 'On time within grace period'),
+('1001', '2026-09-08', '09:28:00', '18:10:00', 8.70, 'Late', 13, 'Late arrival (traffic)'),
+('1001', '2026-09-02', '09:40:00', '18:25:00', 8.75, 'Late', 25, 'Late arrival'),
+('1002', '2026-09-17', NULL, NULL, NULL, 'On_Leave', 0, 'Maternity leave'),
+('1014', '2026-09-17', '08:50:00', '18:30:00', 9.67, 'Present', 0, 'On time'),
+('1014', '2026-09-16', '09:00:00', '18:00:00', 9.00, 'Present', 0, 'On time');
+
+-- ============================================================
+-- 10. ATTENDANCE REGULARIZATIONS
+-- ============================================================
+CREATE TABLE attendance_regularizations (
+    regularization_id INT AUTO_INCREMENT PRIMARY KEY,
+    employee_id     VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
+    attendance_date DATE NOT NULL,
+    request_type    VARCHAR(50) NOT NULL CHECK (request_type IN ('missing_punch_in', 'missing_punch_out', 'late_regularization', 'status_correction')),
+    actual_time     TIME NULL,
+    reason          VARCHAR(255) NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    manager_id      VARCHAR(10) NULL,
+    manager_remarks VARCHAR(255) NULL,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO attendance_regularizations (employee_id, attendance_date, request_type, actual_time, reason, status) VALUES
+('1001', '2026-09-01', 'missing_punch_in', '09:05:00', 'Fingerprint scanner not detected', 'approved');
+
+-- ============================================================
+-- 11. WORK FROM HOME (WFH) REQUESTS
+-- ============================================================
+CREATE TABLE wfh_requests (
+    wfh_id          INT AUTO_INCREMENT PRIMARY KEY,
+    employee_id     VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
+    start_date      DATE NOT NULL,
+    end_date        DATE NOT NULL,
+    days_count      INT NOT NULL DEFAULT 1,
+    reason          VARCHAR(255) NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    manager_id      VARCHAR(10) NULL,
+    manager_remarks VARCHAR(255) NULL,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO wfh_requests (employee_id, start_date, end_date, days_count, reason, status) VALUES
+('1001', '2026-09-04', '2026-09-05', 2, 'Home electrical maintenance', 'approved'),
+('1001', '2026-09-25', '2026-09-25', 1, 'Delivery and family visit', 'pending');
+
+-- ============================================================
+-- 12. PAYROLL RECORDS
+-- ============================================================
+CREATE TABLE payroll_records (
+    payroll_id       INT AUTO_INCREMENT PRIMARY KEY,
+    employee_id      VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
+    month_year       VARCHAR(20) NOT NULL,
+    basic_salary     DECIMAL(10,2) NOT NULL,
+    hra              DECIMAL(10,2) NOT NULL,
+    allowances       DECIMAL(10,2) NOT NULL,
+    gross_salary     DECIMAL(10,2) NOT NULL,
+    deductions_pf    DECIMAL(10,2) NOT NULL,
+    deductions_pt    DECIMAL(10,2) NOT NULL,
+    deductions_tax   DECIMAL(10,2) NOT NULL,
+    deductions_other DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    net_salary       DECIMAL(10,2) NOT NULL,
+    payment_status   VARCHAR(20) NOT NULL DEFAULT 'Credited' CHECK (payment_status IN ('Credited', 'Pending', 'Processing')),
+    payment_date     DATE NULL,
+    payslip_available BOOLEAN NOT NULL DEFAULT TRUE,
+    UNIQUE KEY (employee_id, month_year)
+);
+
+INSERT INTO payroll_records (employee_id, month_year, basic_salary, hra, allowances, gross_salary, deductions_pf, deductions_pt, deductions_tax, deductions_other, net_salary, payment_status, payment_date, payslip_available) VALUES
+('1001', 'August 2026',    35000.00, 15000.00, 10000.00, 60000.00, 4200.00, 200.00, 2500.00, 0.00, 53100.00, 'Credited', '2026-08-31', TRUE),
+('1001', 'July 2026',      35000.00, 15000.00, 10000.00, 60000.00, 4200.00, 200.00, 2500.00, 0.00, 53100.00, 'Credited', '2026-07-31', TRUE),
+('1001', 'September 2026', 35000.00, 15000.00, 10000.00, 60000.00, 4200.00, 200.00, 2500.00, 0.00, 53100.00, 'Credited', '2026-09-30', TRUE),
+('1002', 'August 2026',    42000.00, 18000.00, 12000.00, 72000.00, 5040.00, 200.00, 3500.00, 0.00, 63260.00, 'Credited', '2026-08-31', TRUE),
+('1014', 'August 2026',    55000.00, 22000.00, 15000.00, 92000.00, 6600.00, 200.00, 6000.00, 0.00, 79200.00, 'Credited', '2026-08-31', TRUE),
+('1014', 'September 2026', 55000.00, 22000.00, 15000.00, 92000.00, 6600.00, 200.00, 6000.00, 0.00, 79200.00, 'Credited', '2026-09-30', TRUE);
+
+-- ============================================================
+-- 13. LEAVE REQUESTS & APPROVAL WORKFLOW
+-- ============================================================
+CREATE TABLE leave_requests (
+    request_id       INT AUTO_INCREMENT PRIMARY KEY,
+    employee_id      VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
+    leave_code       VARCHAR(20) NOT NULL REFERENCES leave_policy(leave_code),
+    start_date       DATE NOT NULL,
+    end_date         DATE NOT NULL,
+    days_requested   INT NOT NULL,
+    reason           VARCHAR(255),
+    status           VARCHAR(20) NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted','approved','rejected','cancelled')),
+    rejection_reason VARCHAR(255) NULL,
+    manager_remarks  VARCHAR(255) NULL,
+    reminder_sent_at TIMESTAMP NULL,
+    notified_email   VARCHAR(150),
+    requested_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO leave_requests (request_id, employee_id, leave_code, start_date, end_date, days_requested, reason, status, rejection_reason, manager_remarks, notified_email) VALUES
+(101, '1001', 'CL', '2026-10-05', '2026-10-07', 3, 'Attending family wedding ceremony', 'approved', NULL, 'Approved. Please ensure handover before leaving.', 'manikandan.eoxys@gmail.com'),
+(102, '1001', 'CL', '2026-08-14', '2026-08-14', 1, 'Long weekend travel', 'rejected', 'Team coverage is required on that date', 'Project delivery deadline on Friday.', 'manikandan.eoxys@gmail.com'),
+(103, '1001', 'SL', '2026-09-28', '2026-09-29', 2, 'Doctor consultation and rest', 'submitted', NULL, NULL, 'manikandan.eoxys@gmail.com');
+
+-- ============================================================
+-- 14. HR TICKETS (Human Intervention / Escalation)
+-- 6 Categories:
+-- 1. Payroll & Salary Issues
+-- 2. Attendance Issues
+-- 3. Leave Issues
+-- 4. HRMS / Employee Profile Issues
+-- 5. HR Documents
+-- 6. Work From Home / Hybrid Work
+-- ============================================================
+CREATE TABLE hr_tickets (
+    ticket_id        INT AUTO_INCREMENT PRIMARY KEY,
+    ticket_number    VARCHAR(30) UNIQUE NOT NULL,
+    employee_id      VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
+    category         VARCHAR(60) NOT NULL,
+    ticket_type      VARCHAR(60) NOT NULL,
+    description      TEXT NOT NULL,
+    status           VARCHAR(20) NOT NULL DEFAULT 'Open' CHECK (status IN ('Open', 'In_Progress', 'Resolved', 'Closed')),
+    priority         VARCHAR(20) NOT NULL DEFAULT 'Normal' CHECK (priority IN ('Normal', 'Urgent', 'Confidential')),
+    resolution_notes TEXT NULL,
+    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+INSERT INTO hr_tickets (ticket_number, employee_id, category, ticket_type, description, status, priority) VALUES
+('TICK-10021', '1001', 'Payroll & Salary Issues', 'PAYROLL_SALARY_DISCREPANCY', 'Salary query regarding August TDS deduction breakdown', 'In_Progress', 'Normal'),
+('TICK-10022', '1001', 'HR Documents', 'EMPLOYMENT_CERTIFICATE_REQUEST', 'Request for employment certificate for bank loan application', 'Open', 'Normal');
+
+-- ============================================================
+-- 15. GRIEVANCES (Confidential Reports)
+-- ============================================================
+CREATE TABLE grievances (
+    grievance_id    INT AUTO_INCREMENT PRIMARY KEY,
+    employee_id     VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
+    title           VARCHAR(200) NOT NULL,
+    description     TEXT NOT NULL,
+    status          VARCHAR(50) NOT NULL DEFAULT 'Open',
+    priority        VARCHAR(20) NOT NULL DEFAULT 'Confidential',
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO grievances (employee_id, title, description, status, priority) VALUES
+('1001', 'Confidential Inquiry', 'Query on internal harassment reporting channel', 'Open', 'Confidential');
+
+-- ============================================================
+-- 16. CALENDAR EVENTS & ABSENCE COMPATIBILITY
 -- ============================================================
 CREATE TABLE calendar_events (
     event_id        INT AUTO_INCREMENT PRIMARY KEY,
@@ -290,21 +497,6 @@ CREATE TABLE calendar_events (
     status          VARCHAR(50) NOT NULL DEFAULT 'Scheduled'
 );
 
--- ============================================================
--- 9. GRIEVANCES
--- ============================================================
-CREATE TABLE grievances (
-    grievance_id    INT AUTO_INCREMENT PRIMARY KEY,
-    employee_id     VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
-    title           VARCHAR(200) NOT NULL,
-    description     TEXT NOT NULL,
-    status          VARCHAR(50) NOT NULL DEFAULT 'Open',
-    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- ============================================================
--- 10. ABSENCE & EXCEPTION REQUESTS
--- ============================================================
 CREATE TABLE absence_requests (
     request_id      INT AUTO_INCREMENT PRIMARY KEY,
     employee_id     VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
@@ -326,4 +518,51 @@ CREATE TABLE exception_requests (
     reason          VARCHAR(255),
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ============================================================
+-- 17. MANDATORY HR POLICY ACKNOWLEDGEMENTS
+-- Tracks enterprise policy releases requiring employee acknowledgement
+-- before a specified deadline.
+-- ============================================================
+CREATE TABLE policy_acknowledgements (
+    ack_id              INT AUTO_INCREMENT PRIMARY KEY,
+    employee_id         VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
+    policy_code         VARCHAR(30) NOT NULL REFERENCES hr_policies(policy_code),
+    policy_name         VARCHAR(100) NOT NULL,
+    announcement_text   TEXT NOT NULL,
+    deadline_date       DATE NOT NULL,
+    status              VARCHAR(30) NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Acknowledged', 'Overdue')),
+    acknowledged_at     TIMESTAMP NULL,
+    acknowledgement_note VARCHAR(255) NULL,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY (employee_id, policy_code)
+);
+
+INSERT INTO policy_acknowledgements (employee_id, policy_code, policy_name, announcement_text, deadline_date, status) VALUES
+('1014', 'WFH_HYBRID', 'Work From Home Policy', 'We have released a new Work From Home policy. All employees need to acknowledge it before Friday.', '2026-09-25', 'Pending'),
+('1001', 'WFH_HYBRID', 'Work From Home Policy', 'We have released a new Work From Home policy. All employees need to acknowledge it before Friday.', '2026-09-25', 'Pending');
+
+-- ============================================================
+-- 18. SCHEDULED REMINDERS & MESSAGES
+-- Tracks scheduled reminders (Form submissions, payslip downloads, etc.)
+-- and records employee delivery and acknowledgements.
+-- ============================================================
+CREATE TABLE scheduled_reminders (
+    reminder_id         INT AUTO_INCREMENT PRIMARY KEY,
+    employee_id         VARCHAR(10) NOT NULL REFERENCES employees(employee_id),
+    reminder_type       VARCHAR(50) NOT NULL CHECK (reminder_type IN ('FORM_SUBMISSION', 'PAYSLIP_DOWNLOAD', 'POLICY_ACKNOWLEDGEMENT', 'CUSTOM')),
+    title               VARCHAR(150) NOT NULL,
+    reminder_text       TEXT NOT NULL,
+    scheduled_time      DATETIME NOT NULL,
+    status              VARCHAR(30) NOT NULL DEFAULT 'Scheduled' CHECK (status IN ('Scheduled', 'Triggered', 'Sent', 'Acknowledged', 'Cancelled')),
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    triggered_at        TIMESTAMP NULL,
+    acknowledged_at     TIMESTAMP NULL,
+    employee_response   VARCHAR(255) NULL
+);
+
+INSERT INTO scheduled_reminders (employee_id, reminder_type, title, reminder_text, scheduled_time, status) VALUES
+('1014', 'FORM_SUBMISSION', 'PF Nomination Form Submission', 'Good morning Mani. This is a reminder to submit your PF nomination form. Have you completed it?', '2026-09-23 10:00:00', 'Scheduled'),
+('1014', 'PAYSLIP_DOWNLOAD', 'September Salary Slip Download', 'Your September salary slip is available in the employee portal. Have you downloaded it?', '2026-09-23 10:00:00', 'Scheduled'),
+('1001', 'FORM_SUBMISSION', 'PF Nomination Form Submission', 'Good morning Ravikala. This is a reminder to submit your PF nomination form. Have you completed it?', '2026-09-23 10:00:00', 'Scheduled');
 

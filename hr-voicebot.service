@@ -1,0 +1,17 @@
+[Unit]
+Description=Agentic HR Voice Bot Service (24/7)
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=eoxys
+WorkingDirectory=/home/eoxys/Documents/AgenticHRVoiceBot
+ExecStart=/home/eoxys/Documents/AgenticHRVoiceBot/.venv/bin/python main.py start
+Restart=always
+RestartSec=5s
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

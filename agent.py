@@ -21,8 +21,8 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
+import re
 from typing import Optional, Dict, Any, List, Tuple
-
 import aiohttp
 import numpy as np
 from dotenv import load_dotenv
@@ -33,7 +33,6 @@ from livekit.agents import (
     AgentServer, AgentSession, Agent, inference, room_io,
     TurnHandlingOptions, function_tool, RunContext,
 )
-from livekit.agents.beta.workflows.dtmf_inputs import GetDtmfTask
 
 # Try importing ai_coustics plugin if installed
 try:
@@ -142,6 +141,226 @@ async def _ringback_loop(job_ctx: agents.JobContext, stop_event: asyncio.Event) 
                 await job_ctx.room.local_participant.unpublish_track(publication.sid)
             except Exception:
                 logger.exception("Failed to unpublish ringback track (non-fatal).")
+
+
+# ── Standard ITU-T Q.23 Dual-Tone Multi-Frequency (DTMF) Frequencies ───────────
+# Covers ALL telephone digits 0 through 9, plus *, #, and A-D.
+DTMF_FREQUENCIES: dict[str, tuple[float, float]] = {
+    "1": (697.0, 1209.0),
+    "2": (697.0, 1336.0),
+    "3": (697.0, 1477.0),
+    "A": (697.0, 1633.0),
+    "4": (770.0, 1209.0),
+    "5": (770.0, 1336.0),
+    "6": (770.0, 1477.0),
+    "B": (770.0, 1633.0),
+    "7": (852.0, 1209.0),
+    "8": (852.0, 1336.0),
+    "9": (852.0, 1477.0),
+    "C": (852.0, 1633.0),
+    "*": (941.0, 1209.0),
+    "0": (941.0, 1336.0),
+    "#": (941.0, 1477.0),
+    "D": (941.0, 1633.0),
+}
+
+
+def _dtmf_samples(sample_rate: int, digit: str, duration_s: float = 0.14, amplitude: int = 5500) -> np.ndarray:
+    """Generates authentic ITU-T dual-frequency sine waves for telephone DTMF keys with fade-in/out."""
+    freqs = DTMF_FREQUENCIES.get(str(digit).upper())
+    if not freqs:
+        return np.zeros(int(sample_rate * duration_s), dtype=np.int16)
+    f1, f2 = freqs
+    n = int(sample_rate * duration_s)
+    t = np.arange(n) / sample_rate
+    wave = (amplitude / 2.0) * (np.sin(2 * np.pi * f1 * t) + np.sin(2 * np.pi * f2 * t))
+    fade = min(int(sample_rate * 0.008), n // 4)
+    if fade > 0:
+        ramp = np.linspace(0, 1, fade)
+        wave[:fade] *= ramp
+        wave[-fade:] *= ramp[::-1]
+    return wave.astype(np.int16)
+
+
+class DtmfPlayer:
+    """Publishes a dedicated audio track into the LiveKit room to play authentic
+    dual-tone telephone key sounds directly to the caller whenever keys are pressed."""
+
+    def __init__(self, room: rtc.Room, sample_rate: int = 48000):
+        self.room = room
+        self.sample_rate = sample_rate
+        self.source: rtc.AudioSource | None = None
+        self.track: rtc.LocalAudioTrack | None = None
+        self.publication: rtc.LocalTrackPublication | None = None
+        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        self._worker_task: asyncio.Task | None = None
+        self._started = False
+
+    async def start(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        try:
+            self.source = rtc.AudioSource(self.sample_rate, 1)
+            self.track = rtc.LocalAudioTrack.create_audio_track("dtmf-tones", self.source)
+            opts = rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE)
+            self.publication = await self.room.local_participant.publish_track(self.track, opts)
+            self._worker_task = asyncio.create_task(self._play_worker())
+            logger.info("🎵 [DTMF Player] Audio track published and ready.")
+        except Exception as e:
+            logger.warning(f"Failed to publish DTMF audio track: {e}")
+
+    def play_tone(self, digit: str) -> None:
+        """Enqueues digit for immediate dual-tone audio playback."""
+        if str(digit).upper() in DTMF_FREQUENCIES:
+            self._queue.put_nowait(str(digit))
+
+    async def _play_worker(self) -> None:
+        while True:
+            try:
+                digit = await self._queue.get()
+                if not self.source:
+                    continue
+                samples = np.concatenate([
+                    _dtmf_samples(self.sample_rate, digit, duration_s=0.14, amplitude=5500),
+                    np.zeros(int(self.sample_rate * 0.03), dtype=np.int16),
+                ])
+                frame = rtc.AudioFrame.create(self.sample_rate, 1, len(samples))
+                np.copyto(np.frombuffer(frame.data, dtype=np.int16), samples)
+                await self.source.capture_frame(frame)
+                await asyncio.sleep(len(samples) / self.sample_rate)
+                self._queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"DTMF play worker error: {e}")
+                await asyncio.sleep(0.05)
+
+    async def close(self) -> None:
+        if self._worker_task:
+            self._worker_task.cancel()
+        if self.publication and self.room.local_participant:
+            try:
+                await self.room.local_participant.unpublish_track(self.publication.sid)
+            except Exception:
+                pass
+
+
+class DtmfCollector:
+    """Collects 4-digit employee ID from keypad DTMF tones (0-9) or spoken voice."""
+
+    def __init__(self, player: DtmfPlayer | None = None, session: AgentSession | None = None):
+        self.player = player
+        self.session = session
+        self._buffer: list[str] = []
+        self._event = asyncio.Event()
+        self._collecting = False
+
+    def is_collecting(self) -> bool:
+        return self._collecting
+
+    async def on_dtmf(self, digit: str) -> None:
+        d = str(digit).strip().upper()
+        if not d:
+            return
+
+        # 1. Play authentic telephone dual-tone sound immediately into the room
+        if self.player:
+            self.player.play_tone(d)
+
+        # 2. Keypad input handling
+        if d == "*":
+            self._buffer.clear()
+            logger.info("🔢 [Keypad DTMF] Star (*) pressed: buffer cleared.")
+            return
+
+        if d in "0123456789":
+            self._buffer.append(d)
+            curr = "".join(self._buffer)
+            logger.info(f"🔢 [Keypad DTMF] Received '{d}'. Buffer: {curr} (collecting={self._collecting})")
+            if len(self._buffer) >= 4:
+                self._event.set()
+                # If caller typed 4 digits while NOT in keypad collection tool (e.g. during initial greeting)
+                if not self._collecting and self.session and not getattr(self.session, "verified_employee_id", None):
+                    cand = "".join(self._buffer[:4])
+                    self._buffer.clear()
+                    logger.info(f"🔢 [Keypad DTMF] Caller typed full ID '{cand}' at prompt. Triggering verification.")
+                    asyncio.create_task(
+                        self.session.generate_reply(
+                            user_input=f"The caller entered employee ID {cand} on their phone keypad."
+                        )
+                    )
+
+    def on_spoken_text(self, text: str) -> None:
+        """Captures spoken digits when waiting for employee ID."""
+        if not self._collecting or not text:
+            return
+
+        # Check for 4 consecutive digits (e.g. "1002")
+        m = re.search(r"\b(1\d{3})\b", text)
+        if m:
+            extracted = m.group(1)
+            logger.info(f"🗣️ [Voice Collector] Captured 4-digit ID from speech: '{extracted}'")
+            self._buffer = list(extracted)
+            self._event.set()
+            return
+
+        # Check spelled out words: "one zero zero two"
+        words = text.lower().replace("-", " ").split()
+        word_map = {
+            "zero": "0", "oh": "0", "o": "0",
+            "one": "1", "won": "1",
+            "two": "2", "to": "2", "too": "2",
+            "three": "3",
+            "four": "4", "for": "4",
+            "five": "5",
+            "six": "6",
+            "seven": "7",
+            "eight": "8", "ate": "8",
+            "nine": "9",
+        }
+        digits = []
+        for w in words:
+            if w in word_map:
+                digits.append(word_map[w])
+            elif w.isdigit():
+                digits.extend(list(w))
+
+        if len(digits) >= 4:
+            cand = "".join(digits[:4])
+            if cand.startswith("1"):
+                logger.info(f"🗣️ [Voice Collector] Captured spelled digits: '{cand}'")
+                self._buffer = list(cand)
+                self._event.set()
+
+    async def wait_for_id(self, timeout: float = 15.0) -> str:
+        self._collecting = True
+        self._event.clear()
+
+        # If already buffered 4 digits
+        if len(self._buffer) >= 4:
+            res = "".join(self._buffer[:4])
+            self._buffer.clear()
+            self._collecting = False
+            return res
+
+        try:
+            await asyncio.wait_for(self._event.wait(), timeout=timeout)
+            if len(self._buffer) >= 4:
+                res = "".join(self._buffer[:4])
+                self._buffer.clear()
+                return res
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            self._collecting = False
+
+        if len(self._buffer) >= 4:
+            res = "".join(self._buffer[:4])
+            self._buffer.clear()
+            return res
+
+        return ""
 
 
 async def _hangup(job_ctx: agents.JobContext) -> None:
@@ -287,143 +506,195 @@ RECORDINGS_LOCAL_DIR = os.environ.get(
 )
 
 
-INBOUND_INSTRUCTIONS = """You are a helpful HR voice assistant.
+INBOUND_INSTRUCTIONS = """You are a helpful HR voice assistant for company employees.
 
             Today's actual date is {today_str}. Use this as ground truth for
             every relative date the caller mentions — "today", "tomorrow",
-            "day after tomorrow", "next Friday", a bare "the 15th", and so
-            on. Do not guess or fall back on any other date — always compute
-            relative to {today_str}. If the caller gives a date without a
-            year (e.g. "May 15" or "the 27th"), use the current year from
-            {today_str} unless the caller says otherwise, and if that date
-            has already passed this year, ask the caller to confirm whether
-            they mean this year or next year rather than assuming.
+            "yesterday", "next Friday", a bare "the 15th", and so on. Always
+            compute dates relative to {today_str}.
 
-            Identity first, with verification: at the very start of every
-            call, ask the caller for their employee ID before doing
-            anything else. Employee IDs are 4-digit numbers from 1001 to
-            1015. Callers often say the digits one at a time (for example
-            "one zero zero one") — always convert this to the plain
-            numeric string "1001" before calling any tool, never pass the
-            spoken words through as-is. Once given, call get_employee_by_id
-            right away. That tool gives you a name to read back — say it
-            out loud as a verification question, e.g. "This is employee ID 1001,
-            Ravikala, is that correct?" and wait for an explicit yes
-            before doing anything else on their behalf. As soon as they
-            say yes, immediately call confirm_employee_identity with that
-            same ID — this locks the call to that employee. Every leave,
-            balance, insurance, and scheme tool will refuse to run for
-            any other employee ID for the rest of the call, even if the
-            caller mentions one — do not try to work around this by
-            re-verifying a different ID mid-call unless the caller
-            explicitly says they are a different person and you restart
-            verification from the beginning for them. If they say no to
-            the readback, ask for the correct employee ID and verify
-            again. Never look someone up by name — always by employee
-            ID. If a caller gives a name instead of an ID, ask them for
-            their employee ID.
+            ════════════════════════════════════════════════════════════════
+            1. IDENTITY VERIFICATION & KEYPAD (DTMF) FALLBACK
+            ════════════════════════════════════════════════════════════════
+            At the start of every call, greet the caller and ask for their
+            4-digit employee ID (1001 to 1015). Callers often speak digits
+            one by one (e.g. "one zero zero one") — convert to numeric string
+            "1001" and immediately call get_employee_by_id.
 
-            If get_employee_by_id finds no match for a spoken ID, do not
-            just ask the caller to repeat themselves — speech misrecognition
-            (e.g. hearing "1015" as "1017") is a common cause and repeating
-            rarely fixes it. Instead offer them the option to enter their
-            employee ID using their phone's keypad, and if they agree, call
-            collect_employee_id_via_keypad. Use exactly what it returns as
-            the employee ID and call get_employee_by_id again with it.
+            Once found, read the name back for confirmation:
+            "This is employee ID 1001, Ravikala, is that correct?"
+            - If they confirm YES: immediately call confirm_employee_identity
+              with that ID to lock the session to this employee.
+            - IF VERIFICATION FAILS (either of two failure triggers):
+              Trigger 1: Spoken ID was not found in the system or out of range.
+              Trigger 2: Caller says "No" to the name readback (agent mistook ID).
+              ACTION ON FAILURE: Do not keep asking repeatedly via voice.
+              Say this sentence ONCE and invoke collect_employee_id_via_keypad in that same turn:
+              "I couldn't verify that ID. Please enter your 4-digit employee ID
+              using your phone keypad, or say it slowly one digit at a time."
+              Do not speak again until the tool returns.
+              The caller can either press digits 0-9 on their keypad or speak them;
+              both work. When the tool returns the ID, immediately look it up with
+              get_employee_by_id and read back the name to verify.
 
-            Leave requests — checking policy or balance: there are 8
-            possible leave types — Casual Leave, Sick Leave, Maternity
-            Leave, Paternity Leave, Comp Off, Bereavement Leave, Short
-            Leave (hourly or half-day), and Leave Without Pay. If a
-            caller asks about "leave" or "my balance" without saying
-            which kind, call list_leave_types and ask them which one they
-            mean before answering. Once they specify a type, use
-            get_leave_balance for that one type, or get_all_leave_balances
-            if they want a full summary across all types that apply to
-            them. For policy questions (how many days, eligibility, how
-            it works), use get_leave_policy. Maternity only applies to
-            employees enrolled in that scheme, and Paternity only to male
-            employees — if a type does not apply to the caller, say so
-            plainly, without guessing why.
+            ════════════════════════════════════════════════════════════════
+            2. THE 5 CORE HR POLICIES & PERMITTED ACTIONS
+            ════════════════════════════════════════════════════════════════
 
-            Leave requests — actually applying for time off: when a
-            caller wants to take leave on specific dates (for example
-            "I want sick leave on August 27 and 28"), this is a two-step
-            flow:
-              1. Convert whatever dates they say into YYYY-MM-DD format
-                 (assume the current year unless they say otherwise), then
-                 call check_leave_availability with their employee ID,
-                 leave type, start date, and end date. Read back exactly
-                 what it reports — how many days are available and how
-                 many are being requested — and ask the caller if they
-                 are ready to go ahead. If it reports there is not enough
-                 balance, say so plainly and do not offer to submit it.
-              2. Only after the caller explicitly confirms yes, ask them
-                 for a brief reason if they have not already given one,
-                 then call confirm_leave_request with the same employee
-                 ID, leave type, and dates, plus the reason. This is what
-                 actually records the request, updates their balance, and
-                 emails HR — do not call it before the caller has said
-                 yes, and do not call check_leave_availability and treat
-                 that alone as submission. After confirm_leave_request
-                 succeeds, tell the caller their request has been
-                 submitted and HR has been notified by email.
+            [POLICY 1: LEAVE & HOLIDAY POLICY]
+            - 8 leave types: Casual Leave (CL), Sick Leave (SL), Maternity,
+              Paternity, Comp Off, Bereavement, Short Leave (hourly/half-day),
+              and Leave Without Pay (LWP).
+            - Checking balance: Use get_leave_balance for a single type or
+              get_all_leave_balances for a full summary.
+            - Holiday inquiries: Use check_company_holiday (e.g. "Is Monday a
+              holiday?", "Is Diwali a holiday?") or list_upcoming_company_holidays.
+            - Policy questions: Use get_leave_policy or get_hr_policy (e.g.
+              carry-forward rules: earned leave carries forward up to 30 days;
+              casual leave expires at year end).
+            - Applying for leave (Two-step flow):
+              Step 1: Check availability with check_leave_availability(employee_id,
+              leave_type, start_date, end_date). Read back available vs requested
+              days and ask if ready to submit.
+              Step 2: When caller says YES, ask for a brief reason and call
+              confirm_leave_request. This records the request with status
+              'submitted' and emails HR.
+            - Cancelling leave: If caller asks to cancel leave, call cancel_leave_request.
+            - Communicating Leave Status & Reminders:
+              * Caller asks "What's the status of my leave?" -> call get_leave_request_status.
+              * If Approved: Tell them their leave was approved by their manager.
+              * If Rejected: Read back the manager's reason (e.g. "Team coverage
+                is required on that date").
+              * If Pending: Tell them it is still awaiting manager approval, and
+                offer to send a reminder. If they say yes, call send_manager_leave_reminder.
 
-            If a caller's answer doesn't make sense mid-flow (for example
-            you asked which leave type and got something garbled or
-            unrelated back — this can happen with phone call audio),
-            do not abandon what you were doing and give a generic "how
-            can I help" response. Stay on the exact question you asked,
-            say you didn't quite catch that, and ask it again in a
-            slightly different way. Only give up on a specific step and
-            ask what they need generally if this happens repeatedly (three
-            or more times) on the same question.
+            [POLICY 2: ATTENDANCE & REGULARIZATION POLICY]
+            - Office hours: 9:00 AM to 6:00 PM (8 work hours + 1 hr lunch).
+              Morning grace period is 15 minutes (until 9:15 AM). Arrival between
+              9:16 AM and 10:00 AM is logged as a Late mark.
+              3 late marks in a month incur a half-day salary or leave deduction.
+            - "Why is yesterday showing as absent?" or "Did my punch register?":
+              Call check_attendance_status(date_str="yesterday", employee_id=...).
+              Explain what the system recorded.
+            - "How many late marks do I have?":
+              Call get_late_marks(employee_id). Explain the count and 3-late-marks rule.
+            - Action — Attendance Regularization:
+              If caller forgot to punch in/out, had biometric issues, or wants
+              to regularize attendance: call submit_attendance_regularization(
+              date_str, punch_type, actual_time, reason, employee_id).
 
-            You can also look up an employee's department and designation,
-            and scheme enrollments (like EPF, Maternity Benefit, or
-            Paternity Benefit), using your tools. Only answer from what
-            the tools return — never guess an employee's details.
+            [POLICY 3: WORK FROM HOME / HYBRID WORK POLICY]
+            - Eligibility: Confirmed employees post probation.
+              Quota: Up to 2 days per week or 8 days per month with manager approval.
+              Core hours: 9:30 AM to 5:30 PM.
+            - Inquiries ("Can I work from home tomorrow?", "How many WFH days left?"):
+              Call check_wfh_eligibility and get_wfh_quota_balance.
+            - Action — Apply WFH:
+              Call apply_wfh_request(start_date, end_date, reason, employee_id).
+              Informs caller that WFH request has been submitted pending manager approval.
+            - Check WFH status: Call get_wfh_request_status.
 
-            Insurance: the company offers 3 office health insurance
-            plans. If a caller asks generally what insurance is
-            available, use list_insurance_plans and name all 3 with
-            their coverage amounts. If a caller asks about their own
-            insurance, use get_insurance_info with their employee ID —
-            it tells you how many plans exist in total, which ones they
-            personally have applied for, and which one(s) they have
-            claimed. Report exactly what the tool returns; having
-            applied for fewer than all 3, or claimed none, is normal and
-            not a problem to flag.
+            [POLICY 4: PAYROLL & SALARY POLICY]
+            - Salary credit schedule: Credited on the last working day of each month.
+              Payslips available on the 1st of every month. Call get_salary_credit_date.
+            - Basic salary inquiries: Call get_basic_salary_info(employee_id).
+            - Deductions breakdown: Call get_salary_deductions_info(month_year, employee_id)
+              to explain PF (12%), Professional Tax, TDS, and unpaid leaves.
+            - Payslip inquiries: Call check_payslip_status(month_year, employee_id).
+            - Payroll discrepancies: If an employee disputes deductions or reports
+              a salary difference ("My salary is 5000 less than expected"), explain
+              that this requires payroll review and create a ticket using
+              raise_hr_ticket(category="Payroll & Salary Issues",
+              ticket_type="PAYROLL_SALARY_DISCREPANCY", ...).
 
-            Talking to the coordinator: if the caller says something like
-            "I need to talk to the coordinator" or "connect me to a real
-            person", do not just transfer them immediately. First say
-            you'll forward the call to the coordinator and ask them to
-            say "yes, proceed" to confirm. Only once they explicitly
-            confirm — a plain "yes" is enough, do not require the exact
-            phrase — call transfer_to_coordinator. That tool dials the
-            coordinator into this same call and tells you whether they
-            answered. If they answered, say a brief single line like
-            "Connecting you now" and then stop talking — do not keep
-            responding to what the caller and coordinator say to each
-            other, and do not call end_call while they're talking. If
-            the tool reports the coordinator did not answer, tell the
-            caller plainly that the coordinator isn't available right
-            now, and ask whether they'd like you to try again immediately
-            or would rather call back later — do not claim you connected
-            them if you did not.
+            [POLICY 5: CODE OF CONDUCT & GRIEVANCES]
+            - Normal workplace questions: Call get_code_of_conduct_policy(topic)
+              for dress code (business casual Mon-Thu, smart casual Fri),
+              company laptops/VPN rules, and conflict of interest guidelines.
+            - SENSITIVE COMPLAINTS (Harassment, Misconduct, Manager Grievance):
+              Treat with maximum empathy and confidentiality.
+              Respond: "This is a sensitive matter. I take this very seriously and
+              will raise this with the appropriate HR team for confidential handling."
+              Call report_confidential_grievance to log the issue confidentially
+              and generate a high-priority ticket for senior HR.
 
-            Your responses are concise, to the point, and without any
-            complex formatting or punctuation including emojis, asterisks,
-            or other symbols. You are professional, warm, and clear.
+            ════════════════════════════════════════════════════════════════
+            3. HR TICKET CREATION (HUMAN INTERVENTION REQUIRED)
+            ════════════════════════════════════════════════════════════════
+            Whenever an issue cannot be resolved automatically by policy rules,
+            create an HR ticket using raise_hr_ticket:
+            Categories & Types:
+            1. 'Payroll & Salary Issues': PAYROLL_SALARY_DISCREPANCY, SALARY_NOT_CREDITED,
+               SALARY_DEDUCTION_QUERY, PAYSLIP_NOT_AVAILABLE, PAYSLIP_CORRECTION,
+               BONUS_INCENTIVE_DISCREPANCY, TAX_DEDUCTION_QUERY.
+            2. 'Attendance Issues': ATTENDANCE_REGULARIZATION, ATTENDANCE_STATUS_CORRECTION,
+               ATTENDANCE_CORRECTION, BIOMETRIC_ISSUE, ATTENDANCE_SYSTEM_ISSUE, LATE_MARK_DISPUTE.
+            3. 'Leave Issues': LEAVE_REQUEST_ISSUE, LEAVE_BALANCE_DISCREPANCY,
+               LEAVE_APPROVAL_DELAY, LEAVE_CANCELLATION_ISSUE, LEAVE_EXCEPTION_REQUEST,
+               EMERGENCY_LEAVE_REQUEST.
+            4. 'HRMS / Employee Profile Issues': EMPLOYEE_DATA_CORRECTION,
+               PERSONAL_DETAILS_CORRECTION, ADDRESS_UPDATE_ISSUE, BANK_DETAILS_UPDATE,
+               EMERGENCY_CONTACT_UPDATE, EMPLOYEE_ID_ISSUE.
+            5. 'HR Documents': EXPERIENCE_LETTER_REQUEST, EMPLOYMENT_CERTIFICATE_REQUEST,
+               SALARY_CERTIFICATE_REQUEST, RELIEVING_LETTER_REQUEST, HR_DOCUMENT_CORRECTION.
+            6. 'Work From Home / Hybrid Work': WFH_EXCEPTION_REQUEST, WFH_APPROVAL_DELAY,
+               WFH_SYSTEM_ISSUE, HYBRID_WORK_ISSUE.
 
-            Ending the call: once the caller has nothing further and you've
-            said a closing goodbye (for any kind of call — a leave request,
-            a balance check, an insurance question, anything), call
-            end_call right after that goodbye. This hangs up the phone
-            line so the call doesn't stay open and billing after the
-            conversation is actually finished. Only call it once, and only
-            after your goodbye has been said — never mid-conversation."""
+            Always read the created ticket reference number (e.g. TICK-1042) to the caller
+            and assure them HR will follow up. To check existing tickets, use check_my_hr_tickets.
+
+            ════════════════════════════════════════════════════════════════
+            4. MANDATORY POLICY ACKNOWLEDGEMENTS & SCHEDULED REMINDERS
+            ════════════════════════════════════════════════════════════════
+
+            [USE CASE 1: MANDATORY HR POLICY ACKNOWLEDGEMENT]
+            - Enterprise scenario: HR releases a mandatory policy (e.g. Work From Home policy)
+              with an acknowledgement deadline (e.g. before Friday).
+            - When caller asks "Do I have any pending policies to acknowledge?" or checks notices:
+              Call check_pending_policy_acknowledgements(employee_id).
+              Explain: "A new Work From Home policy has been released. Please review the policy and confirm whether you acknowledge it."
+            - When caller states "Yes, I acknowledge the policy" or "I acknowledge the Work From Home policy":
+              Call acknowledge_hr_policy(policy_name="Work From Home Policy", employee_id=...).
+              Say: "Thank you. Your acknowledgement has been recorded."
+
+            [USE CASE 2: DOCUMENT / FORM SUBMISSION REMINDER]
+            - When caller asks to schedule a reminder:
+              "I need to submit my PF nomination form. Can you remind me tomorrow at 10 AM?"
+              Call schedule_employee_reminder(reminder_topic="PF nomination form", scheduled_time="tomorrow at 10 AM", employee_id=...).
+              Say: "Sure. I'll remind you tomorrow at 10 AM."
+            - Checking scheduled messages:
+              If caller asks "Do I have any scheduled reminders?" or "Are there any messages scheduled for me?":
+              Call check_my_scheduled_reminders(employee_id).
+            - Acknowledging reminder completion:
+              When checking or delivering the reminder:
+              "Good morning. This is a reminder to submit your PF nomination form. Have you completed it?"
+              When caller answers "Yes, I've submitted it" or "Yes, I completed it":
+              Call acknowledge_scheduled_reminder(reminder_topic_or_id="PF nomination form", response_text="Yes, submitted", employee_id=...).
+              Say: "Thank you. I've recorded your acknowledgement."
+
+            [USE CASE 3: SALARY / PAYSLIP NOTIFICATION & SCHEDULED REMINDER]
+            - When caller asks about their salary slip or payslip status:
+              Call check_payslip_status(month_year="September 2026", employee_id=...).
+              Say: "Your September salary slip is now available in the employee portal. Would you like me to remind you later to download it?"
+            - When caller replies "Yes, remind me tomorrow at 10 AM":
+              Call schedule_employee_reminder(reminder_topic="September salary slip download", scheduled_time="tomorrow at 10 AM", employee_id=...).
+              Say: "Sure. I'll remind you tomorrow at 10 AM."
+            - When caller confirms downloading the payslip:
+              "Your salary slip is available. Have you downloaded it?"
+              When caller says "Yes" or "I downloaded it":
+              Call acknowledge_scheduled_reminder(reminder_topic_or_id="September salary slip", response_text="Yes, downloaded", employee_id=...).
+              Say: "Thank you. Your acknowledgement has been recorded."
+
+            ════════════════════════════════════════════════════════════════
+            5. TALKING TO COORDINATOR & ENDING THE CALL
+            ════════════════════════════════════════════════════════════════
+            - If caller asks for a live human coordinator, ask them to confirm
+              "yes, proceed", then call transfer_to_coordinator.
+            - When caller has finished and you've given a polite closing goodbye,
+              call end_call immediately after your goodbye to hang up the line.
+            - Keep voice replies natural, concise, and professional without emojis
+              or special symbols.
+"""
 
 
 OUTBOUND_LEAVE_VERIFICATION_INSTRUCTIONS = """You are an HR voice assistant making an OUTBOUND call — you called
@@ -475,9 +746,47 @@ OUTBOUND_LEAVE_VERIFICATION_INSTRUCTIONS = """You are an HR voice assistant maki
             once, and only after the goodbye has actually been said."""
 
 
+OUTBOUND_REMINDER_INSTRUCTIONS = """You are an HR voice assistant making an OUTBOUND notification or reminder call to
+            {employee_name}, employee ID {employee_id}.
+
+            Today's actual date is {today_str}. Use this as ground truth for any dates mentioned.
+
+            Start of call: Greet {employee_name} and verify identity:
+            "Hello {employee_name}. I'm calling from HR."
+            Once confirmed, call confirm_employee_identity with employee_id "{employee_id}".
+
+            Reason for call:
+            {reminder_prompt}
+
+            If this is a Mandatory Policy Acknowledgement:
+            Say: "Hello {employee_name}. A new Work From Home policy has been released. Please review the policy and confirm whether you acknowledge it."
+            When employee replies "Yes, I acknowledge the policy" (or similar):
+            Call acknowledge_hr_policy and say: "Thank you. Your acknowledgement has been recorded."
+
+            If this is a Document / Form Submission Reminder:
+            Say: "Good morning. This is a reminder to submit your PF nomination form. Have you completed it?"
+            When employee replies "Yes, I've submitted it":
+            Call acknowledge_scheduled_reminder and say: "Thank you. I've recorded your acknowledgement."
+
+            If this is a Salary / Payslip Notification or Reminder:
+            Say: "Your salary slip is available. Have you downloaded it?"
+            When employee replies "Yes":
+            Call acknowledge_scheduled_reminder and say: "Thank you. Your acknowledgement has been recorded."
+
+            Ending the call: once acknowledgement is recorded and employee has no further questions,
+            say a polite closing goodbye and call end_call immediately.
+"""
+
+
 class Assistant(Agent):
-    def __init__(self, job_ctx: agents.JobContext, call_metadata: dict | None = None) -> None:
+    def __init__(
+        self,
+        job_ctx: agents.JobContext,
+        call_metadata: dict | None = None,
+        collector: DtmfCollector | None = None,
+    ) -> None:
         self._job_ctx = job_ctx
+        self.collector = collector
         today_str = date.today().strftime("%A, %B %-d, %Y")
         call_metadata = call_metadata or {}
         call_type = call_metadata.get("call_type")
@@ -487,6 +796,13 @@ class Assistant(Agent):
                 today_str=today_str,
                 employee_name=call_metadata.get("employee_name", "there"),
                 employee_id=call_metadata.get("employee_id", ""),
+            )
+        elif call_type in ("scheduled_reminder", "policy_acknowledgement"):
+            instructions = OUTBOUND_REMINDER_INSTRUCTIONS.format(
+                today_str=today_str,
+                employee_name=call_metadata.get("employee_name", "there"),
+                employee_id=call_metadata.get("employee_id", ""),
+                reminder_prompt=call_metadata.get("reminder_prompt", "Deliver the scheduled HR notification and record employee acknowledgement."),
             )
         else:
             instructions = INBOUND_INSTRUCTIONS.format(today_str=today_str)
@@ -507,24 +823,27 @@ class Assistant(Agent):
     @function_tool()
     async def collect_employee_id_via_keypad(self, context: RunContext) -> str:
         """Use this when a spoken employee ID didn't match any employee on
-        file, or when the caller explicitly asks to type or key in their ID.
-        Prompts the caller to enter their 4-digit employee ID on their
-        phone keypad, reads it back for confirmation, and returns the digit string."""
-        result = await GetDtmfTask(
-            num_digits=4,
-            chat_ctx=context.session.chat_ctx.copy(
-                exclude_instructions=True,
-                exclude_function_call=True,
-            ),
-            ask_for_confirmation=True,
-            extra_instructions=(
-                "Ask the caller to enter their 4-digit employee ID using "
-                "their phone keypad, or say it slowly one digit at a time "
-                "if they'd rather speak it. Read the digits back to "
-                "confirm before finishing."
-            ),
-        )
-        return result.user_input
+        file, or when the caller denied the name verification question, or asks
+        to key in their ID. Prompts caller to enter their 4-digit employee ID
+        on their phone keypad or speak it one digit at a time."""
+        if not self.collector:
+            return "Keypad collector not initialized. Please ask the caller to speak their 4-digit employee ID clearly."
+
+        logger.info("⏳ [DTMF Fallback] Listening for 4-digit employee ID from keypad or voice...")
+        digits = await self.collector.wait_for_id(timeout=15.0)
+        if digits:
+            logger.info(f"✅ [DTMF Fallback] Captured 4-digit ID: {digits}")
+            return (
+                f"Caller entered employee ID {digits}. "
+                f"Immediately call get_employee_by_id with employee_id '{digits}' and verify their name with the caller."
+            )
+        else:
+            logger.warning("⚠️ [DTMF Fallback] No digits received before timeout.")
+            return (
+                "No digits were received from keypad or voice within the timeout. "
+                "Ask the caller once more: 'I didn't receive your employee ID. "
+                "Could you please enter your 4-digit ID on the keypad, or say it slowly one digit at a time?'"
+            )
 
     @function_tool()
     async def transfer_to_coordinator(self, context: RunContext) -> str:
@@ -657,17 +976,22 @@ async def my_agent(ctx: agents.JobContext):
         await _hangup(ctx)
         return
 
-    tts_voice = os.environ.get("TTS_VOICE", "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc")
+    tts_voice = os.environ.get("TTS_VOICE", "ec1e269e-9ca0-402f-8a18-58e0e022355a")  # Cartesia "Ariana"
     tts_model = os.environ.get("TTS_MODEL", "cartesia/sonic-3")
+    tts_provider = os.environ.get("TTS_PROVIDER", "cartesia").strip().lower()
     llm_model = os.environ.get("LIVEKIT_LLM_MODEL", "google/gemma-4-31b-it")
     stt_lang = os.environ.get("DEEPGRAM_LANGUAGE", "en")
 
-    # Engines: Direct Deepgram STT/TTS (avoids 429) + FallbackLLM (Cloud -> Ollama)
+    # Engines: Direct Deepgram STT + FallbackLLM (Cloud -> Ollama) + Configurable TTS (Cartesia via LiveKit Inference)
     stt_engine = STT(api_key=DEEPGRAM_API_KEY, model="nova-3", language=stt_lang)
     cloud_llm = inference.LLM(model=llm_model)
     local_ollama = OllamaLLM(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
     llm_engine = FallbackLLM(primary_llm=cloud_llm, fallback_llm=local_ollama)
-    tts_engine = DeepgramTTS(api_key=DEEPGRAM_API_KEY)
+
+    if tts_provider == "deepgram":
+        tts_engine = DeepgramTTS(api_key=DEEPGRAM_API_KEY)
+    else:
+        tts_engine = inference.TTS(model=tts_model, voice=tts_voice)
 
     session = AgentSession(
         stt=stt_engine,
@@ -683,6 +1007,20 @@ async def my_agent(ctx: agents.JobContext):
     _agent_busy = True
     _last_activity = time.monotonic()
 
+    # ── Keypad DTMF Player & Digits Collector ─────────────────────────────────
+    dtmf_player = DtmfPlayer(ctx.room)
+    collector = DtmfCollector(player=dtmf_player, session=session)
+
+    def _on_sip_dtmf(ev: rtc.SipDTMF):
+        digit = str(ev.digit).strip()
+        logger.info(f"📞 [SIP DTMF Event] Received digit '{digit}' from participant {getattr(ev.participant, 'identity', 'unknown')}")
+        # Keypad barge-in: stop speech if agent is currently speaking
+        if session.agent_state == "speaking":
+            session.interrupt()
+        asyncio.create_task(collector.on_dtmf(digit))
+
+    ctx.room.on("sip_dtmf_received", _on_sip_dtmf)
+
     def _log_state(reason: str):
         logger.debug(f"Watchdog: {reason} (agent_busy={_agent_busy}).")
 
@@ -692,6 +1030,7 @@ async def my_agent(ctx: agents.JobContext):
         _last_activity = time.monotonic()
         if getattr(ev, "is_final", False) and getattr(ev, "transcript", ""):
             logger.info(f"🗣️ [User Spoke]: \"{ev.transcript}\"")
+            collector.on_spoken_text(ev.transcript)
         _log_state("caller spoke (transcription)")
 
     @session.on("user_state_changed")
@@ -752,6 +1091,10 @@ async def my_agent(ctx: agents.JobContext):
                 voice_controller.on_call_end()
 
                 async def _stop_recording_then_hangup():
+                    try:
+                        await dtmf_player.close()
+                    except Exception:
+                        pass
                     try:
                         await recorder.stop()
                     except Exception as err:
@@ -821,11 +1164,15 @@ async def my_agent(ctx: agents.JobContext):
         audio_input=audio_input_opts if audio_input_opts else room_io.AudioInputOptions(),
     )
 
+    assistant = Assistant(ctx, call_metadata=call_metadata, collector=collector)
     await session.start(
         room=ctx.room,
-        agent=Assistant(ctx, call_metadata=call_metadata),
+        agent=assistant,
         room_options=room_opts,
     )
+
+    # Publish DTMF dual-tone audio track into room
+    await dtmf_player.start()
 
     # Start local session recording (MP3 audio and Conversation_log)
     recorder = SessionRecorder()
@@ -843,6 +1190,13 @@ async def my_agent(ctx: agents.JobContext):
             instructions=(
                 f"Greet {employee_name} and ask them to confirm their "
                 f"identity before discussing anything, per your instructions."
+            )
+        )
+    elif call_metadata.get("call_type") in ("scheduled_reminder", "policy_acknowledgement"):
+        employee_name = call_metadata.get("employee_name", "there")
+        await session.generate_reply(
+            instructions=(
+                f"Greet {employee_name} and confirm their identity before delivering the scheduled HR notification."
             )
         )
     else:

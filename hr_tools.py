@@ -697,7 +697,8 @@ async def confirm_leave_request(
     else:
         reason_clause = ""
 
-    subject = f"{r['full_name']} ({emp_id}) — {r['leave_name']} Request"
+    req_id = insert_result
+    subject = f"[REQ-{req_id}] {r['full_name']} ({emp_id}) — {r['leave_name']} Request"
 
     signature_lines = [r["full_name"]]
     if r.get("designation_name"):
@@ -706,19 +707,28 @@ async def confirm_leave_request(
         signature_lines.append(COMPANY_NAME)
     signature = "\n".join(signature_lines)
 
+    bot_reply_to = SMTP_CONFIG["from_addr"] or SMTP_CONFIG["user"] or "manikandan2034511@gmail.com"
+
     body = (
         f"Hi Mam/sir,\n\n"
         f"I would like to kindly request {r['leave_name']} for {days_requested} {days_word}, "
         f"from {date_phrase}{reason_clause}. I will be unable to be present at work during this "
         f"period. I would be grateful for your consideration.\n\n"
         f"Best regards,\n"
-        f"{signature}\n"
+        f"{signature}\n\n"
+        f"──────────────────────────────────────────────────────────\n"
+        f"HOW TO RESPOND TO THIS LEAVE REQUEST:\n"
+        f"Simply reply directly to this email with:\n"
+        f"  • 'Approved' to approve this request.\n"
+        f"  • 'Rejected: <reason>' to reject with a reason.\n"
+        f"Your response will automatically update the HR system.\n"
+        f"──────────────────────────────────────────────────────────\n"
     )
     email_error = _send_email(
         subject, body,
         to_addr=LEAVE_REQUEST_EMAIL,
         cc_addr=MD_NOTIFY_EMAIL,
-        reply_to=r.get("employee_email") or "",
+        reply_to=bot_reply_to,
     )
     if email_error:
         return (
@@ -909,26 +919,113 @@ def run_startup_check() -> None:
         logger.error("STARTUP CHECK FAILED — could not reach %s (%s)", target, rows)
         print(f"[hr_tools startup check] FAILED connecting to {target}: {rows}")
         return
-    logger.info("STARTUP CHECK — connected to %s, found %d employee row(s)", target, len(rows))
-    print(f"[hr_tools startup check] Connected to {target} — {len(rows)} employee(s) found:")
-    for r in rows:
-        print(f"    {r['employee_id']}  {r['full_name']}")
+    print(f"[hr_tools startup check] Connected to {target} — {len(rows)} employee(s) ready.")
 
+
+# ---------------------------------------------------------------------------
+# Import modular domain tools
+# ---------------------------------------------------------------------------
+from tools.policy_tools import (
+    get_hr_policy,
+    check_company_holiday,
+    list_upcoming_company_holidays,
+)
+from tools.leave_tools import (
+    cancel_leave_request,
+    get_leave_request_status,
+    send_manager_leave_reminder,
+)
+from tools.attendance_tools import (
+    check_attendance_status,
+    get_late_marks,
+    submit_attendance_regularization,
+    get_regularization_status,
+)
+from tools.wfh_tools import (
+    check_wfh_eligibility,
+    get_wfh_quota_balance,
+    apply_wfh_request,
+    get_wfh_request_status,
+)
+from tools.payroll_tools import (
+    get_salary_credit_date,
+    get_basic_salary_info,
+    get_salary_deductions_info,
+    check_payslip_status,
+)
+from tools.grievance_tools import (
+    get_code_of_conduct_policy,
+    report_confidential_grievance,
+)
+from tools.ticket_tools import (
+    raise_hr_ticket,
+    check_my_hr_tickets,
+)
+from tools.reminder_tools import (
+    check_pending_policy_acknowledgements,
+    acknowledge_hr_policy,
+    schedule_employee_reminder,
+    check_my_scheduled_reminders,
+    acknowledge_scheduled_reminder,
+)
 
 # All tools list exported for Agent
 ALL_TOOLS = [
+    # Core Identity & Directory
     get_employee_by_id,
     confirm_employee_identity,
     list_department_employees,
+    get_employee_schemes,
+    list_insurance_plans,
+    get_insurance_info,
+
+    # 1. Leave & Holiday Policy & Actions
     list_leave_types,
     get_leave_policy,
     get_leave_balance,
     get_all_leave_balances,
     check_leave_availability,
     confirm_leave_request,
+    cancel_leave_request,
+    get_leave_request_status,
+    send_manager_leave_reminder,
     get_pending_leave_request,
     record_leave_verification_reason,
-    get_employee_schemes,
-    list_insurance_plans,
-    get_insurance_info,
+    check_company_holiday,
+    list_upcoming_company_holidays,
+
+    # 2. Attendance & Regularization Policy & Actions
+    check_attendance_status,
+    get_late_marks,
+    submit_attendance_regularization,
+    get_regularization_status,
+
+    # 3. Work From Home / Hybrid Work Policy & Actions
+    check_wfh_eligibility,
+    get_wfh_quota_balance,
+    apply_wfh_request,
+    get_wfh_request_status,
+
+    # 4. Payroll & Salary Policy & Inquiries
+    get_salary_credit_date,
+    get_basic_salary_info,
+    get_salary_deductions_info,
+    check_payslip_status,
+
+    # 5. Code of Conduct & Grievance Policy & Escalations
+    get_hr_policy,
+    get_code_of_conduct_policy,
+    report_confidential_grievance,
+
+    # 6. HR Ticket Creation (Human Escalation across 6 categories)
+    raise_hr_ticket,
+    check_my_hr_tickets,
+
+    # 7. Mandatory Policy Acknowledgements & Scheduled Reminders
+    check_pending_policy_acknowledgements,
+    acknowledge_hr_policy,
+    schedule_employee_reminder,
+    check_my_scheduled_reminders,
+    acknowledge_scheduled_reminder,
 ]
+

@@ -32,7 +32,8 @@ _DEFAULT_JSON_PATH = Path(__file__).resolve().parent.parent / "data" / "blocked_
 BLOCKED_NUMBERS: set[str] = set(
     [
         # Example format:
-         "+919786586806",
+        #"+919786586806",asuf sir number
+        "+919360827096",
         # "101",
     ]
 )

@@ -1,197 +1,43 @@
 """
-grievance_tools.py
+tools/grievance_tools.py
 
-Grievance Management Tool using MySQL.
-
-Functions:
-1. Create Grievance
-2. Get Grievance
-3. List Employee Grievances
-4. Update Status
-5. Add Comment
-6. Close Grievance
+LiveKit Function Tools for Code of Conduct & Grievance:
+1. Code of conduct policy inquiries (dress code, company laptops/assets, conflict of interest)
+2. Confidential grievance escalation (harassment, misconduct, manager complaints)
 """
 
-from datetime import datetime
-from database.db import get_db_connection
+from livekit.agents import function_tool, RunContext
+from services.grievance_service import GrievanceService
+from tools.tool_helpers import require_verified, get_verified_id
+
+_grievance_service = GrievanceService()
 
 
-class GrievanceTools:
+@function_tool
+async def get_code_of_conduct_policy(topic: str) -> str:
+    """Answer questions about workplace code of conduct:
+    - Dress code rules (business casual Mon-Thu, smart casual Fri)
+    - Company assets and laptop rules (authorized use, mandatory VPN)
+    - Conflict of interest and gift acceptance rules
+    Topic can be 'dress code', 'laptop', 'conflict of interest', or 'general'."""
+    res = _grievance_service.get_code_of_conduct_info(topic)
+    return res["message"]
 
-    def _connect(self):
-        return get_db_connection()
 
-    # ----------------------------------------------------
-    # Create New Grievance
-    # ----------------------------------------------------
-    def create_grievance(
-        self,
-        employee_id,
-        title,
-        description
-    ):
-        conn = self._connect()
-        cursor = conn.cursor()
+@function_tool
+async def report_confidential_grievance(
+    complaint_details: str,
+    issue_type: str,
+    employee_id: str,
+    context: RunContext,
+) -> str:
+    """USE WITH UTMOST SENSITIVITY: Call this when an employee wishes to report harassment,
+    misconduct, or a formal complaint against their manager or colleagues.
+    Registers a confidential grievance and raises a confidential HR ticket for direct senior HR handling."""
+    err = require_verified(context, employee_id)
+    if err:
+        return err
 
-        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        cursor.execute("""
-            INSERT INTO grievances
-            (employee_id, title, description, status, created_at)
-            VALUES (%s, %s, %s, 'Open', %s)
-        """, (str(employee_id), title, description, created_at))
-
-        grievance_id = cursor.lastrowid
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        return {
-            "success": True,
-            "grievance_id": grievance_id,
-            "status": "Open",
-            "message": "Grievance created successfully."
-        }
-
-    # ----------------------------------------------------
-    # Get Single Grievance
-    # ----------------------------------------------------
-    def get_grievance(self, grievance_id):
-        conn = self._connect()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT grievance_id, employee_id, title, description, status, created_at
-            FROM grievances
-            WHERE grievance_id = %s
-        """, (grievance_id,))
-
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
-
-        if row is None:
-            return {
-                "success": False,
-                "message": "Grievance not found."
-            }
-
-        return {
-            "success": True,
-            "grievance": {
-                "grievance_id": row["grievance_id"],
-                "employee_id": row["employee_id"],
-                "title": row["title"],
-                "description": row["description"],
-                "status": row["status"],
-                "created_at": str(row["created_at"])
-            }
-        }
-
-    # ----------------------------------------------------
-    # List Employee Grievances
-    # ----------------------------------------------------
-    def list_grievances(self, employee_id):
-        conn = self._connect()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT grievance_id, title, status, created_at
-            FROM grievances
-            WHERE employee_id = %s
-            ORDER BY grievance_id DESC
-        """, (str(employee_id),))
-
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        grievances = []
-        for r in rows:
-            grievances.append({
-                "grievance_id": r["grievance_id"],
-                "title": r["title"],
-                "status": r["status"],
-                "created_at": str(r["created_at"])
-            })
-
-        return {
-            "success": True,
-            "grievances": grievances
-        }
-
-    # ----------------------------------------------------
-    # Update Status
-    # ----------------------------------------------------
-    def update_status(
-        self,
-        grievance_id,
-        status
-    ):
-        conn = self._connect()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            UPDATE grievances
-            SET status = %s
-            WHERE grievance_id = %s
-        """, (status, grievance_id))
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        return {
-            "success": True,
-            "message": "Status Updated."
-        }
-
-    # ----------------------------------------------------
-    # Close Grievance
-    # ----------------------------------------------------
-    def close_grievance(self, grievance_id):
-        return self.update_status(grievance_id, "Closed")
-
-    # ----------------------------------------------------
-    # Add Comment
-    # ----------------------------------------------------
-    def add_comment(
-        self,
-        grievance_id,
-        comment
-    ):
-        conn = self._connect()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT description
-            FROM grievances
-            WHERE grievance_id = %s
-        """, (grievance_id,))
-
-        row = cursor.fetchone()
-
-        if row is None:
-            cursor.close()
-            conn.close()
-            return {
-                "success": False,
-                "message": "Grievance not found."
-            }
-
-        updated_description = row["description"] + "\n\nComment:\n" + comment
-
-        cursor.execute("""
-            UPDATE grievances
-            SET description = %s
-            WHERE grievance_id = %s
-        """, (updated_description, grievance_id))
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        return {
-            "success": True,
-            "message": "Comment added."
-        }
+    emp_id = get_verified_id(context, employee_id)
+    res = _grievance_service.log_confidential_grievance(emp_id, complaint_details, issue_type)
+    return res["message"]
