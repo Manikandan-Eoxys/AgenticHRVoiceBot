@@ -336,157 +336,166 @@ AgenticHRVoiceBot
 
 # Configure .env
 
-Create
+Copy the provided template:
 
+```bash
+cp .env.example .env
 ```
-touch .env
+
+Open `.env` and fill in your credentials:
+
+```bash
+nano .env  # or code .env
 ```
 
-Example
-
-```env
-###################################################
-# LiveKit
-###################################################
-
-LIVEKIT_URL=wss://xxxxxxxx.livekit.cloud
-
-LIVEKIT_API_KEY=xxxxxxxx
-
-LIVEKIT_API_SECRET=xxxxxxxx
-
-###################################################
-# Ollama
-###################################################
-
-OLLAMA_BASE_URL=http://localhost:11434/v1
-
-OLLAMA_MODEL=qwen2.5:1.5b
-
-###################################################
-# Deepgram
-###################################################
-
-DEEPGRAM_API_KEY=xxxxxxxxxxxxxxxx
-
-###################################################
-# Database
-###################################################
-
-DATABASE_PATH=database/hr.db
-
-###################################################
-# Logging
-###################################################
-
-LOG_LEVEL=INFO
-```
+Key environment settings:
+- **LiveKit**: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
+- **STT**: `DEEPGRAM_API_KEY` (model: `nova-3`)
+- **TTS**: `TTS_PROVIDER=cartesia` (or `deepgram`, `elevenlabs`)
+- **LLM**: `OLLAMA_BASE_URL=http://localhost:11434/v1`, `OLLAMA_MODEL=qwen2.5:3b`
+- **Database**: `MYSQL_HOST`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`
+- **Email Notifications**: `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `HR_EMAIL`
+- **Telephony Escalation**: `COORDINATOR_PHONE_NUMBER`, `LIVEKIT_OUTBOUND_TRUNK_ID`
 
 ---
 
-# Configure config.py
+# Database Setup
 
-Should contain
+The agent connects to a MySQL database for employees, leave balances, policies, acknowledgements, grievances, and tickets (with SQLite fallback).
 
-```
-OLLAMA_BASE_URL
+### MySQL Schema & Seed Data Import
+```bash
+# 1. Create database and user (if not already created):
+mysql -u root -p -e "
+CREATE DATABASE IF NOT EXISTS hr_voicebot;
+CREATE USER IF NOT EXISTS 'hrbot'@'localhost' IDENTIFIED BY 'Eoxys@110';
+GRANT ALL PRIVILEGES ON hr_voicebot.* TO 'hrbot'@'localhost';
+FLUSH PRIVILEGES;
+"
 
-OLLAMA_MODEL
-
-DEEPGRAM_API_KEY
-
-LIVEKIT_URL
-
-LIVEKIT_API_KEY
-
-LIVEKIT_API_SECRET
-
-DATABASE_PATH
+# 2. Import schema, seed employees, and HR policies:
+mysql -u hrbot -p hr_voicebot < database/hr-voicebot-schema-mysql.sql
 ```
 
----
-
-# Configure main.py
-
-The agent uses
-
-```
-Deepgram STT
-
-↓
-
-Ollama LLM
-
-↓
-
-Deepgram TTS
-```
-
-LLM configuration
-
-```python
-LLM(
-    model=OLLAMA_MODEL,
-    base_url=OLLAMA_BASE_URL,
-    api_key="ollama"
-)
-```
-
----
-
-# Database
-
-SQLite database
-
-```
-database/hr.db
-```
-
-Contains
-
-```
-Employees
-
-Departments
-
-Managers
-
-Leaves
-
-Policies
+Verify tables:
+```bash
+python check_db.py
 ```
 
 ---
 
 # Run Application
 
-Activate environment
-
-```
+### Development Mode (Interactive Terminal)
+Activate your virtual environment and run the agent in dev mode:
+```bash
 source .venv/bin/activate
-```
-
-Run
-
-```
 python main.py dev
 ```
 
-Expected
-
+Expected output:
 ```
+[hr_tools startup check] Connected to localhost/hr_voicebot as hrbot — 15 employee(s) ready.
+🚀 [EmailApproval] Daemon thread started (polling every 15s).
 starting worker
-
 registered worker
-
 received job request
-
-Connected to LiveKit
-
-Participant joined
-
 Agent session started
 ```
+
+---
+
+# 24/7 Production Background Service (Systemd)
+
+For production deployment on Linux / Ubuntu, run the agent as a resilient 24/7 systemd service that automatically restarts on crash or reboot and logs directly to `journalctl`.
+
+### Option 1: Automated Turnkey Setup with `setup_service.sh` (Recommended)
+
+The included `setup_service.sh` script automatically detects your active cloned directory, your system username, and virtualenv python path:
+
+```bash
+# 1. Install, daemon-reload, and enable service
+sudo ./setup_service.sh install
+
+# 2. Start the service
+sudo ./setup_service.sh start
+
+# 3. Check live status
+./setup_service.sh status
+
+# 4. Stream real-time logs
+./setup_service.sh logs
+```
+
+**Service management shortcuts:**
+| Command | Description |
+|---|---|
+| `sudo ./setup_service.sh start` | Starts the voice bot background service |
+| `sudo ./setup_service.sh stop` | Gracefully stops the service |
+| `sudo ./setup_service.sh restart` | Restarts the service |
+| `./setup_service.sh status` | Displays `systemctl status hr-voicebot.service` |
+| `./setup_service.sh logs` | Tails live service logs (`journalctl -u hr-voicebot.service -f`) |
+| `sudo ./setup_service.sh uninstall` | Stops, disables, and deletes the service file |
+
+### Option 2: Manual Systemd Setup (for any Git Clone user)
+
+If you prefer to configure systemd manually:
+
+1. **Edit [hr-voicebot.service](file:///home/eoxys/Documents/AgenticHRVoiceBot/hr-voicebot.service):**
+   Update `User`, `WorkingDirectory`, and `ExecStart` to match your local installation:
+   ```ini
+   [Unit]
+   Description=Agentic HR Voice Bot Service (24/7)
+   After=network.target mysql.service
+
+   [Service]
+   Type=simple
+   User=<YOUR_UBUNTU_USERNAME>
+   WorkingDirectory=/path/to/AgenticHRVoiceBot
+   ExecStart=/path/to/AgenticHRVoiceBot/.venv/bin/python main.py start
+   Restart=always
+   RestartSec=5s
+   Environment=PYTHONUNBUFFERED=1
+   StandardOutput=journal
+   StandardError=journal
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+2. **Copy the service unit file to systemd:**
+   ```bash
+   sudo cp hr-voicebot.service /etc/systemd/system/hr-voicebot.service
+   ```
+
+3. **Reload systemd daemon:**
+   ```bash
+   sudo systemctl daemon-reload
+   ```
+
+4. **Enable auto-start on boot & start the service:**
+   ```bash
+   sudo systemctl enable hr-voicebot.service
+   sudo systemctl start hr-voicebot.service
+   ```
+
+5. **Verify status & view logs:**
+   ```bash
+   systemctl status hr-voicebot.service
+   journalctl -u hr-voicebot.service -f
+   ```
+
+---
+
+### Alternative: Background Nohup Execution
+
+If you do not have sudo privileges to manage systemd, you can also run in background mode using:
+```bash
+./run_production.sh
+# Monitor logs:
+tail -f voicebot.log
+```
+
 
 ---
 

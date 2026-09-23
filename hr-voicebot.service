@@ -1,3 +1,22 @@
+# ==============================================================================
+# hr-voicebot.service — Agentic HR Voice Bot 24/7 Systemd Service
+# ==============================================================================
+# Automated Installation (Recommended):
+#   sudo ./setup_service.sh install
+#
+# Manual Installation for any clone user:
+#   1. Adjust 'User', 'WorkingDirectory', and 'ExecStart' to match your system.
+#   2. Copy to systemd:
+#        sudo cp hr-voicebot.service /etc/systemd/system/
+#   3. Reload systemd daemon:
+#        sudo systemctl daemon-reload
+#   4. Enable and start:
+#        sudo systemctl enable hr-voicebot.service
+#        sudo systemctl start hr-voicebot.service
+#   5. View live logs:
+#        journalctl -u hr-voicebot.service -f
+# ==============================================================================
+
 [Unit]
 Description=Agentic HR Voice Bot Service (24/7)
 After=network.target mysql.service
@@ -15,3 +34,4 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
+
