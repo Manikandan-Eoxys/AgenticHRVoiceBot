@@ -1,0 +1,71 @@
+/* hr_voice_agent/frontend/src/index.css — Voice Bot Web Test Client */
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --border: #2d3148;
+  --accent: #4fc3f7;
+  --accent-red: #ef5350;
+  --accent-green: #66bb6a;
+  --text: #e8eaf6;
+  --text-muted: #7986cb;
+  --radius: 12px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: "Inter", system-ui, sans-serif; min-height: 100vh; }
+
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+.app-header { padding: 1.5rem 2rem; border-bottom: 1px solid var(--border); }
+.app-title { font-size: 1.4rem; font-weight: 700; color: var(--accent); }
+.app-subtitle { font-size: 0.85rem; color: var(--text-muted); margin-left: 0.5rem; }
+.app-main { display: grid; grid-template-columns: 360px 1fr; gap: 1.5rem; padding: 1.5rem 2rem; flex: 1; }
+.app-left, .app-right { display: flex; flex-direction: column; gap: 1rem; }
+
+/* Call Console */
+.call-console { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; display: flex; flex-direction: column; align-items: center; gap: 1rem; }
+.call-console__status { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; font-weight: 600; }
+.call-console__status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); }
+.call-console__status--connected .call-console__status-dot { background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.call-console__timer { font-size: 2.5rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
+.call-console__btn { padding: 0.75rem 2rem; border: none; border-radius: 50px; font-size: 1rem; font-weight: 700; cursor: pointer; transition: transform 0.1s, opacity 0.2s; }
+.call-console__btn--start { background: var(--accent-green); color: #000; }
+.call-console__btn--end { background: var(--accent-red); color: #fff; }
+.call-console__btn:hover { transform: scale(1.04); opacity: 0.9; }
+
+/* Waveform */
+.waveform { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.waveform__track { display: flex; align-items: center; gap: 0.5rem; }
+.waveform__label { font-size: 0.75rem; color: var(--text-muted); width: 55px; }
+.waveform__canvas { flex: 1; border-radius: 6px; background: #0a0d14; }
+
+/* Call Metadata Bar */
+.call-meta { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.call-meta__item { display: flex; flex-direction: column; gap: 0.2rem; }
+.call-meta__label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.call-meta__badge { font-size: 0.75rem; font-weight: 700; padding: 0.15rem 0.5rem; border-radius: 4px; }
+.call-meta__badge--webrtc { background: #1a237e; color: var(--accent); }
+.call-meta__badge--sip { background: #1b5e20; color: var(--accent-green); }
+.call-meta__value { font-size: 0.85rem; font-weight: 600; }
+.call-meta__value--goal { color: var(--accent); }
+
+/* Dialpad */
+.dialpad { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; }
+.dialpad__title { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem; text-align: center; }
+.dialpad__grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; }
+.dialpad__key { background: #1e2235; border: 1px solid var(--border); border-radius: 8px; padding: 1rem; font-size: 1.2rem; font-weight: 700; color: var(--text); cursor: pointer; transition: background 0.15s, transform 0.1s; }
+.dialpad__key:hover:not(:disabled) { background: #2a2f4a; transform: scale(1.06); }
+.dialpad__key:disabled { opacity: 0.35; cursor: default; }
+.dialpad__hint { font-size: 0.75rem; color: var(--text-muted); text-align: center; margin-top: 0.75rem; }
+
+/* Transcript Feed */
+.transcript-feed { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem; flex: 1; display: flex; flex-direction: column; min-height: 300px; max-height: 500px; }
+.transcript-feed__title { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem; }
+.transcript-feed__empty { color: var(--text-muted); font-size: 0.85rem; text-align: center; margin-top: 2rem; }
+.transcript-feed__messages { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 0.75rem; }
+.transcript-feed__turn { display: flex; flex-direction: column; gap: 0.2rem; }
+.transcript-feed__turn--user .transcript-feed__text { background: #1a237e; padding: 0.5rem 0.75rem; border-radius: 8px 8px 8px 2px; }
+.transcript-feed__turn--agent .transcript-feed__text { background: #1b2a1b; padding: 0.5rem 0.75rem; border-radius: 8px 8px 2px 8px; }
+.transcript-feed__role { font-size: 0.7rem; color: var(--text-muted); }
+.transcript-feed__text { font-size: 0.9rem; line-height: 1.5; }
+.transcript-feed__time { font-size: 0.65rem; color: var(--text-muted); }
