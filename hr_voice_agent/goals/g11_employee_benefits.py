@@ -11,16 +11,20 @@ Durable state read:     employee_schemes, insurance_plans, employee_insurance (D
 Durable state written:  none (read-only goal)
 """
 
+from livekit.agents import function_tool, RunContext
+
 from goals.base import GoalService, GoalMeta
-from hr_tools import get_employee_schemes, list_insurance_plans, get_insurance_info
+import hr_tools
 
 
 class EmployeeBenefitsService(GoalService):
     """
-    Goal 11 — Employee Schemes & Insurance
+    Goal 11 (Goal 5 in UI) — Employee Schemes & Insurance
 
-    Lets employees check their enrolled benefit schemes (ESI, PF, gratuity,
-    group insurance) and get details of available insurance plans.
+    Actions:
+      ├── list_insurance_plans()    what company insurance plans are available?
+      ├── get_insurance_info()      details of current insurance coverage
+      └── get_employee_schemes()    enrolled schemes (ESI, PF, gratuity)
     """
 
     meta = GoalMeta(
@@ -45,9 +49,28 @@ class EmployeeBenefitsService(GoalService):
         ],
     )
 
-    def tools(self) -> list:
-        return [
-            get_employee_schemes,
-            list_insurance_plans,
-            get_insurance_info,
-        ]
+    @function_tool
+    async def list_insurance_plans(self) -> str:
+        """List all company-provided insurance plans with coverage amounts and premiums."""
+        self.log_action("list_insurance_plans")
+        return await hr_tools.list_insurance_plans()
+
+    @function_tool
+    async def get_insurance_info(self, context: RunContext, employee_id: str = "") -> str:
+        """Look up the caller's active company insurance policy (policy number,
+        plan name, coverage amount, valid-through date)."""
+        self.log_action("get_insurance_info", employee_id=employee_id)
+        return await hr_tools.get_insurance_info(employee_id, context)
+
+    @function_tool
+    async def get_employee_schemes(self, context: RunContext, employee_id: str = "") -> str:
+        """Look up government and statutory welfare schemes the caller is
+        enrolled in (e.g. ESI with insurance number, EPF / Provident Fund
+        with UAN number, Gratuity eligibility)."""
+        self.log_action("get_employee_schemes", employee_id=employee_id)
+        return await hr_tools.get_employee_schemes(employee_id, context)
+
+
+# Semantic alias matching the user's Goal / UI naming
+InsuranceService = EmployeeBenefitsService
+

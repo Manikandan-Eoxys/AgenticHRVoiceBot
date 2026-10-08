@@ -29,7 +29,7 @@ from config import (
     WORKER_AGENT_NAME,
 )
 from security.call_blocklist import is_number_blocked
-from routers.monitor_router import router as monitor_router
+from controllers.monitor_router import router as monitor_router
 
 app = FastAPI()
 
@@ -90,6 +90,7 @@ async def get_token(name: str):
         "token": token,
         "room": room_name,
         "ws_url": LIVEKIT_URL,
+        "url": LIVEKIT_URL,
     }
 
 @app.get("/getSipToken")
@@ -134,4 +135,5 @@ async def get_sip_token(name: str):
         "token": token,
         "room": room_name,
         "ws_url": LIVEKIT_URL,
+        "url": LIVEKIT_URL,
     }

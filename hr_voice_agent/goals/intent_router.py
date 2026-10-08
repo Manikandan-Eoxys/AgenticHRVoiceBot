@@ -24,8 +24,16 @@ LeaveAgent
 
 
 import re
+from enum import Enum
 
-from routers.intent import Intent
+
+class Intent(str, Enum):
+    EMPLOYEE = "employee"
+    LEAVE = "leave"
+    POLICY = "policy"
+    CALENDAR = "calendar"
+    GRIEVANCE = "grievance"
+    UNKNOWN = "unknown"
 
 
 class IntentRouter:

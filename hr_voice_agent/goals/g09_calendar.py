@@ -10,20 +10,19 @@ Durable state read:     company_holidays (DB)
 Durable state written:  none
 """
 
+from livekit.agents import function_tool
+
 from goals.base import GoalService, GoalMeta
-from hr_tools import check_company_holiday, list_upcoming_company_holidays
+import hr_tools
 
 
 class CalendarService(GoalService):
     """
     Goal 9 — Company Calendar & Holidays
 
-    Answers questions about company holidays: whether a given date is a
-    holiday, and what public/optional holidays are coming up.
-
-    Note: This goal does NOT require identity verification — holiday
-    information is company-wide and public. The LLM may call these tools
-    even before confirm_employee_identity.
+    Actions:
+      ├── check_company_holiday()           is a specific date a holiday?
+      └── list_upcoming_company_holidays()  what holidays are coming up?
     """
 
     meta = GoalMeta(
@@ -45,8 +44,15 @@ class CalendarService(GoalService):
         ],
     )
 
-    def tools(self) -> list:
-        return [
-            check_company_holiday,
-            list_upcoming_company_holidays,
-        ]
+    @function_tool
+    async def check_company_holiday(self, target_date: str) -> str:
+        """Check whether a specific date is an official company holiday."""
+        self.log_action("check_company_holiday", target_date=target_date)
+        return await hr_tools.check_company_holiday(target_date)
+
+    @function_tool
+    async def list_upcoming_company_holidays(self, limit: int = 5) -> str:
+        """List upcoming official company holidays (dates, holiday names, and mandatory/optional status)."""
+        self.log_action("list_upcoming_company_holidays", limit=limit)
+        return await hr_tools.list_upcoming_company_holidays(limit)
+

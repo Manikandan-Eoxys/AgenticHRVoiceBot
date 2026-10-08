@@ -58,10 +58,6 @@ from config import (
 )
 
 logger = logging.getLogger("asterisk_ari_bridge")
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 
 # Signal processing resampler check
 try:

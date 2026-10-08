@@ -49,19 +49,52 @@ export async function connectToRoom({ onTranscript, onMeta } = {}) {
   });
 
   // ------------------------------------------------------------------
-  // Subscribe to agent audio track
+  // Listen for LiveKit transcription events (speech-to-text)
+  // ------------------------------------------------------------------
+  room.on(RoomEvent.TranscriptionReceived, (segments, participant) => {
+    if (!onTranscript) return;
+    for (const seg of segments) {
+      if (seg.text && (seg.final || seg.isFinal)) {
+        const isAgent = participant?.isAgent || (participant?.identity && participant.identity.includes("agent"));
+        onTranscript({
+          role: isAgent ? "agent" : "user",
+          text: seg.text,
+          time: new Date().toLocaleTimeString(),
+        });
+      }
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // Subscribe to agent audio track and play audio
   // ------------------------------------------------------------------
   room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
     if (track.kind === Track.Kind.Audio) {
-      track.attach();
+      const audioEl = track.attach();
+      audioEl.style.display = "none";
+      document.body.appendChild(audioEl);
     }
+  });
+
+  room.on(RoomEvent.TrackUnsubscribed, (track) => {
+    try {
+      track.detach().forEach((el) => el.remove());
+    } catch (_) {}
   });
 
   // ------------------------------------------------------------------
   // Connect and publish microphone
   // ------------------------------------------------------------------
+  console.log(`[LiveKit] Connecting to ${url}...`);
   await room.connect(url, token);
-  await room.localParticipant.setMicrophoneEnabled(true);
+  console.log(`[LiveKit] Connected to room: ${room.name}`);
+
+  try {
+    await room.localParticipant.setMicrophoneEnabled(true);
+    console.log("[LiveKit] Microphone enabled");
+  } catch (micErr) {
+    console.warn("[LiveKit] Could not enable microphone:", micErr);
+  }
 
   _room = room;
   if (onMeta) onMeta({ roomId: room.name });

@@ -1,8 +1,8 @@
 /**
  * hr_voice_agent/frontend/src/components/TranscriptFeed.jsx
  *
- * Real-time transcribed conversation feed showing user speech and agent replies.
- * Each turn is displayed with role label, timestamp, and auto-scrolls to latest.
+ * Real-time conversation transcript with bubbles, role labels, timestamps,
+ * auto-scroll, and animated entry for each new turn.
  */
 
 import { useEffect, useRef } from "react";
@@ -15,12 +15,27 @@ export default function TranscriptFeed({ transcript }) {
   }, [transcript]);
 
   return (
-    <div className="transcript-feed" id="transcript-feed" aria-label="Conversation Transcript">
-      <h3 className="transcript-feed__title">Live Transcript</h3>
+    <div
+      className="transcript-feed"
+      id="transcript-feed"
+      aria-label="Conversation Transcript"
+      aria-live="polite"
+    >
+      {/* Header */}
+      <div className="transcript-feed__header">
+        <h3 className="transcript-feed__title">
+          💬 Live Transcript
+          {transcript.length > 0 && (
+            <span className="transcript-feed__count">{transcript.length}</span>
+          )}
+        </h3>
+      </div>
 
+      {/* Body */}
       {transcript.length === 0 ? (
         <div className="transcript-feed__empty">
-          Start a call and speak to see the transcript here…
+          <span className="transcript-feed__empty-icon">🔇</span>
+          <span>Start a call and speak to see the transcript here…</span>
         </div>
       ) : (
         <div className="transcript-feed__messages">

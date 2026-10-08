@@ -265,8 +265,12 @@ class AgentConfigController:
         import json
         from models.config_models import AgentConfig
 
-        target_path = config_path or (Path(__file__).resolve().parents[1] / "agent_config.json")
-        schema_path = Path(__file__).resolve().parents[1] / "schemas" / "config_schema.json"
+        target_path = config_path or (Path(__file__).resolve().parents[1] / "config" / "agent_config.json")
+        if not target_path.exists():
+            target_path = Path(__file__).resolve().parents[1] / "agent_config.json"
+        schema_path = Path(__file__).resolve().parents[1] / "models" / "config_schema.json"
+        if not schema_path.exists():
+            schema_path = Path(__file__).resolve().parents[1] / "schemas" / "config_schema.json"
 
         if not target_path.exists():
             logger.warning(f"⚠️ [AgentConfig] {target_path} not found. Creating default runtime agent config.")

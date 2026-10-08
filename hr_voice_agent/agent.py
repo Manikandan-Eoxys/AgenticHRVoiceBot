@@ -18,11 +18,10 @@ import json
 import logging
 import os
 import time
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 import re
-from typing import Optional, Dict, Any, List, Tuple
 import aiohttp
 import numpy as np
 from dotenv import load_dotenv
@@ -31,7 +30,7 @@ from livekit import agents, api, rtc
 from livekit.protocol import egress as egress_proto
 from livekit.agents import (
     AgentServer, AgentSession, Agent, inference, room_io,
-    TurnHandlingOptions, function_tool, RunContext,
+    TurnHandlingOptions, RunContext,
 )
 
 # Try importing ai_coustics plugin if installed
@@ -42,18 +41,14 @@ except ImportError:
     HAS_AI_COUSTICS = False
 
 import hr_tools
-from security.call_blocklist import is_call_blocked, is_number_blocked
+from security.call_blocklist import is_call_blocked
 from config import (
-    LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
     DEEPGRAM_API_KEY, OLLAMA_MODEL, OLLAMA_BASE_URL,
     WORKER_AGENT_NAME,
 )
 from services.session_recorder import SessionRecorder
 from services.monitoring_handler import install_monitoring_handler
-from controllers.voice_controller import VoiceController
-from controllers.global_monitor_fsm import GlobalMonitorFSM
-from controllers.agentToolsController import AgentToolsController
-from controllers.agentConfigController import AgentConfigController
+from controllers.agentVoiceController import VoiceController
 from ollama_llm import OllamaLLM, FallbackLLM
 from livekit.plugins.deepgram import STT, TTS as DeepgramTTS
 
@@ -955,143 +950,58 @@ class Assistant(Agent):
         else:
             instructions = INBOUND_INSTRUCTIONS.format(today_str=today_str)
 
-        # Dynamically load tools for call_type respecting enabled goals in AgentConfig
-        tools_controller = AgentToolsController.for_call_type(call_type)
-        active_tools = tools_controller.get_all_tools()
+        # Configure shared VoiceController instance for this call_type (avoids redundant instances)
+        voice_controller.setup_call(
+            call_type=call_type,
+            job_ctx=job_ctx,
+            collector=collector,
+            call_metadata=call_metadata,
+        )
+        self.voice_controller = voice_controller
+        self.tools_controller = voice_controller.tools_controller
+        active_tools = voice_controller.get_all_tools()
 
         super().__init__(
             instructions=instructions,
             tools=active_tools,
         )
 
-    @function_tool()
     async def end_call(self, context: RunContext) -> None:
-        """Call this exactly once, as the very last action of the call,
-        immediately after you've said your closing goodbye and the caller
-        has nothing further to ask. Hangs up the phone line."""
-        await context.wait_for_playout()
-        await _hangup(self._job_ctx)
-
-    @function_tool()
-    async def collect_employee_id_via_keypad(self, context: RunContext) -> str:
-        """Use this when a spoken employee ID didn't match any employee on
-        file, or when the caller denied the name verification question, or
-        spoke in another language, or asks to key in their ID. Prompts caller to enter
-        their 4-digit employee ID on their phone keypad, keyboard, or speak digits."""
-        if not self.collector:
-            return "Keypad collector not initialized. Please ask the caller to speak their 4-digit employee ID clearly."
-
-        logger.info("⏳ [DTMF Fallback] Listening for 4-digit employee ID from keypad, keyboard, or voice...")
-        digits = await self.collector.wait_for_id(timeout=25.0)
-        if digits:
-            logger.info(f"✅ [DTMF Fallback] Captured 4-digit ID: {digits}")
-            return (
-                f"Caller entered employee ID {digits}. "
-                f"Immediately call get_employee_by_id with employee_id '{digits}' and verify their name with the caller."
-            )
+        """Delegate end_call to CoordinatorTransferService."""
+        if self.voice_controller.coordinator_service:
+            await self.voice_controller.coordinator_service.end_call(context)
         else:
-            logger.warning("⚠️ [DTMF Fallback] No digits received before timeout.")
-            return (
-                "No digits were received from keypad, keyboard, or voice within the timeout. "
-                "Ask the caller once more: 'I didn't receive your employee ID. "
-                "Could you please enter your 4-digit ID on the keypad, or say it slowly one digit at a time?'"
-            )
+            await context.wait_for_playout()
+            await _hangup(self._job_ctx)
 
-    @function_tool()
+    async def collect_employee_id_via_keypad(self, context: RunContext) -> str:
+        """Delegate keypad DTMF collection to IdentityVerificationService."""
+        if self.voice_controller.identity_service:
+            return await self.voice_controller.identity_service.collect_employee_id_via_keypad(context)
+        return "Keypad collector not initialized."
+
     async def transfer_to_coordinator(self, context: RunContext) -> str:
-        """Call this ONLY after the caller has explicitly confirmed
-        (e.g. said 'yes, proceed') that they want to be connected to
-        the coordinator. Dials the coordinator's phone number into
-        this same call with a ring tone while dialing."""
-        if is_number_blocked(COORDINATOR_PHONE_NUMBER):
-            logger.warning(f"🚫 Coordinator transfer blocked: {COORDINATOR_PHONE_NUMBER} is in blocklist.")
-            return "The transfer cannot be completed because the coordinator's number is currently blocked."
+        """Delegate human transfer to CoordinatorTransferService."""
+        if self.voice_controller.coordinator_service:
+            return await self.voice_controller.coordinator_service.transfer_to_coordinator(context)
+        return "Coordinator transfer unavailable."
 
-        room = self._job_ctx.room
-        identity = f"coordinator-{int(time.time())}"
-        # ── Check recording mode: if cutoff, stop recording before dialing coordinator ──
-        rec_mode = os.environ.get("RECORDING_COORDINATOR_MODE", "record_all").strip().lower()
-        if rec_mode == "cutoff" and getattr(context.session, "recorder", None):
-            logger.info("🛑 [Transfer] Mode is 'cutoff': stopping recorder before coordinator pick.")
-            await context.session.recorder.stop()
-
-        # ── Start Ringback / Dialtone Beep into the Room ───────────────────────
-        stop_ringback = asyncio.Event()
-        ringback_task = asyncio.create_task(_ringback_loop(self._job_ctx, stop_ringback))
-
-        try:
-            async with api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) as lkapi:
-                await lkapi.sip.create_sip_participant(
-                    api.CreateSIPParticipantRequest(
-                        sip_trunk_id=OUTBOUND_TRUNK_ID,
-                        sip_call_to=COORDINATOR_PHONE_NUMBER,
-                        sip_number=SIP_CALLER_ID,
-                        room_name=room.name,
-                        participant_identity=identity,
-                        participant_name="Coordinator",
-                        wait_until_answered=True,
-                        ringing_timeout=timedelta(seconds=COORDINATOR_DIAL_TIMEOUT_SECONDS),
-                    )
-                )
-        except Exception as e:
-            stop_ringback.set()
-            await ringback_task
-            logger.warning(f"⚠️ [Transfer] Coordinator at {COORDINATOR_PHONE_NUMBER} did not answer or failed: {e}")
-            return (
-                "The coordinator did not answer, or the call could not "
-                "connect. Tell the caller this plainly and ask if they'd "
-                "like you to try again now, or would rather call back "
-                "later. Do not say they were connected."
-            )
-
-        stop_ringback.set()
-        await ringback_task
-        logger.info(f"✅ [Transfer] Coordinator {identity} answered and joined room {room.name}.")
-
-        context.session.coordinator_connected = True
-
-        handle = context.session.say(
-            "Connecting you to the coordinator now.",
-            allow_interruptions=False,
-        )
-        await handle.wait_for_playout()
-        context.session.input.set_audio_enabled(False)
-        context.session.output.set_audio_enabled(False)
-
-        egress_id = await _start_call_recording(self._job_ctx)
-        context.session.recording_egress_id = egress_id
-
-        return (
-            "Coordinator connected and the handoff line has already been "
-            "spoken by this tool. The agent is now muted at the code "
-            "level -- do not attempt to say anything else."
-        )
 
 
 server = AgentServer()
 
-# Instantiate global voice_controller and run worker startup prewarm
+# Single global voice_controller instance — shared across all calls in this worker process.
 voice_controller = VoiceController()
-voice_controller.on_worker_start()
 
-# Run DB startup check once at worker startup
-hr_tools.run_startup_check()
+# Prewarm Ollama and run DB health check once per worker process tree.
+# Subsequent fork/spawn processes see the /tmp marker and skip to READY immediately.
+voice_controller.run_worker_startup_once(extra_checks=hr_tools.run_startup_check)
 
 agent_worker_name = WORKER_AGENT_NAME
 
-# Global Monitor FSM — will be started as asyncio task on first call
-_global_fsm_task: Optional[asyncio.Task] = None
-
-
 def _ensure_global_fsm_running() -> None:
-    """Lazily starts the GlobalMonitorFSM run_loop() asyncio task once."""
-    global _global_fsm_task
-    if _global_fsm_task is None or _global_fsm_task.done():
-        _global_fsm_task = asyncio.create_task(
-            GlobalMonitorFSM.instance().run_loop(),
-            name="GlobalMonitorFSM",
-        )
-        logger.info("🌐 [GlobalFSM] run_loop() task started.")
+    """Lazily starts GlobalMonitorFSM and VoiceController 12-state FSM tasks."""
+    voice_controller.ensure_fsm_running()
 
 
 async def on_job_request(job_req: agents.JobRequest) -> None:
@@ -1104,14 +1014,15 @@ async def on_job_request(job_req: agents.JobRequest) -> None:
         await job_req.reject()
         return
 
-    logger.info(f"Accepted job request {job_req.id} for room {job_req.job.room.name}.")
+    logger.info(f"Accepted job request {job_req.id} for room {job_req.job.room.name} [pid={os.getpid()}].")
     await job_req.accept()
-    voice_controller.on_job_accepted(job_req.job.room.name)
 
 
-@server.rtc_session(agent_name=agent_worker_name, on_request=on_job_request)
-async def my_agent(ctx: agents.JobContext):
-    # Start global FSM loop (idempotent — only creates task once)
+async def _my_agent_impl(ctx: agents.JobContext):
+    # Recorder reference initialized up-front to prevent UnboundLocalError in disconnect closures
+    recorder: SessionRecorder | None = None
+
+    # Start global FSM loop and VoiceController FSM loop (idempotent — only creates tasks once)
     _ensure_global_fsm_running()
 
     # Trigger VoiceController FSM: READY → CONNECTING
@@ -1162,10 +1073,6 @@ async def my_agent(ctx: agents.JobContext):
             },
         ),
     )
-
-    IDLE_HANGUP_SECONDS = float(os.environ.get("IDLE_HANGUP_SECONDS", "60.0"))
-    _agent_busy = True
-    _last_activity = time.monotonic()
 
     # ── Keypad DTMF Player & Digits Collector ─────────────────────────────────
     dtmf_player = DtmfPlayer(ctx.room)
@@ -1222,46 +1129,26 @@ async def my_agent(ctx: agents.JobContext):
             if pub.track:
                 _attach_audio_dtmf_detector(pub.track, getattr(p, "identity", "unknown"))
 
-    def _log_state(reason: str):
-        logger.debug(f"Watchdog: {reason} (agent_busy={_agent_busy}).")
-
     @session.on("user_input_transcribed")
     def _on_user_input(ev):
-        nonlocal _last_activity
-        _last_activity = time.monotonic()
         if getattr(ev, "is_final", False) and getattr(ev, "transcript", ""):
             logger.info(f"🗣️ [User Spoke]: \"{ev.transcript}\"")
             collector.on_spoken_text(ev.transcript)
-        _log_state("caller spoke (transcription)")
-
-    @session.on("user_state_changed")
-    def _on_user_state(ev):
-        nonlocal _last_activity
-        _last_activity = time.monotonic()
-        _log_state(f"user state -> {ev.new_state}")
-
-    @session.on("agent_state_changed")
-    def _on_agent_state(ev):
-        nonlocal _agent_busy, _last_activity
-        _agent_busy = ev.new_state in ("thinking", "speaking", "initializing")
-        _last_activity = time.monotonic()
-        voice_controller.on_agent_substate_changed(ev.new_state)
-        _log_state(f"agent state -> {ev.new_state}")
 
     @session.on("function_tools_executed")
     def _on_tools_executed(ev):
-        nonlocal _last_activity
-        _last_activity = time.monotonic()
-        _log_state("tool call completed")
+        logger.debug("tool call completed")
 
     @session.on("conversation_item_added")
     def _on_item_added(ev):
-        nonlocal _last_activity
-        _last_activity = time.monotonic()
-        _log_state("conversation item added")
+        logger.debug("conversation item added")
 
-    async def _on_coordinator_left():
-        nonlocal _agent_busy, _last_activity
+    async def _on_coordinator_left_cb():
+        """Called by VoiceController when a coordinator participant leaves."""
+        # Guard: only react if a coordinator call was actually active — prevents
+        # spurious replies when a coordinator participant leaves without ever connecting.
+        if not getattr(session, "coordinator_connected", False):
+            return
         logger.info("Coordinator left the call — re-engaging with the caller.")
         session.coordinator_connected = False
         session.input.set_audio_enabled(True)
@@ -1270,8 +1157,6 @@ async def my_agent(ctx: agents.JobContext):
         if egress_id:
             session.recording_egress_id = None
             await _stop_call_recording(ctx, egress_id)
-        _agent_busy = True
-        _last_activity = time.monotonic()
         await session.generate_reply(
             instructions=(
                 "The call with the coordinator has just ended. Tell the "
@@ -1281,67 +1166,34 @@ async def my_agent(ctx: agents.JobContext):
             )
         )
 
-    def _on_participant_disconnected(participant: rtc.RemoteParticipant):
-        if participant.identity.startswith("coordinator-"):
-            if getattr(session, "coordinator_connected", False):
-                asyncio.create_task(_on_coordinator_left())
-        else:
-            # Only hang up if all remote callers have left
-            remaining = [p for p in ctx.room.remote_participants.values() if p.identity != participant.identity and not p.identity.startswith("coordinator-")]
-            if not remaining:
-                logger.info(f"Caller {participant.identity} disconnected — ending the call.")
-                voice_controller.on_call_end()
+    _cleaned_up = False
+    def _on_caller_disconnect_cb():
+        """Called by VoiceController when the caller hangs up. Cleans up recorder & DTMF.
+        Idempotent — may fire from participant_disconnected, session close, or job shutdown."""
+        nonlocal _cleaned_up
+        if _cleaned_up:   # Already ran — don't double-stop the recorder or re-hangup
+            return
+        _cleaned_up = True
+        async def _cleanup():
+            try:
+                await dtmf_player.close()
+            except Exception:
+                pass
+            if recorder is not None:
+                try:
+                    await recorder.stop()
+                except Exception as err:
+                    logger.warning(f"Error finalizing recorder: {err}")
+            egress_id = getattr(session, "recording_egress_id", None)
+            if egress_id:
+                session.recording_egress_id = None
+                await _stop_call_recording(ctx, egress_id)
+            await _hangup(ctx)
+        asyncio.create_task(_cleanup())
 
-                async def _stop_recording_then_hangup():
-                    try:
-                        await dtmf_player.close()
-                    except Exception:
-                        pass
-                    try:
-                        await recorder.stop()
-                    except Exception as err:
-                        logger.warning(f"Error finalizing recorder: {err}")
-                    egress_id = getattr(session, "recording_egress_id", None)
-                    if egress_id:
-                        session.recording_egress_id = None
-                        await _stop_call_recording(ctx, egress_id)
-                    await _hangup(ctx)
-
-                asyncio.create_task(_stop_recording_then_hangup())
-
-    ctx.room.on("participant_disconnected", _on_participant_disconnected)
-
-    def _on_participant_connected(participant: rtc.RemoteParticipant):
-        blocked, matched_id = is_call_blocked(participant)
-        if blocked:
-            logger.warning(
-                f"🚫 [CALL REJECTED] Blocked participant joined room {ctx.room.name}: '{matched_id}'. Hanging up."
-            )
-            asyncio.create_task(_hangup(ctx))
-        else:
-            voice_controller.on_participant_joined(participant.identity)
-
-    ctx.room.on("participant_connected", _on_participant_connected)
-
-    async def _idle_watchdog_loop():
-        nonlocal _agent_busy
-        while True:
-            await asyncio.sleep(1.0)
-            if getattr(session, "coordinator_connected", False):
-                continue
-            # If agent is busy (generating, speaking, initializing) or user is speaking, reset timer
-            if _agent_busy or session.agent_state in ("thinking", "speaking", "initializing") or session.user_state == "speaking":
-                _last_activity = time.monotonic()
-                continue
-            idle_for = time.monotonic() - _last_activity
-            if idle_for >= IDLE_HANGUP_SECONDS:
-                logger.info(
-                    f"Caller silent and agent idle for {idle_for:.1f}s — hanging up automatically."
-                )
-                await _hangup(ctx)
-                return
-
-    asyncio.create_task(_idle_watchdog_loop())
+    def _on_blocked_cb():
+        """Called by VoiceController when a blocked participant joins."""
+        asyncio.create_task(_hangup(ctx))
 
     try:
         call_metadata = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
@@ -1367,11 +1219,31 @@ async def my_agent(ctx: agents.JobContext):
     )
 
     assistant = Assistant(ctx, call_metadata=call_metadata, collector=collector)
+
+    # Wire all session lifecycle events into the FSM via attach_session.
+    # Participant events, agent state, idle watchdog, and shutdown hook are all
+    # handled inside the controller — agent.py only keeps recorder/DTMF concerns.
+    IDLE_HANGUP_SECONDS = float(os.environ.get("IDLE_HANGUP_SECONDS", "60.0"))
+    voice_controller.attach_session(
+        session,
+        assistant=assistant,
+        ctx=ctx,
+        idle_hangup_seconds=IDLE_HANGUP_SECONDS,
+        on_blocked=_on_blocked_cb,
+        on_caller_disconnect=_on_caller_disconnect_cb,
+        on_coordinator_left=lambda: asyncio.create_task(_on_coordinator_left_cb()),
+        is_call_blocked_fn=is_call_blocked,
+    )
+
     await session.start(
         room=ctx.room,
         agent=assistant,
         room_options=room_opts,
     )
+
+    # After session.start(): advance FSM to SESSION_ACTIVE if caller was already in room
+    # (inbound SIP — no participant_connected event fires for pre-existing participants).
+    voice_controller.on_session_started()
 
     # Publish DTMF dual-tone audio track into room
     await dtmf_player.start()
@@ -1388,23 +1260,36 @@ async def my_agent(ctx: agents.JobContext):
 
     if call_metadata.get("call_type") == "leave_verification":
         employee_name = call_metadata.get("employee_name", "there")
-        await session.generate_reply(
-            instructions=(
-                f"Greet {employee_name} and ask them to confirm their "
-                f"identity before discussing anything, per your instructions."
-            )
+        await session.say(
+            f"Hello {employee_name}, this is the HR voice assistant calling regarding your leave request. Could you please confirm your identity to proceed?"
         )
     elif call_metadata.get("call_type") in ("scheduled_reminder", "policy_acknowledgement"):
         employee_name = call_metadata.get("employee_name", "there")
-        await session.generate_reply(
-            instructions=(
-                f"Greet {employee_name} and confirm their identity before delivering the scheduled HR notification."
-            )
+        await session.say(
+            f"Hello {employee_name}, this is the HR voice assistant with a scheduled notification. Could you please confirm your identity to get started?"
         )
     else:
-        await session.generate_reply(
-            instructions="Greet the caller and ask for their employee ID to get started."
+        await session.say(
+            "Hello! Welcome to Eoxys HR voice assistant. Please state or enter your employee ID to get started."
         )
+
+
+@server.rtc_session(agent_name=agent_worker_name, on_request=on_job_request)
+async def my_agent(ctx: agents.JobContext):
+    try:
+        await _my_agent_impl(ctx)
+    except BaseException as e:
+        import traceback, sys
+        err = traceback.format_exc()
+        try:
+            with open("/tmp/my_agent_crash.log", "w") as f:
+                f.write(f"Exception: {type(e)} {e}\n{err}\n")
+        except Exception:
+            pass
+        logger.error(f"💥💥💥 MY_AGENT CRASHED: {type(e)} {e}\n{err}")
+        sys.stderr.write(f"\n💥💥💥 MY_AGENT CRASHED: {type(e)} {e}\n{err}\n")
+        sys.stderr.flush()
+        raise
 
 
 if __name__ == "__main__":

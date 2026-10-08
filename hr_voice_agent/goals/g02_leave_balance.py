@@ -10,16 +10,21 @@ Runtime state consumed: verified_employee_id (from CallSession via _require_veri
 Durable state read:     leave_balances, leave_policy tables (DB)
 """
 
+from livekit.agents import function_tool, RunContext
+
 from goals.base import GoalService, GoalMeta
-from hr_tools import list_leave_types, get_leave_balance, get_all_leave_balances
+import hr_tools
 
 
 class LeaveBalanceService(GoalService):
     """
     Goal 2 — Leave Balance Inquiry
 
-    Lets employees check how many days of each leave type they have
-    remaining, either for one specific type or all at once.
+    Actions:
+      ├── get_leave_balance()       balance for one specific leave type
+      ├── get_all_leave_balances()  full summary across all types
+      ├── list_leave_types()        what leave types exist
+      └── get_leave_policy()        policy rules per leave type
     """
 
     meta = GoalMeta(
@@ -37,9 +42,26 @@ class LeaveBalanceService(GoalService):
         ],
     )
 
-    def tools(self) -> list:
-        return [
-            list_leave_types,
-            get_leave_balance,
-            get_all_leave_balances,
-        ]
+    @function_tool
+    async def get_leave_balance(self, leave_type: str, context: RunContext, employee_id: str = "") -> str:
+        """Look up the remaining leave balance for a specific leave type for
+        the caller. leave_type can be casual leave, sick leave, maternity leave,
+        paternity leave, comp off, bereavement leave, short leave, or leave without pay."""
+        self.log_action("get_leave_balance", leave_type=leave_type, employee_id=employee_id)
+        return await hr_tools.get_leave_balance(employee_id, leave_type, context)
+
+    @function_tool
+    async def get_all_leave_balances(self, context: RunContext, employee_id: str = "") -> str:
+        """Look up the caller's remaining leave balances across ALL leave
+        types at once. Use this when the caller asks generally 'how many leaves
+        do I have left?' or wants a full summary."""
+        self.log_action("get_all_leave_balances", employee_id=employee_id)
+        return await hr_tools.get_all_leave_balances(employee_id, context)
+
+    @function_tool
+    async def list_leave_types(self) -> str:
+        """List all valid leave types in the company policy and how many
+        annual days each allows."""
+        self.log_action("list_leave_types")
+        return await hr_tools.list_leave_types()
+

@@ -228,6 +228,11 @@ def install_monitoring_handler(
 
     Returns the installed handler (useful for testing or reconfiguration).
     """
+    root = logging.getLogger()
+    for h in root.handlers:
+        if isinstance(h, MonitoringHandler):
+            return h
+
     handler = MonitoringHandler(
         url=url,
         service_name=service_name,
@@ -238,7 +243,6 @@ def install_monitoring_handler(
     # Plain formatter — the location context is already in the message
     handler.setFormatter(logging.Formatter("%(message)s"))
 
-    root = logging.getLogger()
     root.addHandler(handler)
 
     return handler

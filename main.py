@@ -1,20 +1,22 @@
 """
-main.py
+main.py (project root)
 
-Entry point for HR Voice Agent
-LiveKit Agents v1.6.10
+Entrypoint shim — delegates to hr_voice_agent/main.py
+Run from the project root:
+
+    cd hr_voice_agent && python main.py dev
+
+Or use the run script:
+    ./hr_voice_agent/run_production.sh
 """
+import sys
+import os
 
-import logging
-from livekit import agents
-from agent import server
-from services.monitoring_handler import install_monitoring_handler
+# Add hr_voice_agent to Python path and run from there
+hr_agent_dir = os.path.join(os.path.dirname(__file__), "hr_voice_agent")
+sys.path.insert(0, hr_agent_dir)
+os.chdir(hr_agent_dir)
 
-# Attach monitoring handler so all logs stream to frontend UI
-try:
-    install_monitoring_handler()
-except Exception as e:
-    logging.warning(f"Could not initialize monitoring handler: {e}")
-
-if __name__ == "__main__":
-    agents.cli.run_app(server)
+# Now import and run the real entrypoint
+import runpy
+runpy.run_module("main", run_name="__main__", alter_sys=True)

@@ -1,9 +1,8 @@
 /**
  * hr_voice_agent/frontend/src/components/DialPad.jsx
  *
- * Interactive DTMF keypad for sending 4-digit employee ID input.
- * Emits digits via WebRTC Data Channel to the agent's DtmfCollector.
- * Supports both click and keyboard input (0-9, *, #).
+ * DTMF keypad with live digit display, keyboard support, and glow effects.
+ * Shows last 8 digits typed in a monospace display above the grid.
  */
 
 import { useEffect } from "react";
@@ -15,14 +14,12 @@ const KEYS = [
   ["*", "0", "#"],
 ];
 
-export default function DialPad({ onDigit, disabled }) {
-  // Support keyboard input when not disabled
+export default function DialPad({ onDigit, disabled, dtmfBuffer }) {
+  // Keyboard support
   useEffect(() => {
     if (disabled) return;
     function handleKey(e) {
-      if (/^[0-9*#]$/.test(e.key)) {
-        onDigit(e.key);
-      }
+      if (/^[0-9*#]$/.test(e.key)) onDigit(e.key);
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -30,23 +27,44 @@ export default function DialPad({ onDigit, disabled }) {
 
   return (
     <div className="dialpad" id="dtmf-dialpad" aria-label="DTMF Keypad">
-      <h3 className="dialpad__title">Keypad</h3>
-      <div className="dialpad__grid">
-        {KEYS.flat().map((key) => (
-          <button
-            key={key}
-            id={`dialpad-key-${key === "*" ? "star" : key === "#" ? "hash" : key}`}
-            className="dialpad__key"
-            disabled={disabled}
-            onClick={() => onDigit(key)}
-            aria-label={`Dial ${key}`}
-          >
-            {key}
-          </button>
-        ))}
+      <div className="dialpad__header">
+        <span className="dialpad__title">⌨️ Keypad — DTMF Input</span>
       </div>
+
+      {/* Digit display */}
+      <div className="dialpad__input-display" aria-label="DTMF digit buffer">
+        {dtmfBuffer ? (
+          dtmfBuffer.split("").map((d, i) => (
+            <span key={i} style={{ marginRight: "0.2rem" }}>{d}</span>
+          ))
+        ) : (
+          <span className="dialpad__input-placeholder">Enter employee ID…</span>
+        )}
+      </div>
+
+      {/* Grid */}
+      <div className="dialpad__grid">
+        {KEYS.flat().map((key) => {
+          const isSpecial = key === "*" || key === "#";
+          return (
+            <button
+              key={key}
+              id={`dialpad-key-${key === "*" ? "star" : key === "#" ? "hash" : key}`}
+              className={`dialpad__key${isSpecial ? " dialpad__key--special" : ""}`}
+              disabled={disabled}
+              onClick={() => onDigit(key)}
+              aria-label={`Dial ${key}`}
+            >
+              {key}
+            </button>
+          );
+        })}
+      </div>
+
       {disabled && (
-        <p className="dialpad__hint">Start a call to use the keypad</p>
+        <p className="dialpad__hint">
+          📞 Start a call to use the keypad
+        </p>
       )}
     </div>
   );

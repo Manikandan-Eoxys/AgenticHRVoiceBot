@@ -94,7 +94,7 @@ def _check_token(authorization: str = "") -> None:
 def _get_voice_state() -> dict:
     """Reads current state from VoiceController (import lazily to avoid circular deps)."""
     try:
-        from controllers.voice_controller import VoiceController
+        from controllers.agentVoiceController import VoiceController
         vc = VoiceController()
         state = getattr(vc, "_state", "unknown")
         active_rooms = getattr(vc, "_active_rooms", {})

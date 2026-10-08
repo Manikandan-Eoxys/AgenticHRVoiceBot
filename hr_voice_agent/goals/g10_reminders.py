@@ -16,21 +16,20 @@ and outbound reminder calls (where the agent delivers it and records the
 employee's acknowledgement).
 """
 
+from livekit.agents import function_tool, RunContext
+
 from goals.base import GoalService, GoalMeta
-from hr_tools import (
-    schedule_employee_reminder,
-    check_my_scheduled_reminders,
-    acknowledge_scheduled_reminder,
-)
+import hr_tools
 
 
 class RemindersService(GoalService):
     """
     Goal 10 — Scheduled Reminders & Acknowledgements
 
-    Lets employees schedule future reminders (e.g. "remind me to submit
-    my PF form tomorrow at 10 AM") and later acknowledge completion.
-    Also drives the outbound reminder call flow.
+    Actions:
+      ├── schedule_employee_reminder()       "remind me tomorrow at 10 AM"
+      ├── check_my_scheduled_reminders()     what reminders do I have?
+      └── acknowledge_scheduled_reminder()   "yes I've done it" → mark complete
     """
 
     meta = GoalMeta(
@@ -53,9 +52,50 @@ class RemindersService(GoalService):
         ],
     )
 
-    def tools(self) -> list:
-        return [
-            schedule_employee_reminder,
-            check_my_scheduled_reminders,
-            acknowledge_scheduled_reminder,
-        ]
+    @function_tool
+    async def schedule_employee_reminder(
+        self,
+        reminder_type: str,
+        scheduled_date: str,
+        reminder_notes: str,
+        context: RunContext,
+        employee_id: str = "",
+    ) -> str:
+        """Schedule a future reminder notification or call for the caller (e.g. document submission, tax deadline)."""
+        self.log_action("schedule_employee_reminder", reminder_type=reminder_type, scheduled_date=scheduled_date)
+        return await hr_tools.schedule_employee_reminder(
+            employee_id=employee_id,
+            reminder_type=reminder_type,
+            scheduled_date=scheduled_date,
+            reminder_notes=reminder_notes,
+            context=context,
+        )
+
+    @function_tool
+    async def check_my_scheduled_reminders(
+        self,
+        context: RunContext,
+        employee_id: str = "",
+    ) -> str:
+        """List upcoming reminders scheduled for the caller."""
+        self.log_action("check_my_scheduled_reminders", employee_id=employee_id)
+        return await hr_tools.check_my_scheduled_reminders(
+            employee_id=employee_id,
+            context=context,
+        )
+
+    @function_tool
+    async def acknowledge_scheduled_reminder(
+        self,
+        context: RunContext,
+        reminder_id: int = 0,
+        employee_id: str = "",
+    ) -> str:
+        """Acknowledge or mark complete a delivered reminder or notification."""
+        self.log_action("acknowledge_scheduled_reminder", reminder_id=reminder_id)
+        return await hr_tools.acknowledge_scheduled_reminder(
+            reminder_id=reminder_id,
+            employee_id=employee_id,
+            context=context,
+        )
+

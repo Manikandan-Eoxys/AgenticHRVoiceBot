@@ -18,20 +18,19 @@ This goal's tools must survive across call boundaries by design:
   - record_leave_verification_reason updates it on call B
 """
 
+from livekit.agents import function_tool, RunContext
+
 from goals.base import GoalService, GoalMeta
-from hr_tools import get_pending_leave_request, record_leave_verification_reason
+import hr_tools
 
 
 class LeaveVerificationOutboundService(GoalService):
     """
     Goal 12 — Outbound Leave Verification
 
-    Used when the system initiates a call to ask an employee about a pending
-    leave request. The agent greets by name, verifies identity, retrieves the
-    pending request, asks for a reason, and records it.
-
-    This goal is disabled on inbound calls by default — enable it only for
-    outbound leave_verification call types.
+    Actions:
+      ├── get_pending_leave_request()          find the pending request to discuss
+      └── record_leave_verification_reason()  save employee's stated reason to DB
     """
 
     meta = GoalMeta(
@@ -42,11 +41,34 @@ class LeaveVerificationOutboundService(GoalService):
             "and record their stated reason to help the manager with approval."
         ),
         trigger_phrases=[],  # Never triggered by speech — only by call_type metadata
-        enabled=True,        # Switched to True by AgentToolsController for outbound calls
+        enabled=True,
     )
 
-    def tools(self) -> list:
-        return [
-            get_pending_leave_request,
-            record_leave_verification_reason,
-        ]
+    @function_tool
+    async def get_pending_leave_request(
+        self,
+        context: RunContext,
+        employee_id: str = "",
+    ) -> str:
+        """Retrieve details of any currently pending leave requests for the employee to verify during an outbound call."""
+        self.log_action("get_pending_leave_request", employee_id=employee_id)
+        return await hr_tools.get_pending_leave_request(
+            employee_id=employee_id,
+            context=context,
+        )
+
+    @function_tool
+    async def record_leave_verification_reason(
+        self,
+        request_id: int,
+        reason: str,
+        context: RunContext,
+    ) -> str:
+        """Record the employee's verbal explanation for their pending leave request so the approving manager has full context."""
+        self.log_action("record_leave_verification_reason", request_id=request_id)
+        return await hr_tools.record_leave_verification_reason(
+            request_id=request_id,
+            reason=reason,
+            context=context,
+        )
+

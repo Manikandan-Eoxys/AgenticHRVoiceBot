@@ -1,0 +1,2006 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HR Voice Agent — Admin Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════ TOKENS ═══════════════════════════════════════ */
+:root{
+  --cream:#FAF6EE; --sand:#F4ECE0; --parchment:#EEE4D2;
+  --white:#FFF; --card:#FFF; --inner:#FBF8F2;
+  --terra:#D9532F; --terra-d:#B83E1D; --terra-l:#FDF2EE; --terra-b:#F5C7B8;
+  --must:#D98A2C;  --must-d:#A86514; --must-l:#FEF7EC; --must-b:#FCDFA8;
+  --sage:#387854;  --sage-d:#275B3D; --sage-l:#EDF7F1; --sage-b:#BFE4CE;
+  --teal:#1F7A85;  --teal-d:#145A63; --teal-l:#EBF6F7; --teal-b:#B8E2E6;
+  --red:#C8382B;   --red-l:#FDF1F0;  --red-b:#F8C6C2;
+  --ink:#241E19; --ink-s:#4B4138; --muted:#7F7366;
+  --bdr:#E5DCCE; --bdr-s:#D4C8B4; --bg:var(--cream);
+  --fh:'Space Grotesk',system-ui,sans-serif;
+  --fb:'Plus Jakarta Sans',system-ui,sans-serif;
+  --fm:'JetBrains Mono',Consolas,monospace;
+  --r:12px; --rs:8px;
+  --sh:0 1px 3px rgba(60,42,22,.05),0 3px 8px rgba(60,42,22,.04);
+  --shm:0 4px 14px rgba(60,42,22,.08),0 1px 3px rgba(60,42,22,.04);
+  --sw:240px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{font-family:var(--fb);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;
+  background-image:radial-gradient(ellipse 600px 320px at 10% 5%,rgba(217,83,47,.03),transparent 70%),
+    radial-gradient(ellipse 500px 300px at 90% 90%,rgba(217,138,44,.04),transparent 70%),
+    radial-gradient(#D9CDB8 .75px,transparent .75px);
+  background-size:100% 100%,100% 100%,24px 24px;}
+h1,h2,h3,h4{font-family:var(--fh);letter-spacing:-.02em;color:var(--ink);}
+button{font-family:var(--fh);cursor:pointer;}
+
+/* ════ LAYOUT ════ */
+.shell{display:flex;min-height:100vh;}
+
+/* ════ SIDEBAR ════ */
+.sidebar{width:var(--sw);flex-shrink:0;background:var(--white);border-right:1.5px solid var(--bdr);
+  display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto;}
+.sb-top{padding:16px 18px;border-bottom:1.5px solid var(--bdr);background:linear-gradient(180deg,#fff,#FCFAF6);}
+.sb-brand{display:flex;align-items:center;gap:10px;}
+.sb-brand .mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--terra),var(--must));
+  display:flex;align-items:center;justify-content:center;color:#fff;font-family:var(--fh);font-weight:800;font-size:14px;
+  box-shadow:0 2px 8px rgba(217,83,47,.35);flex-shrink:0;}
+.sb-brand .nm{font-weight:700;font-size:14.5px;font-family:var(--fh);letter-spacing:-.02em;}
+.sb-brand .sub{font-size:10.5px;color:var(--muted);}
+.sb-nav{flex:1;padding:12px 10px;}
+.nav-sec{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+  padding:8px 10px 5px;font-weight:700;font-family:var(--fh);}
+.nav-i{display:flex;align-items:center;gap:9px;padding:8px 11px;border-radius:var(--rs);
+  font-size:12.5px;color:var(--ink-s);cursor:pointer;margin-bottom:2px;font-weight:600;
+  font-family:var(--fh);transition:all .14s;border:1px solid transparent;}
+.nav-i:hover{background:var(--sand);color:var(--ink);}
+.nav-i.active{background:var(--terra-l);color:var(--terra-d);border-color:var(--terra-b);}
+.nav-i .ic{font-size:13px;flex-shrink:0;}
+.sb-bot{padding:12px 14px;border-top:1.5px solid var(--bdr);background:#FAF7F2;}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--sage);
+  box-shadow:0 0 0 2px var(--sage-l);animation:blink 1.6s infinite;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+/* ════ MAIN ════ */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;}
+
+/* ════ TOPBAR ════ */
+.topbar{background:var(--white);border-bottom:1.5px solid var(--bdr);padding:12px 24px;
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  position:sticky;top:0;z-index:20;}
+.tb-left h2{font-size:15px;font-family:var(--fh);font-weight:700;margin:0;}
+.tb-left .sub{font-size:11.5px;color:var(--muted);}
+.tb-right{display:flex;align-items:center;gap:8px;}
+.cs-badge{display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;
+  font-size:11.5px;font-weight:700;font-family:var(--fh);border:1.5px solid var(--bdr);
+  background:var(--sand);color:var(--muted);transition:all .3s;}
+.cs-badge.on{background:var(--sage-l);border-color:var(--sage-b);color:var(--sage-d);}
+.cs-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--muted);}
+.cs-badge.on .dot{background:var(--sage);box-shadow:0 0 0 3px rgba(56,120,84,.2);animation:blink 1.6s infinite;}
+
+/* ════ PIPELINE ════ */
+.pipe-strip{display:flex;align-items:center;background:var(--white);
+  border-bottom:1.5px solid var(--bdr);padding:9px 24px;overflow-x:auto;gap:2px;}
+.ps{display:flex;align-items:center;gap:6px;padding:6px 12px;font-size:11.5px;
+  font-weight:700;font-family:var(--fh);color:var(--muted);border-radius:6px;white-space:nowrap;}
+.ps.on{background:var(--terra-l);color:var(--terra-d);}
+.pa{color:var(--bdr-s);font-size:12px;margin:0 1px;}
+
+/* ════ VIEWS ════ */
+.view{display:none;flex:1;padding:22px 24px 50px;}
+.view.active{display:block;}
+.view-2col{display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start;}
+.view-fcol{display:flex;flex-direction:column;gap:16px;}
+
+/* ════ CARDS ════ */
+.card{background:var(--card);border:1.5px solid var(--bdr);border-radius:var(--r);box-shadow:var(--sh);}
+.cp{padding:18px 20px;}
+.ch{display:flex;align-items:center;justify-content:space-between;
+  padding:13px 18px;border-bottom:1.5px solid var(--bdr);}
+.ch h3{margin:0;font-size:13.5px;font-weight:700;font-family:var(--fh);display:flex;align-items:center;gap:7px;}
+.cb{padding:14px 18px;}
+
+/* ════ PAGE HEAD ════ */
+.ph{margin-bottom:18px;}
+.ph h1{font-size:20px;margin:0 0 4px;font-family:var(--fh);font-weight:700;}
+.ph p{margin:0;color:var(--muted);font-size:13.5px;}
+
+/* ════ BUTTONS ════ */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  border:none;border-radius:var(--rs);font-weight:600;font-size:13px;padding:9px 18px;
+  transition:all .15s;font-family:var(--fh);}
+.btn-p{background:linear-gradient(180deg,#E25B36,#D44E28);color:#fff;
+  box-shadow:0 2px 6px rgba(217,83,47,.3),inset 0 1px 0 rgba(255,255,255,.2);
+  border:1px solid var(--terra-d);}
+.btn-p:hover{background:linear-gradient(180deg,#EB633E,#C74520);transform:translateY(-1px);}
+.btn-p:active{transform:translateY(0);}
+.btn-g{background:linear-gradient(180deg,#3D8C5F,#2E6B48);color:#fff;
+  box-shadow:0 2px 6px rgba(56,120,84,.3);border:1px solid var(--sage-d);}
+.btn-g:hover{background:linear-gradient(180deg,#449665,#357852);transform:translateY(-1px);}
+.btn-e{background:linear-gradient(180deg,#D93025,#C8382B);color:#fff;
+  box-shadow:0 2px 6px rgba(200,56,43,.35);border:1px solid #a8201a;}
+.btn-e:hover{transform:translateY(-1px);}
+.btn-s{background:var(--white);color:var(--ink-s);border:1.5px solid var(--bdr-s);}
+.btn-s:hover{background:var(--sand);color:var(--ink);}
+.btn-sm{font-size:11.5px;padding:5px 11px;}
+.btn-xs{font-size:11px;padding:4px 8px;}
+.btn-full{width:100%;}
+.btn-icon{background:none;border:none;color:var(--muted);padding:4px;border-radius:5px;
+  display:inline-flex;align-items:center;justify-content:center;font-size:14px;transition:all .12s;}
+.btn-icon:hover{color:var(--terra);background:var(--terra-l);}
+.btn-icon.del:hover{color:var(--red);background:var(--red-l);}
+
+/* ════ FORMS ════ */
+input,select,textarea{
+  width:100%;padding:9px 12px;border:1.5px solid var(--bdr);border-radius:var(--rs);
+  font-size:13px;color:var(--ink);background:var(--white);font-family:var(--fb);
+  transition:border-color .15s,box-shadow .15s;}
+input:focus,select:focus,textarea:focus{border-color:var(--terra);outline:none;
+  box-shadow:0 0 0 3px rgba(217,83,47,.12);}
+select{cursor:pointer;}
+textarea{resize:vertical;min-height:70px;}
+.field{margin-bottom:12px;}
+.field label{display:block;font-size:12px;font-weight:700;color:var(--ink-s);
+  margin-bottom:5px;font-family:var(--fh);}
+.fr2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.fr3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
+
+/* ════ TABLES ════ */
+.tbl-wrap{overflow-x:auto;border:1.5px solid var(--bdr);border-radius:var(--rs);background:var(--white);}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px;}
+.tbl th{background:var(--cream);color:var(--ink);padding:10px 12px;
+  border-bottom:1.5px solid var(--bdr);font-weight:700;font-family:var(--fh);
+  position:sticky;top:0;text-align:left;white-space:nowrap;}
+.tbl td{padding:9px 12px;border-bottom:1px solid var(--bdr);color:var(--ink-s);vertical-align:middle;}
+.tbl tr:last-child td{border-bottom:none;}
+.tbl tr:hover td{background:var(--inner);}
+.tbl .acts{display:flex;gap:4px;white-space:nowrap;}
+.tbl-scroll{max-height:420px;overflow-y:auto;}
+
+/* ════ STATUS BADGES ════ */
+.badge{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:10px;
+  display:inline-block;font-family:var(--fh);letter-spacing:.04em;white-space:nowrap;}
+.b-green{background:var(--sage-l);color:var(--sage-d);border:1px solid var(--sage-b);}
+.b-red{background:var(--red-l);color:var(--red);border:1px solid var(--red-b);}
+.b-amber{background:var(--must-l);color:var(--must-d);border:1px solid var(--must-b);}
+.b-teal{background:var(--teal-l);color:var(--teal-d);border:1px solid var(--teal-b);}
+.b-gray{background:var(--sand);color:var(--muted);border:1px solid var(--bdr-s);}
+.b-terra{background:var(--terra-l);color:var(--terra-d);border:1px solid var(--terra-b);}
+
+/* ════ TABS ════ */
+.tabs{display:flex;gap:4px;border-bottom:1.5px solid var(--bdr);margin-bottom:18px;overflow-x:auto;}
+.tab{padding:9px 16px;border:none;background:transparent;font-size:12.5px;font-weight:700;
+  color:var(--muted);cursor:pointer;border-bottom:2.5px solid transparent;
+  border-radius:6px 6px 0 0;transition:all .15s;white-space:nowrap;font-family:var(--fh);}
+.tab:hover{color:var(--ink);background:var(--sand);}
+.tab.active{color:var(--terra);border-bottom-color:var(--terra);background:var(--terra-l);}
+
+/* ════ CALL CONSOLE ════ */
+.call-orb{width:90px;height:90px;border-radius:50%;
+  background:linear-gradient(135deg,var(--terra-l),var(--must-l));
+  border:2px solid var(--terra-b);display:flex;align-items:center;justify-content:center;
+  font-size:2.2rem;transition:all .4s;margin:0 auto 12px;}
+.call-orb.on{background:linear-gradient(135deg,var(--sage-l),var(--teal-l));
+  border-color:var(--sage-b);animation:rg 2s ease-in-out infinite;}
+@keyframes rg{0%,100%{box-shadow:0 0 0 4px rgba(56,120,84,.15),0 0 0 10px rgba(56,120,84,.07);}
+  50%{box-shadow:0 0 0 10px rgba(56,120,84,.1),0 0 0 22px rgba(56,120,84,.03);}}
+
+.waveform{display:flex;align-items:flex-end;gap:3px;height:32px;justify-content:center;
+  padding:4px 8px;border-radius:var(--rs);background:var(--inner);border:1px solid var(--bdr);margin:10px 0;}
+.wb{width:4px;border-radius:3px;background:linear-gradient(180deg,var(--terra),var(--must));
+  height:5px;animation:wave .6s ease-in-out infinite alternate;opacity:.35;}
+.waveform.on .wb{opacity:1;}
+.wb:nth-child(1){animation-delay:0s;animation-duration:.5s;}
+.wb:nth-child(2){animation-delay:.05s;animation-duration:.65s;}
+.wb:nth-child(3){animation-delay:.1s;animation-duration:.4s;}
+.wb:nth-child(4){animation-delay:.15s;animation-duration:.7s;}
+.wb:nth-child(5){animation-delay:.2s;animation-duration:.5s;}
+.wb:nth-child(6){animation-delay:.25s;animation-duration:.8s;}
+.wb:nth-child(7){animation-delay:.3s;animation-duration:.45s;}
+.wb:nth-child(8){animation-delay:.35s;animation-duration:.65s;}
+.wb:nth-child(9){animation-delay:.4s;animation-duration:.55s;}
+.wb:nth-child(10){animation-delay:.45s;animation-duration:.75s;}
+.wb:nth-child(11){animation-delay:.5s;animation-duration:.5s;}
+.wb:nth-child(12){animation-delay:.55s;animation-duration:.6s;}
+@keyframes wave{from{height:5px;}to{height:26px;}}
+
+/* ════ META STRIP ════ */
+.meta-row{display:flex;border:1.5px solid var(--bdr);border-radius:var(--rs);overflow:hidden;background:var(--white);}
+.mc{flex:1;padding:9px 12px;border-right:1.5px solid var(--bdr);}
+.mc:last-child{border-right:none;}
+.ml{font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+  font-weight:700;font-family:var(--fh);margin-bottom:4px;}
+.mv{font-size:12.5px;font-weight:700;color:var(--ink);font-family:var(--fm);}
+
+/* ════ TRANSCRIPT ════ */
+.tc-shell{display:flex;flex-direction:column;border:1.5px solid var(--bdr);
+  border-radius:var(--rs);overflow:hidden;min-height:300px;max-height:450px;}
+.tc-log{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:9px;background:var(--inner);}
+.tc-log::-webkit-scrollbar{width:3px;}
+.tc-log::-webkit-scrollbar-thumb{background:var(--bdr-s);border-radius:3px;}
+.tc-empty{flex:1;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:6px;color:var(--muted);font-size:13px;padding:24px;text-align:center;}
+.tc-empty .ico{font-size:2rem;opacity:.35;}
+.msg{max-width:80%;animation:mi .2s ease;}
+@keyframes mi{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:none;}}
+.msg.u{align-self:flex-end;}
+.msg.a{align-self:flex-start;}
+.mb{padding:9px 13px 6px;border-radius:11px;font-size:12.5px;line-height:1.55;}
+.msg.u .mb{background:linear-gradient(160deg,#E45A36,var(--terra-d));
+  color:#fff;border-bottom-right-radius:3px;box-shadow:0 2px 8px rgba(217,83,47,.25);}
+.msg.a .mb{background:var(--white);color:var(--ink);border:1.5px solid var(--bdr);
+  border-bottom-left-radius:3px;box-shadow:var(--sh);}
+.mm{font-size:10px;color:var(--muted);margin-top:3px;font-family:var(--fm);}
+.msg.u .mm{text-align:right;}
+.tc-inp{display:flex;gap:7px;padding:10px 12px;border-top:1.5px solid var(--bdr);background:var(--white);align-items:center;}
+.tc-inp input{flex:1;padding:8px 12px;background:var(--cream);}
+.tc-inp button{background:linear-gradient(180deg,#E25B36,#D44E28);color:#fff;
+  border:1px solid var(--terra-d);border-radius:var(--rs);padding:8px 14px;
+  font-size:12.5px;font-weight:700;font-family:var(--fh);white-space:nowrap;}
+.tc-inp button:hover{background:linear-gradient(180deg,#EB633E,#C74520);}
+
+/* ════ DTMF ════ */
+.dtmf-disp{background:#201A16;color:#FCD34D;font-family:var(--fm);font-size:1.4rem;
+  font-weight:600;letter-spacing:.25em;padding:11px 14px;border-radius:var(--rs);
+  text-align:center;min-height:50px;display:flex;align-items:center;justify-content:center;
+  border:1px solid #3E3730;margin-bottom:10px;}
+.dtmf-ph{color:#6B5D44;font-size:.8rem;letter-spacing:.1em;font-weight:400;}
+.dg{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;}
+.dk{padding:10px;border-radius:var(--rs);border:1.5px solid var(--bdr);background:var(--white);
+  font-size:1.05rem;font-weight:800;color:var(--ink);font-family:var(--fh);transition:all .14s;}
+.dk:hover:not(:disabled){border-color:var(--terra);background:var(--terra-l);color:var(--terra-d);transform:translateY(-1px);}
+.dk:active:not(:disabled){transform:scale(.95);}
+.dk:disabled{opacity:.28;cursor:default;}
+
+/* ════ LOG ROWS ════ */
+.log-r{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid var(--bdr);font-size:11.5px;align-items:center;}
+.log-r:last-child{border-bottom:none;}
+.lt{color:var(--muted);width:60px;flex-shrink:0;font-family:var(--fm);font-size:10.5px;}
+.ls{font-size:10px;font-weight:800;padding:2px 7px;border-radius:9px;flex-shrink:0;font-family:var(--fh);}
+.lm{flex:1;color:var(--ink-s);}
+.ll{color:var(--muted);font-family:var(--fm);font-size:10.5px;}
+.log-empty{padding:16px;text-align:center;color:var(--muted);font-size:12.5px;}
+
+/* ════ GOAL EDITOR ════ */
+.goal-ed-card{background:var(--white);border:1.5px solid var(--bdr);border-radius:var(--r);
+  margin-bottom:12px;overflow:hidden;box-shadow:var(--sh);}
+.gec-head{display:flex;align-items:center;justify-content:space-between;
+  padding:12px 16px;background:linear-gradient(180deg,#fff,var(--inner));
+  border-bottom:1.5px solid var(--bdr);cursor:pointer;}
+.gec-head:hover{background:var(--sand);}
+.gec-title{display:flex;align-items:center;gap:10px;}
+.gec-num{width:26px;height:26px;border-radius:50%;background:var(--terra);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:10.5px;
+  font-weight:800;font-family:var(--fh);flex-shrink:0;}
+.gec-name{font-size:14px;font-weight:700;font-family:var(--fh);}
+.gec-desc{font-size:11.5px;color:var(--muted);}
+.gec-body{padding:16px;display:none;}
+.gec-body.open{display:block;}
+.toggle-sm{position:relative;display:inline-block;width:36px;height:20px;}
+.toggle-sm input{opacity:0;width:0;height:0;}
+.ts-slider{position:absolute;cursor:pointer;inset:0;background:var(--bdr-s);transition:.2s;border-radius:20px;}
+.ts-slider::before{position:absolute;content:"";height:14px;width:14px;left:3px;bottom:3px;
+  background:#fff;transition:.2s;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.15);}
+.toggle-sm input:checked+.ts-slider{background:var(--terra);}
+.toggle-sm input:checked+.ts-slider::before{transform:translateX(16px);}
+.trigger-chip{display:inline-flex;align-items:center;gap:5px;background:var(--terra-l);
+  border:1px solid var(--terra-b);color:var(--terra-d);border-radius:12px;
+  padding:3px 10px;font-size:11px;font-weight:600;margin:3px;}
+.trigger-chip button{background:none;border:none;color:var(--terra-d);font-size:12px;
+  cursor:pointer;line-height:1;padding:0 0 0 3px;}
+.trigger-chip button:hover{color:var(--red);}
+
+/* ════ RECORDINGS ════ */
+.rec-row{display:flex;align-items:center;gap:12px;padding:12px 14px;
+  border-bottom:1px solid var(--bdr);transition:background .14s;}
+.rec-row:hover{background:var(--inner);}
+.rec-row:last-child{border-bottom:none;}
+.rec-ic{width:36px;height:36px;border-radius:8px;background:var(--terra-l);
+  border:1px solid var(--terra-b);display:flex;align-items:center;justify-content:center;
+  font-size:16px;flex-shrink:0;}
+.rec-info{flex:1;min-width:0;}
+.rec-name{font-size:13px;font-weight:700;color:var(--ink);font-family:var(--fh);}
+.rec-meta{font-size:11px;color:var(--muted);margin-top:2px;font-family:var(--fm);}
+.rec-dur{font-size:12px;font-weight:700;color:var(--ink-s);font-family:var(--fm);flex-shrink:0;}
+.rec-acts{display:flex;gap:5px;flex-shrink:0;}
+
+/* ════ AUDIO PLAYER (inline) ════ */
+.audio-mini{margin-top:8px;display:none;}
+.audio-mini.show{display:block;}
+.audio-mini audio{width:100%;height:32px;border-radius:5px;}
+
+/* ════ SETTINGS CARDS ════ */
+.cfg-row{display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;}
+.cfg-field{flex:1;}
+.cfg-field label{display:block;font-size:11.5px;font-weight:700;color:var(--ink-s);margin-bottom:5px;font-family:var(--fh);}
+.password-wrap{position:relative;display:flex;align-items:center;}
+.password-wrap input{padding-right:38px;}
+.eye-btn{position:absolute;right:8px;background:none;border:none;cursor:pointer;
+  font-size:14px;padding:4px;color:var(--muted);}
+.eye-btn:hover{color:var(--ink);}
+.cfg-note{font-size:11.5px;background:var(--must-l);border:1px solid var(--must-b);
+  color:var(--must-d);padding:10px 13px;border-radius:var(--rs);margin-top:8px;}
+.conn-status{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;
+  font-family:var(--fh);margin-top:6px;}
+.conn-status .dot{width:7px;height:7px;border-radius:50%;}
+.cs-ok{color:var(--sage);}  .cs-ok .dot{background:var(--sage);}
+.cs-bad{color:var(--red);}  .cs-bad .dot{background:var(--red);}
+
+/* ════ MODAL ════ */
+.modal-ov{position:fixed;inset:0;background:rgba(36,30,25,.5);backdrop-filter:blur(2px);
+  display:none;align-items:center;justify-content:center;z-index:100;padding:20px;}
+.modal-ov.open{display:flex;}
+.modal{background:var(--white);border-radius:16px;width:100%;max-width:500px;
+  padding:26px;box-shadow:0 24px 64px rgba(36,30,25,.28);
+  border:1.5px solid var(--bdr);position:relative;max-height:90vh;overflow-y:auto;}
+.modal::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;
+  border-radius:16px 16px 0 0;background:linear-gradient(90deg,var(--terra),var(--must));}
+.modal h3{margin:0 0 4px;font-size:17px;font-family:var(--fh);font-weight:700;}
+.modal .sub{margin:0 0 18px;color:var(--muted);font-size:13px;}
+.modal-actions{display:flex;gap:9px;margin-top:20px;}
+.modal-actions .btn{width:auto;flex:1;}
+.modal-close{position:absolute;top:14px;right:14px;background:none;border:none;
+  color:var(--muted);font-size:18px;cursor:pointer;line-height:1;padding:3px;}
+.modal-close:hover{color:var(--red);}
+
+/* ════ TOAST ════ */
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:var(--ink);color:#fff;padding:10px 20px;border-radius:var(--rs);
+  font-size:13px;font-weight:700;font-family:var(--fh);opacity:0;
+  transition:opacity .2s,transform .2s;z-index:300;pointer-events:none;
+  box-shadow:0 8px 24px rgba(36,30,25,.35);border:1px solid var(--bdr-s);}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* ════ SECTION DIVIDER ════ */
+.sec-title{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+  font-weight:700;font-family:var(--fh);margin-bottom:9px;display:flex;align-items:center;gap:7px;}
+.sec-title::after{content:"";flex:1;height:1px;background:var(--bdr);}
+
+/* ════ ENGINE ROWS ════ */
+.eng-row{display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--bdr);}
+.eng-row:last-child{border-bottom:none;}
+.eng-ic{width:34px;height:34px;border-radius:8px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:15px;}
+.eng-info{flex:1;}
+.eng-name{font-size:12.5px;font-weight:700;font-family:var(--fh);}
+.eng-sub{font-size:11px;color:var(--muted);}
+
+/* ════ BANNER ════ */
+.banner-tip{background:var(--must-l);border:1.5px solid var(--must-b);color:var(--must-d);
+  padding:11px 14px;border-radius:var(--rs);font-size:12.5px;margin-bottom:16px;line-height:1.5;}
+
+/* ════ RESPONSIVE ════ */
+@media(max-width:1000px){.view-2col{grid-template-columns:1fr;}}
+@media(max-width:700px){.sidebar{display:none;} .view{padding:14px 14px 40px;}}
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+<!-- ══════════ SIDEBAR ══════════ -->
+<aside class="sidebar">
+  <div class="sb-top">
+    <div class="sb-brand">
+      <div class="mark">HR</div>
+      <div>
+        <div class="nm">HR Voice Agent</div>
+        <div class="sub">Admin Console v2</div>
+      </div>
+    </div>
+  </div>
+  <nav class="sb-nav">
+    <div class="nav-sec">Live Console</div>
+    <div class="nav-i active" onclick="nav('console',this)"><span class="ic">📞</span> Call Console</div>
+    <div class="nav-i" onclick="nav('transcript',this)"><span class="ic">💬</span> Live Transcript</div>
+    <div class="nav-i" onclick="nav('logs',this)"><span class="ic">📋</span> Activity Log</div>
+
+    <div class="nav-sec">Configuration</div>
+    <div class="nav-i" onclick="nav('goals',this)"><span class="ic">🎯</span> Goals &amp; Guardrails</div>
+    <div class="nav-i" onclick="nav('engine',this)"><span class="ic">⚙️</span> Engine Stack</div>
+    <div class="nav-i" onclick="nav('phone',this)"><span class="ic">📱</span> Phone Config</div>
+    <div class="nav-i" onclick="nav('livekit',this)"><span class="ic">☁️</span> LiveKit Config</div>
+
+    <div class="nav-sec">Database</div>
+    <div class="nav-i" onclick="nav('db_employees',this)"><span class="ic">👤</span> Employees</div>
+    <div class="nav-i" onclick="nav('db_leaves',this)"><span class="ic">📊</span> Leave Balances</div>
+    <div class="nav-i" onclick="nav('db_requests',this)"><span class="ic">📝</span> Leave Requests</div>
+    <div class="nav-i" onclick="nav('db_holidays',this)"><span class="ic">🗓️</span> Holidays</div>
+    <div class="nav-i" onclick="nav('db_messages',this)"><span class="ic">✉️</span> Messages / Reminders</div>
+    <div class="nav-i" onclick="nav('db_attendance',this)"><span class="ic">🕐</span> Attendance</div>
+    <div class="nav-i" onclick="nav('db_tickets',this)"><span class="ic">🎫</span> HR Tickets</div>
+
+    <div class="nav-sec">Media</div>
+    <div class="nav-i" onclick="nav('recordings',this)"><span class="ic">🎙️</span> Call Recordings</div>
+  </nav>
+  <div class="sb-bot">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <div style="width:30px;height:30px;border-radius:50%;background:var(--must-l);color:var(--must-d);
+        border:1.5px solid var(--must-b);display:flex;align-items:center;justify-content:center;
+        font-weight:800;font-size:11px;font-family:var(--fh);flex-shrink:0;">HR</div>
+      <div style="flex:1;">
+        <div style="font-size:12.5px;font-weight:700;font-family:var(--fh);">Test Console</div>
+        <div style="font-size:10.5px;color:var(--muted);">Demo Mode</div>
+      </div>
+      <div class="live-dot" id="liveDot" style="display:none;"></div>
+    </div>
+  </div>
+</aside>
+
+<!-- ══════════ MAIN ══════════ -->
+<div class="main">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="tb-left">
+      <h2 id="tbTitle">Call Console</h2>
+      <div class="sub" id="tbSub">HR Voice Agent — WebRTC Test Client</div>
+    </div>
+    <div class="tb-right">
+      <div class="cs-badge" id="csBadge"><span class="dot"></span><span id="csTxt">Ready</span></div>
+      <button class="btn btn-s btn-sm" onclick="resetAll()">↺ Reset</button>
+    </div>
+  </div>
+
+  <!-- Pipeline -->
+  <div class="pipe-strip">
+    <div class="ps on">🎙️ Mic</div><div class="pa">→</div>
+    <div class="ps" id="pp2">☁️ LiveKit</div><div class="pa">→</div>
+    <div class="ps" id="pp3">📝 Deepgram STT</div><div class="pa">→</div>
+    <div class="ps" id="pp4">🧠 Ollama LLM</div><div class="pa">→</div>
+    <div class="ps" id="pp5">🗄️ SQLite DB</div><div class="pa">→</div>
+    <div class="ps" id="pp6">🔊 Deepgram TTS</div>
+  </div>
+
+  <!-- ═══ VIEW: CALL CONSOLE ═══ -->
+  <div class="view active" id="v-console">
+    <div class="view-2col">
+      <div class="view-fcol">
+
+        <!-- Call Card -->
+        <div class="card">
+          <div class="ch">
+            <h3>📞 Call Console</h3>
+            <span id="timerDisp" style="font-family:var(--fm);font-weight:700;font-size:1.1rem;color:var(--terra);display:none;">00:00</span>
+          </div>
+          <div class="cb" style="text-align:center;padding:20px;">
+            <div class="call-orb" id="callOrb">🎙️</div>
+            <div class="waveform" id="wav">
+              <div class="wb"></div><div class="wb"></div><div class="wb"></div>
+              <div class="wb"></div><div class="wb"></div><div class="wb"></div>
+              <div class="wb"></div><div class="wb"></div><div class="wb"></div>
+              <div class="wb"></div><div class="wb"></div><div class="wb"></div>
+            </div>
+            <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px;" id="cStatusTxt">Ready — click Start Call to connect</div>
+            <div style="display:flex;gap:9px;max-width:280px;margin:0 auto;">
+              <button class="btn btn-g btn-full" id="startBtn" onclick="startCall()">📞 Start Call</button>
+              <button class="btn btn-e btn-full" id="endBtn" onclick="endCall()" style="display:none;">📵 End Call</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Meta Strip -->
+        <div class="meta-row">
+          <div class="mc"><div class="ml">Call Type</div><span class="badge b-teal" id="metaType">WebRTC</span></div>
+          <div class="mc"><div class="ml">Room ID</div><div class="mv" id="metaRoom" style="color:var(--muted);">—</div></div>
+          <div class="mc"><div class="ml">Employee ID</div><div class="mv" id="metaEmp" style="color:var(--muted);">—</div></div>
+          <div class="mc"><div class="ml">Active Goal</div><div class="mv" id="metaGoal" style="color:var(--muted);font-family:var(--fh);font-size:11.5px;">Idle</div></div>
+        </div>
+
+        <!-- HR Goals Quick View -->
+        <div class="card">
+          <div class="ch"><h3>🎯 HR Goals</h3><span style="font-size:11px;color:var(--muted);">12 goals loaded</span></div>
+          <div class="cb" style="padding:10px 12px;">
+            <div id="goalsQuick" style="display:flex;flex-direction:column;gap:3px;"></div>
+          </div>
+        </div>
+
+      </div><!-- left col -->
+
+      <!-- Right col -->
+      <div class="view-fcol">
+        <div class="sec-title">Live Transcript</div>
+        <div class="tc-shell">
+          <div class="tc-log" id="tcLog">
+            <div class="tc-empty" id="tcEmpty"><div class="ico">🔇</div><span>Start a call and speak…</span></div>
+          </div>
+          <div class="tc-inp">
+            <input id="chatIn" placeholder="Simulate speech input…" onkeydown="if(event.key==='Enter')sendMsg()">
+            <button onclick="sendMsg()">Send ↗</button>
+          </div>
+        </div>
+
+        <div class="sec-title">DTMF Keypad</div>
+        <div class="dtmf-disp" id="dtmfDisp">
+          <span class="dtmf-ph" id="dtmfPh">Enter 4-digit Employee ID…</span>
+          <span id="dtmfDig" style="display:none;letter-spacing:.3em;"></span>
+        </div>
+        <div class="dg" id="dtmfGrid"></div>
+        <p style="font-size:11px;color:var(--muted);text-align:center;margin-top:7px;font-weight:600;" id="dtmfHint">📞 Start a call to use the keypad</p>
+
+        <div class="sec-title">Recent Activity</div>
+        <div class="card">
+          <div style="max-height:160px;overflow-y:auto;" id="miniLog">
+            <div class="log-empty">No activity yet.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: TRANSCRIPT ═══ -->
+  <div class="view" id="v-transcript">
+    <div class="ph"><h1>💬 Live Transcript</h1><p>Full conversation history for the current call session.</p></div>
+    <div class="card">
+      <div class="ch"><h3>Conversation</h3><span class="badge b-gray" id="tcCount">0 turns</span></div>
+      <div class="tc-shell" style="border:none;border-radius:0;max-height:600px;">
+        <div class="tc-log" id="tcLog2">
+          <div class="tc-empty"><div class="ico">🔇</div><span>No transcript yet. Start a call and speak.</span></div>
+        </div>
+        <div class="tc-inp">
+          <input id="chatIn2" placeholder="Type a test message…" onkeydown="if(event.key==='Enter')sendMsg2()">
+          <button onclick="sendMsg2()">Send ↗</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: ACTIVITY LOG ═══ -->
+  <div class="view" id="v-logs">
+    <div class="ph"><h1>📋 Activity Log</h1><p>Real-time pipeline events: STT, LLM, TTS, DTMF, call state changes.</p></div>
+    <div class="card">
+      <div class="ch"><h3>All Events</h3>
+        <button class="btn btn-s btn-sm" onclick="clearLog()">Clear Log</button>
+      </div>
+      <div style="max-height:580px;overflow-y:auto;" id="fullLog">
+        <div class="log-empty">No activity yet. Start a call to see events.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: GOALS & GUARDRAILS ═══ -->
+  <div class="view" id="v-goals">
+    <div class="ph"><h1>🎯 Goals &amp; Guardrails</h1><p>Edit goal trigger phrases, enable/disable goals, and set system-level guardrails.</p></div>
+
+    <div class="view-2col">
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <h3 style="font-size:15px;">Operational Goals</h3>
+          <button class="btn btn-p btn-sm" onclick="saveGoals()">💾 Save Goals</button>
+        </div>
+        <div id="goalEditors"></div>
+      </div>
+
+      <div class="view-fcol">
+        <div class="card">
+          <div class="ch"><h3>🛡️ System Guardrails</h3></div>
+          <div class="cb">
+            <div class="field"><label>System Prompt / Persona</label>
+              <textarea id="sysPrompt" rows="5">You are an autonomous AI HR voice assistant. Keep responses under 2 sentences. Verify employee identity before any data access. Never share another employee's data. Escalate sensitive matters to HR coordinator.</textarea>
+            </div>
+            <div class="field"><label>Opening Greeting (spoken on connect)</label>
+              <textarea id="greeting" rows="3">Hello! Thank you for calling the HR Voice Agent. Please provide your 4-digit Employee ID to get started.</textarea>
+            </div>
+            <div class="field"><label>Max Call Duration (seconds)</label>
+              <input type="number" value="300" min="60" max="1800">
+            </div>
+            <button class="btn btn-p btn-full" onclick="saveGuardrails()">💾 Save Guardrails</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="ch"><h3>🔀 Goal Routing</h3></div>
+          <div class="cb">
+            <div class="field"><label>Inbound Call Goals</label>
+              <select multiple style="min-height:120px;" id="inboundGoals">
+                <option selected>g01 — Identity Verification</option>
+                <option selected>g02 — Leave Balance</option>
+                <option selected>g03 — Leave Application</option>
+                <option selected>g04 — Leave Status</option>
+                <option selected>g05 — Attendance</option>
+                <option selected>g06 — Work From Home</option>
+                <option selected>g07 — Payroll</option>
+                <option selected>g08 — HR Policy</option>
+                <option selected>g09 — Calendar</option>
+                <option selected>g10 — Reminders</option>
+                <option selected>g11 — Employee Benefits</option>
+              </select>
+            </div>
+            <div class="field"><label>Outbound Verification Goals</label>
+              <select multiple style="min-height:70px;">
+                <option selected>g01 — Identity Verification</option>
+                <option selected>g04 — Leave Status</option>
+                <option selected>g12 — Leave Verification (Outbound)</option>
+              </select>
+            </div>
+            <button class="btn btn-s btn-full" onclick="showToast('✅ Routing saved')">Save Routing</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: ENGINE STACK ═══ -->
+  <div class="view" id="v-engine">
+    <div class="ph"><h1>⚙️ Engine Stack</h1><p>Live status of all AI pipeline components.</p></div>
+    <div class="card">
+      <div class="eng-row">
+        <div class="eng-ic" style="background:var(--teal-l);">☁️</div>
+        <div class="eng-info"><div class="eng-name">LiveKit Cloud</div><div class="eng-sub">WebRTC Room · Agent v1.6.5</div></div>
+        <span class="badge b-green">Connected</span>
+      </div>
+      <div class="eng-row">
+        <div class="eng-ic" style="background:var(--terra-l);">📝</div>
+        <div class="eng-info"><div class="eng-name">Deepgram STT</div><div class="eng-sub">Nova-3 · Real-time</div></div>
+        <span class="badge b-green">Active</span>
+      </div>
+      <div class="eng-row">
+        <div class="eng-ic" style="background:var(--must-l);">🧠</div>
+        <div class="eng-info"><div class="eng-name">Ollama LLM</div><div class="eng-sub">qwen2.5:1.5b · localhost:11434</div></div>
+        <span class="badge b-green">Running</span>
+      </div>
+      <div class="eng-row">
+        <div class="eng-ic" style="background:var(--terra-l);">🔊</div>
+        <div class="eng-info"><div class="eng-name">Deepgram TTS</div><div class="eng-sub">Aura-Asteria-en</div></div>
+        <span class="badge b-green">Active</span>
+      </div>
+      <div class="eng-row">
+        <div class="eng-ic" style="background:var(--sand);">🗄️</div>
+        <div class="eng-info"><div class="eng-name">SQLite HR Database</div><div class="eng-sub">database/hr.db · 1001–1015 employees</div></div>
+        <span class="badge b-green">Ready</span>
+      </div>
+      <div class="eng-row">
+        <div class="eng-ic" style="background:var(--red-l);">🚫</div>
+        <div class="eng-info"><div class="eng-name">Call Blocklist</div><div class="eng-sub">data/blocked_numbers.json</div></div>
+        <span class="badge b-amber">0 blocked</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: PHONE CONFIG ═══ -->
+  <div class="view" id="v-phone">
+    <div class="ph"><h1>📱 Phone / SIP Configuration</h1><p>Configure telephony numbers, SIP trunk, and call routing settings.</p></div>
+    <div class="view-2col">
+      <div class="view-fcol">
+        <div class="card cp">
+          <h3 style="font-size:14px;margin-bottom:14px;">📞 Inbound SIP / Phone Settings</h3>
+          <div class="fr2">
+            <div class="field"><label>SIP Trunk Provider</label>
+              <select><option>Plivo</option><option>Twilio</option><option>Vonage</option><option>Telnyx</option></select></div>
+            <div class="field"><label>DID / Inbound Number</label>
+              <input type="text" value="+918925355704" placeholder="+91XXXXXXXXXX"></div>
+          </div>
+          <div class="fr2">
+            <div class="field"><label>Plivo Auth ID</label><input type="text" value="MAxxxxxxxxxxxxxxxxxxxxxxxx" placeholder="Auth ID"></div>
+            <div class="field"><label>Plivo Auth Token</label>
+              <div class="password-wrap"><input type="password" id="plovToken" value="demo_token_xxxxx">
+              <button class="eye-btn" onclick="togglePwd('plovToken',this)">👁️</button></div></div>
+          </div>
+          <div class="fr2">
+            <div class="field"><label>SIP Domain</label><input type="text" value="sip.plivo.com" placeholder="sip.provider.com"></div>
+            <div class="field"><label>SIP Username</label><input type="text" value="hr_voicebot_user" placeholder="sip_user"></div>
+          </div>
+          <div class="field"><label>Webhook URL (call events)</label>
+            <input type="text" value="https://your-server.com/sip/webhook" placeholder="https://..."></div>
+          <div class="field"><label>Answer URL (Plivo XML)</label>
+            <input type="text" value="https://your-server.com/sip/answer" placeholder="https://..."></div>
+          <button class="btn btn-p" style="margin-top:6px;" onclick="testConn('sip')">🔍 Test Connection</button>
+          <div class="conn-status cs-ok" id="sipStatus" style="display:none;"><span class="dot"></span>SIP trunk reachable</div>
+        </div>
+
+        <!-- Coordinator Number -->
+        <div class="card cp">
+          <h3 style="font-size:14px;margin-bottom:14px;">📲 Outbound &amp; Transfer Settings</h3>
+          <div style="background:var(--inner);border:1.5px solid var(--terra-b);border-radius:var(--rs);padding:14px 16px;margin-bottom:14px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+              <span style="font-size:16px;">👤</span>
+              <span style="font-size:12px;font-weight:700;font-family:var(--fh);text-transform:uppercase;letter-spacing:.06em;color:var(--terra-d);">HR Coordinator</span>
+            </div>
+            <div class="fr2">
+              <div class="field">
+                <label>Coordinator Phone Number <span style="color:var(--red);font-size:11px;">(Transfer target)</span></label>
+                <input type="text" id="coordNum" value="+918925355704" placeholder="+91XXXXXXXXXX">
+              </div>
+              <div class="field">
+                <label>Transfer Timeout (sec)</label>
+                <input type="number" id="coordTimeout" value="30" min="10" max="120">
+              </div>
+            </div>
+            <div class="fr2">
+              <div class="field">
+                <label>Coordinator Name / Label</label>
+                <input type="text" id="coordName" value="Manikandan" placeholder="HR Manager">
+              </div>
+              <div class="field">
+                <label>Caller ID (outbound)</label>
+                <input type="text" id="callerId" value="+918925355704" placeholder="+91XXXXXXXXXX">
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-p btn-sm" onclick="saveCoordinator()">💾 Save Coordinator</button>
+              <button class="btn btn-s btn-sm" onclick="testCallCoord()">📞 Test Call</button>
+            </div>
+            <div class="conn-status cs-ok" id="coordTestStatus" style="display:none;margin-top:8px;"><span class="dot"></span>Coordinator reachable</div>
+          </div>
+
+          <!-- Blocked Numbers Manager -->
+          <div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+              <label style="font-size:12px;font-weight:700;font-family:var(--fh);color:var(--ink-s);">🚫 Blocked Numbers <span id="blockedCount" style="background:var(--red-l);color:var(--red);border:1px solid var(--red-b);font-size:10px;padding:1px 7px;border-radius:8px;font-family:var(--fh);">0</span></label>
+              <span style="font-size:11px;color:var(--muted);">Numbers that cannot connect to the agent</span>
+            </div>
+            <div id="blockedChips" style="min-height:36px;padding:6px 8px;background:var(--inner);border:1.5px solid var(--bdr);border-radius:var(--rs);margin-bottom:8px;display:flex;flex-wrap:wrap;gap:5px;">
+              <span style="color:var(--muted);font-size:11.5px;align-self:center;">No numbers blocked</span>
+            </div>
+            <div style="display:flex;gap:7px;">
+              <input type="tel" id="blockNumInp" placeholder="+91XXXXXXXXXX or +1XXXXXXXXXX" style="flex:1;">
+              <button class="btn btn-e btn-sm" onclick="addBlockedNum()">+ Block</button>
+            </div>
+            <div style="margin-top:10px;">
+              <label style="font-size:11.5px;font-weight:700;font-family:var(--fh);color:var(--ink-s);display:block;margin-bottom:5px;">Or paste as JSON array</label>
+              <div style="display:flex;gap:7px;">
+                <textarea id="blockedJson" rows="2" placeholder='["+919876543210","+1234567890"]' style="flex:1;font-family:var(--fm);font-size:11.5px;"></textarea>
+                <button class="btn btn-s btn-sm" style="align-self:flex-end;" onclick="importBlockedJson()">Import</button>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn btn-p btn-full" style="margin-top:14px;" onclick="savePhoneConfig()">💾 Save Phone Config</button>
+        </div>
+      </div>
+
+      <div class="view-fcol">
+        <div class="card cp">
+          <h3 style="font-size:14px;margin-bottom:12px;">🔢 DTMF Settings</h3>
+          <div class="field"><label>Employee ID Length</label><input type="number" value="4" min="3" max="8"></div>
+          <div class="field"><label>DTMF Timeout (sec)</label><input type="number" value="10" min="5" max="60"></div>
+          <div class="field"><label>DTMF Finish Key</label><select><option>#</option><option>*</option><option>None</option></select></div>
+          <button class="btn btn-s btn-full" onclick="showToast('✅ DTMF settings saved')">Save DTMF Settings</button>
+        </div>
+        <div class="card cp">
+          <h3 style="font-size:14px;margin-bottom:12px;">🌍 Region &amp; Language</h3>
+          <div class="field"><label>Primary Language</label><select><option>en-IN (English - India)</option><option>ta-IN (Tamil)</option><option>hi-IN (Hindi)</option></select></div>
+          <div class="field"><label>Timezone</label><select><option>Asia/Kolkata (IST)</option><option>UTC</option></select></div>
+          <div class="field"><label>Date Format</label><select><option>DD-MM-YYYY</option><option>YYYY-MM-DD</option><option>MM/DD/YYYY</option></select></div>
+          <button class="btn btn-s btn-full" onclick="showToast('✅ Region settings saved')">Save Region Settings</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: LIVEKIT CONFIG ═══ -->
+  <div class="view" id="v-livekit">
+    <div class="ph"><h1>☁️ LiveKit Configuration</h1><p>Configure LiveKit Cloud credentials, room settings, and agent parameters.</p></div>
+    <div class="view-2col">
+      <div class="view-fcol">
+        <div class="card cp">
+          <h3 style="font-size:14px;margin-bottom:14px;">🔑 LiveKit Credentials</h3>
+          <div class="field"><label>LiveKit URL (WSS)</label>
+            <input type="text" id="lkUrl" value="wss://your-project.livekit.cloud" placeholder="wss://xxxx.livekit.cloud"></div>
+          <div class="field"><label>API Key</label>
+            <input type="text" id="lkKey" value="APIxxxxxxxxxxxxxxxxxx" placeholder="API key"></div>
+          <div class="field"><label>API Secret</label>
+            <div class="password-wrap">
+              <input type="password" id="lkSecret" value="your_livekit_api_secret_here" placeholder="API secret">
+              <button class="eye-btn" onclick="togglePwd('lkSecret',this)">👁️</button>
+            </div>
+          </div>
+          <div class="cfg-note">⚠️ Store credentials in <code>.env</code> — never hardcode in source files.</div>
+          <div style="margin-top:12px;display:flex;gap:8px;">
+            <button class="btn btn-p" onclick="testConn('livekit')">🔍 Test Connection</button>
+            <button class="btn btn-s" onclick="showToast('✅ LiveKit config saved')">💾 Save</button>
+          </div>
+          <div class="conn-status cs-ok" id="lkStatus" style="display:none;"><span class="dot"></span>LiveKit reachable</div>
+        </div>
+
+        <div class="card cp">
+          <h3 style="font-size:14px;margin-bottom:14px;">🎙️ Deepgram Settings</h3>
+          <div class="field"><label>Deepgram API Key</label>
+            <div class="password-wrap">
+              <input type="password" id="dgKey" value="your_deepgram_api_key_here">
+              <button class="eye-btn" onclick="togglePwd('dgKey',this)">👁️</button>
+            </div>
+          </div>
+          <div class="fr2">
+            <div class="field"><label>STT Model</label>
+              <select><option>nova-3</option><option>nova-2</option><option>enhanced</option></select></div>
+            <div class="field"><label>TTS Voice</label>
+              <select><option>aura-asteria-en</option><option>aura-luna-en</option><option>aura-stella-en</option></select></div>
+          </div>
+          <div class="fr2">
+            <div class="field"><label>Language</label>
+              <select><option>en-IN</option><option>en-US</option><option>ta</option></select></div>
+            <div class="field"><label>Sample Rate (Hz)</label>
+              <select><option>16000</option><option>8000</option><option>48000</option></select></div>
+          </div>
+          <button class="btn btn-s btn-full" onclick="showToast('✅ Deepgram settings saved')">💾 Save</button>
+        </div>
+      </div>
+
+      <div class="view-fcol">
+        <div class="card cp">
+          <h3 style="font-size:14px;margin-bottom:12px;">🧠 Ollama / LLM Settings</h3>
+          <div class="field"><label>Ollama Base URL</label>
+            <input type="text" value="http://localhost:11434/v1" placeholder="http://host:port/v1"></div>
+          <div class="field"><label>Model</label>
+            <select><option>qwen2.5:1.5b</option><option>qwen2.5:3b</option><option>llama3.2:3b</option><option>mistral:7b</option></select></div>
+          <div class="field"><label>Temperature</label>
+            <input type="range" min="0" max="1" step="0.05" value="0.3" oninput="document.getElementById('tempVal').textContent=this.value">
+            <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);">
+              <span>0 (precise)</span><strong id="tempVal" style="color:var(--terra);">0.3</strong><span>1 (creative)</span></div>
+          </div>
+          <div class="field"><label>Max Tokens</label><input type="number" value="512" min="64" max="4096"></div>
+          <button class="btn btn-s btn-full" onclick="showToast('✅ LLM config saved')">💾 Save</button>
+        </div>
+
+        <div class="card cp">
+          <h3 style="font-size:14px;margin-bottom:12px;">🏠 Room Settings</h3>
+          <div class="field"><label>Room Name Prefix</label><input type="text" value="hr-agent-"></div>
+          <div class="field"><label>Max Participants</label><input type="number" value="2" min="2" max="10"></div>
+          <div class="field"><label>Room Timeout (sec)</label><input type="number" value="300" min="60"></div>
+          <div class="field"><label>Token Expiry (sec)</label><input type="number" value="3600" min="300"></div>
+          <button class="btn btn-s btn-full" onclick="showToast('✅ Room config saved')">💾 Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: EMPLOYEES DB ═══ -->
+  <div class="view" id="v-db_employees">
+    <div class="ph" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+      <div><h1>👤 Employees</h1><p>Add, edit, or remove employee records (IDs 1001–1015).</p></div>
+      <button class="btn btn-p" onclick="openModal('empModal')">+ Add Employee</button>
+    </div>
+    <div class="card">
+      <div class="ch">
+        <h3>Employee Records</h3>
+        <input type="text" placeholder="Search…" style="max-width:200px;padding:6px 10px;font-size:12px;" oninput="filterTable('empTbl',this.value)">
+      </div>
+      <div class="tbl-wrap tbl-scroll">
+        <table class="tbl" id="empTbl">
+          <thead><tr>
+            <th>ID</th><th>Name</th><th>Gender</th><th>Dept</th><th>Designation</th>
+            <th>Email</th><th>Phone</th><th>Join Date</th><th>Status</th><th>Actions</th>
+          </tr></thead>
+          <tbody id="empBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: LEAVE BALANCES DB ═══ -->
+  <div class="view" id="v-db_leaves">
+    <div class="ph" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+      <div><h1>📊 Leave Balances</h1><p>View and adjust per-employee leave allocations.</p></div>
+      <button class="btn btn-p" onclick="openModal('lbModal')">+ Add Balance Record</button>
+    </div>
+    <div class="card">
+      <div class="ch">
+        <h3>Leave Balance Records</h3>
+        <input type="text" placeholder="Filter by ID…" style="max-width:180px;padding:6px 10px;font-size:12px;" oninput="filterTable('lbTbl',this.value)">
+      </div>
+      <div class="tbl-wrap tbl-scroll">
+        <table class="tbl" id="lbTbl">
+          <thead><tr><th>Emp ID</th><th>Name</th><th>Leave Type</th><th>Entitled</th><th>Used</th><th>Available</th><th>Actions</th></tr></thead>
+          <tbody id="lbBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: LEAVE REQUESTS DB ═══ -->
+  <div class="view" id="v-db_requests">
+    <div class="ph" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+      <div><h1>📝 Leave Requests</h1><p>Manage all leave applications, approvals, and rejections.</p></div>
+      <button class="btn btn-p" onclick="openModal('lrModal')">+ New Request</button>
+    </div>
+    <div class="card">
+      <div class="ch">
+        <h3>Leave Requests</h3>
+        <div style="display:flex;gap:8px;">
+          <select style="padding:5px 9px;font-size:12px;" onchange="filterByStatus('lrTbl',this.value,'statusCell')">
+            <option value="">All Status</option>
+            <option>submitted</option><option>approved</option><option>rejected</option><option>cancelled</option>
+          </select>
+        </div>
+      </div>
+      <div class="tbl-wrap tbl-scroll">
+        <table class="tbl" id="lrTbl">
+          <thead><tr><th>#</th><th>Emp ID</th><th>Name</th><th>Leave Type</th><th>From</th><th>To</th><th>Days</th><th>Reason</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="lrBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: HOLIDAYS DB ═══ -->
+  <div class="view" id="v-db_holidays">
+    <div class="ph" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+      <div><h1>🗓️ Company Holidays</h1><p>Manage the 2026 holiday calendar.</p></div>
+      <button class="btn btn-p" onclick="openModal('holModal')">+ Add Holiday</button>
+    </div>
+    <div class="card">
+      <div class="tbl-wrap tbl-scroll">
+        <table class="tbl" id="holTbl">
+          <thead><tr><th>ID</th><th>Holiday Name</th><th>Date</th><th>Day</th><th>Mandatory</th><th>Actions</th></tr></thead>
+          <tbody id="holBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: MESSAGES / REMINDERS DB ═══ -->
+  <div class="view" id="v-db_messages">
+    <div class="ph" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+      <div><h1>✉️ Messages &amp; Reminders</h1><p>Schedule outbound reminder calls and HR broadcast messages.</p></div>
+      <button class="btn btn-p" onclick="openModal('msgModal')">+ New Message</button>
+    </div>
+    <div class="card">
+      <div class="ch"><h3>Scheduled Reminders</h3></div>
+      <div class="tbl-wrap tbl-scroll">
+        <table class="tbl" id="msgTbl">
+          <thead><tr><th>ID</th><th>Emp ID</th><th>Name</th><th>Type</th><th>Title</th><th>Scheduled At</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="msgBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div style="margin-top:18px;" class="card">
+      <div class="ch"><h3>📢 Broadcast Message to All Employees</h3></div>
+      <div class="cb">
+        <div class="fr2">
+          <div class="field"><label>Message Type</label>
+            <select><option>POLICY_ACKNOWLEDGEMENT</option><option>FORM_SUBMISSION</option><option>PAYSLIP_DOWNLOAD</option><option>CUSTOM</option></select></div>
+          <div class="field"><label>Schedule Date &amp; Time</label>
+            <input type="datetime-local" value="2026-10-06T10:00"></div>
+        </div>
+        <div class="field"><label>Message Title</label>
+          <input type="text" placeholder="e.g. October Payslip Available" value="October Payslip Available"></div>
+        <div class="field"><label>Message Text (spoken by agent)</label>
+          <textarea rows="3">Good morning. Your October salary slip is now available in the employee portal. Have you downloaded it?</textarea></div>
+        <button class="btn btn-p" onclick="broadcastMsg()">📤 Send to All Employees</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: ATTENDANCE DB ═══ -->
+  <div class="view" id="v-db_attendance">
+    <div class="ph" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+      <div><h1>🕐 Attendance Records</h1><p>View, add, and edit daily attendance logs.</p></div>
+      <button class="btn btn-p" onclick="openModal('attModal')">+ Add Record</button>
+    </div>
+    <div class="card">
+      <div class="ch">
+        <h3>Attendance Logs</h3>
+        <input type="date" style="padding:5px 9px;font-size:12px;" value="2026-09-17">
+      </div>
+      <div class="tbl-wrap tbl-scroll">
+        <table class="tbl" id="attTbl">
+          <thead><tr><th>Emp ID</th><th>Name</th><th>Date</th><th>Check In</th><th>Check Out</th><th>Hours</th><th>Status</th><th>Late Min</th><th>Remarks</th><th>Actions</th></tr></thead>
+          <tbody id="attBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: HR TICKETS DB ═══ -->
+  <div class="view" id="v-db_tickets">
+    <div class="ph" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+      <div><h1>🎫 HR Tickets</h1><p>Manage HR support tickets and grievances.</p></div>
+      <button class="btn btn-p" onclick="openModal('tickModal')">+ Raise Ticket</button>
+    </div>
+    <div class="card">
+      <div class="tbl-wrap tbl-scroll">
+        <table class="tbl" id="tickTbl">
+          <thead><tr><th>Ticket #</th><th>Emp ID</th><th>Category</th><th>Description</th><th>Priority</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+          <tbody id="tickBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ VIEW: CALL RECORDINGS ═══ -->
+  <div class="view" id="v-recordings">
+    <div class="ph"><h1>🎙️ Call Recordings</h1><p>Browse, play, and download recorded call sessions.</p></div>
+    <div class="view-2col">
+      <div>
+        <div class="card" style="margin-bottom:14px;">
+          <div class="ch">
+            <h3>Recordings — 30 Sep 2026</h3>
+            <div style="display:flex;gap:7px;">
+              <input type="date" value="2026-09-30" style="padding:5px 9px;font-size:12px;max-width:140px;">
+              <button class="btn btn-s btn-sm">Filter</button>
+            </div>
+          </div>
+          <div id="recList"></div>
+        </div>
+      </div>
+      <div class="view-fcol">
+        <div class="card cp">
+          <h3 style="font-size:14px;margin-bottom:12px;">📈 Recording Stats</h3>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="padding:12px;background:var(--inner);border-radius:var(--rs);text-align:center;">
+              <div style="font-size:22px;font-weight:800;font-family:var(--fh);color:var(--terra);">10</div>
+              <div style="font-size:11px;color:var(--muted);font-weight:700;">Total Sessions</div>
+            </div>
+            <div style="padding:12px;background:var(--inner);border-radius:var(--rs);text-align:center;">
+              <div style="font-size:22px;font-weight:800;font-family:var(--fh);color:var(--sage);">10</div>
+              <div style="font-size:11px;color:var(--muted);font-weight:700;">Completed</div>
+            </div>
+            <div style="padding:12px;background:var(--inner);border-radius:var(--rs);text-align:center;">
+              <div style="font-size:22px;font-weight:800;font-family:var(--fh);color:var(--must);">~4m</div>
+              <div style="font-size:11px;color:var(--muted);font-weight:700;">Avg Duration</div>
+            </div>
+            <div style="padding:12px;background:var(--inner);border-radius:var(--rs);text-align:center;">
+              <div style="font-size:22px;font-weight:800;font-family:var(--fh);color:var(--teal);">42m</div>
+              <div style="font-size:11px;color:var(--muted);font-weight:700;">Total Time</div>
+            </div>
+          </div>
+        </div>
+        <div class="card cp">
+          <h3 style="font-size:14px;margin-bottom:12px;">⚙️ Recording Settings</h3>
+          <div class="field"><label>Storage Path</label>
+            <input type="text" value="hr_voice_agent/Recordings/{date}/{user}/" readonly></div>
+          <div class="field"><label>Format</label><select><option>WebM (Opus)</option><option>MP3</option><option>WAV</option></select></div>
+          <div class="field"><label>Auto-delete after (days)</label><input type="number" value="90" min="7"></div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+            <label class="toggle-sm"><input type="checkbox" checked><span class="ts-slider"></span></label>
+            <span style="font-size:12.5px;font-weight:600;">Enable call recording</span>
+          </div>
+          <button class="btn btn-s btn-full" style="margin-top:12px;" onclick="showToast('✅ Recording settings saved')">💾 Save Settings</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- main -->
+</div><!-- shell -->
+
+<!-- ══════════ MODALS ══════════ -->
+
+<!-- Employee Modal -->
+<div class="modal-ov" id="empModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('empModal')">✕</button>
+    <h3 id="empModalTitle">Add Employee</h3>
+    <p class="sub">Enter employee details below.</p>
+    <div class="fr2">
+      <div class="field"><label>Employee ID</label><input type="text" id="empId" placeholder="1016"></div>
+      <div class="field"><label>Full Name</label><input type="text" id="empName" placeholder="John Doe"></div>
+    </div>
+    <div class="fr2">
+      <div class="field"><label>Gender</label><select id="empGender"><option value="M">Male</option><option value="F">Female</option></select></div>
+      <div class="field"><label>Email</label><input type="email" id="empEmail" placeholder="john@eoxys.com"></div>
+    </div>
+    <div class="fr2">
+      <div class="field"><label>Department</label><select id="empDept"><option>Embedded Software</option><option>Embedded Hardware</option><option>IT Software</option><option>IT Admin</option></select></div>
+      <div class="field"><label>Designation</label><select id="empDesig"><option>Embedded Software Engineer</option><option>Senior Embedded Software Engineer</option><option>IT Software Engineer</option><option>Lead Software Engineer</option></select></div>
+    </div>
+    <div class="fr2">
+      <div class="field"><label>Phone</label><input type="text" id="empPhone" placeholder="+91XXXXXXXXXX"></div>
+      <div class="field"><label>Join Date</label><input type="date" id="empJoin" value="2026-10-01"></div>
+    </div>
+    <div class="fr2">
+      <div class="field"><label>Status</label><select id="empStatus"><option>active</option><option>on_leave</option><option>exited</option></select></div>
+      <div class="field"><label>Manager ID</label><input type="text" id="empMgr" placeholder="1007"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-s" onclick="closeModal('empModal')">Cancel</button>
+      <button class="btn btn-p" onclick="saveEmployee()">💾 Save Employee</button>
+    </div>
+  </div>
+</div>
+
+<!-- Leave Balance Modal -->
+<div class="modal-ov" id="lbModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('lbModal')">✕</button>
+    <h3>Add / Edit Leave Balance</h3>
+    <p class="sub">Adjust leave entitlement for an employee.</p>
+    <div class="fr2">
+      <div class="field"><label>Employee ID</label><input type="text" id="lbEmpId" placeholder="1001"></div>
+      <div class="field"><label>Leave Type</label>
+        <select id="lbLeaveCode">
+          <option value="CL">CL — Casual Leave</option>
+          <option value="SL">SL — Sick Leave</option>
+          <option value="MATERNITY">Maternity Leave</option>
+          <option value="PATERNITY">Paternity Leave</option>
+          <option value="COMP_OFF">Comp Off</option>
+          <option value="BEREAVEMENT">Bereavement Leave</option>
+          <option value="SHORT_LEAVE">Short Leave</option>
+          <option value="LWP">LWP / LOP</option>
+        </select>
+      </div>
+    </div>
+    <div class="fr2">
+      <div class="field"><label>Entitled Days</label><input type="number" id="lbEntitled" value="10" min="0"></div>
+      <div class="field"><label>Used Days</label><input type="number" id="lbUsed" value="0" min="0"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-s" onclick="closeModal('lbModal')">Cancel</button>
+      <button class="btn btn-p" onclick="saveLeaveBalance()">💾 Save Balance</button>
+    </div>
+  </div>
+</div>
+
+<!-- Leave Request Modal -->
+<div class="modal-ov" id="lrModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('lrModal')">✕</button>
+    <h3>New Leave Request</h3>
+    <p class="sub">Create a leave application record.</p>
+    <div class="fr2">
+      <div class="field"><label>Employee ID</label><input type="text" id="lrEmpId" placeholder="1001"></div>
+      <div class="field"><label>Leave Type</label>
+        <select id="lrLeaveCode"><option value="CL">CL</option><option value="SL">SL</option><option value="MATERNITY">Maternity</option><option value="PATERNITY">Paternity</option><option value="COMP_OFF">Comp Off</option><option value="BEREAVEMENT">Bereavement</option></select></div>
+    </div>
+    <div class="fr2">
+      <div class="field"><label>From Date</label><input type="date" id="lrFrom" value="2026-10-10"></div>
+      <div class="field"><label>To Date</label><input type="date" id="lrTo" value="2026-10-11"></div>
+    </div>
+    <div class="field"><label>Reason</label><input type="text" id="lrReason" placeholder="Family function"></div>
+    <div class="fr2">
+      <div class="field"><label>Status</label>
+        <select id="lrStatus"><option>submitted</option><option>approved</option><option>rejected</option></select></div>
+      <div class="field"><label>Notify Email</label><input type="email" id="lrEmail" placeholder="manager@eoxys.com"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-s" onclick="closeModal('lrModal')">Cancel</button>
+      <button class="btn btn-p" onclick="saveLeaveRequest()">💾 Save Request</button>
+    </div>
+  </div>
+</div>
+
+<!-- Holiday Modal -->
+<div class="modal-ov" id="holModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('holModal')">✕</button>
+    <h3>Add Holiday</h3>
+    <p class="sub">Add a new company holiday to the 2026 calendar.</p>
+    <div class="field"><label>Holiday Name</label><input type="text" id="holName" placeholder="e.g. Pongal"></div>
+    <div class="fr2">
+      <div class="field"><label>Date</label><input type="date" id="holDate" value="2026-01-14"></div>
+      <div class="field"><label>Day of Week</label><input type="text" id="holDay" placeholder="Wednesday"></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
+      <label class="toggle-sm"><input type="checkbox" id="holMand" checked><span class="ts-slider"></span></label>
+      <span style="font-size:12.5px;font-weight:600;">Mandatory Holiday</span>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-s" onclick="closeModal('holModal')">Cancel</button>
+      <button class="btn btn-p" onclick="saveHoliday()">💾 Add Holiday</button>
+    </div>
+  </div>
+</div>
+
+<!-- Message Modal -->
+<div class="modal-ov" id="msgModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('msgModal')">✕</button>
+    <h3>New Scheduled Message</h3>
+    <p class="sub">Schedule a reminder call or message for an employee.</p>
+    <div class="fr2">
+      <div class="field"><label>Employee ID</label><input type="text" id="msgEmpId" placeholder="1001"></div>
+      <div class="field"><label>Type</label>
+        <select id="msgType"><option>FORM_SUBMISSION</option><option>PAYSLIP_DOWNLOAD</option><option>POLICY_ACKNOWLEDGEMENT</option><option>CUSTOM</option></select></div>
+    </div>
+    <div class="field"><label>Title</label><input type="text" id="msgTitle" placeholder="PF Form Submission Reminder"></div>
+    <div class="field"><label>Message Text (spoken by agent)</label>
+      <textarea id="msgText" rows="3" placeholder="Good morning. This is a reminder to submit your PF nomination form…"></textarea></div>
+    <div class="field"><label>Scheduled Date &amp; Time</label>
+      <input type="datetime-local" id="msgTime" value="2026-10-06T10:00"></div>
+    <div class="modal-actions">
+      <button class="btn btn-s" onclick="closeModal('msgModal')">Cancel</button>
+      <button class="btn btn-p" onclick="saveMessage()">💾 Schedule Message</button>
+    </div>
+  </div>
+</div>
+
+<!-- Attendance Modal -->
+<div class="modal-ov" id="attModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('attModal')">✕</button>
+    <h3>Add Attendance Record</h3>
+    <p class="sub">Log a biometric punch / attendance entry.</p>
+    <div class="fr2">
+      <div class="field"><label>Employee ID</label><input type="text" id="attEmpId" placeholder="1001"></div>
+      <div class="field"><label>Date</label><input type="date" id="attDate" value="2026-10-05"></div>
+    </div>
+    <div class="fr2">
+      <div class="field"><label>Check In</label><input type="time" id="attIn" value="09:00"></div>
+      <div class="field"><label>Check Out</label><input type="time" id="attOut" value="18:00"></div>
+    </div>
+    <div class="fr2">
+      <div class="field"><label>Status</label>
+        <select id="attStatus"><option>Present</option><option>Absent</option><option>Late</option><option>Half_Day</option><option>On_Leave</option><option>Holiday</option></select></div>
+      <div class="field"><label>Late Minutes</label><input type="number" id="attLate" value="0" min="0"></div>
+    </div>
+    <div class="field"><label>Remarks</label><input type="text" id="attRemarks" placeholder="On time"></div>
+    <div class="modal-actions">
+      <button class="btn btn-s" onclick="closeModal('attModal')">Cancel</button>
+      <button class="btn btn-p" onclick="saveAttendance()">💾 Save Record</button>
+    </div>
+  </div>
+</div>
+
+<!-- Ticket Modal -->
+<div class="modal-ov" id="tickModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('tickModal')">✕</button>
+    <h3>Raise HR Ticket</h3>
+    <p class="sub">Create a new HR support ticket or grievance.</p>
+    <div class="fr2">
+      <div class="field"><label>Employee ID</label><input type="text" id="tickEmpId" placeholder="1001"></div>
+      <div class="field"><label>Category</label>
+        <select id="tickCat"><option>Payroll &amp; Salary Issues</option><option>Attendance Issues</option><option>Leave Issues</option><option>HRMS / Profile Issues</option><option>HR Documents</option><option>Work From Home</option></select></div>
+    </div>
+    <div class="field"><label>Ticket Type</label><input type="text" id="tickType" placeholder="e.g. PAYROLL_SALARY_DISCREPANCY"></div>
+    <div class="field"><label>Description</label><textarea id="tickDesc" rows="3" placeholder="Describe the issue in detail…"></textarea></div>
+    <div class="fr2">
+      <div class="field"><label>Priority</label>
+        <select id="tickPri"><option>Normal</option><option>Urgent</option><option>Confidential</option></select></div>
+      <div class="field"><label>Status</label>
+        <select id="tickStat"><option>Open</option><option>In_Progress</option><option>Resolved</option><option>Closed</option></select></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-s" onclick="closeModal('tickModal')">Cancel</button>
+      <button class="btn btn-p" onclick="saveTicket()">💾 Raise Ticket</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- ══════════ JAVASCRIPT ══════════ -->
+<script>
+/* ═══════════ DATA STORES ═══════════ */
+const GOALS_DEF = [
+  {id:'g01',label:'Identity Verification',desc:'4-digit Employee ID via DTMF or voice',enabled:true,
+   service:'IdentityVerificationService',
+   triggers:['employee id','my id is','i am employee','verify identity','who am i'],
+   actions:[
+     {name:'confirm_employee_identity',label:'Confirm Employee Identity',enabled:true,desc:'Verify employee by spoken/typed ID'},
+     {name:'get_employee_by_id',label:'Get Employee by ID',enabled:true,desc:'Fetch employee record from DB'},
+     {name:'collect_employee_id_via_keypad',label:'Collect ID via Keypad',enabled:true,desc:'Prompt DTMF keypad entry'},
+   ]},
+  {id:'g02',label:'Leave Balance',desc:'Current leave days available per type',enabled:true,
+   service:'LeaveBalanceService',
+   triggers:['leave balance','how many leaves','remaining leave'],
+   actions:[
+     {name:'get_leave_balance',label:'Get Leave Balance',enabled:true,desc:'Fetch leave balance for one type'},
+     {name:'get_all_leave_balances',label:'Get All Leave Balances',enabled:true,desc:'Fetch all leave types for employee'},
+     {name:'list_leave_types',label:'List Leave Types',enabled:true,desc:'Return available leave type codes'},
+   ]},
+  {id:'g03',label:'Leave Application',desc:'Check availability & apply leave',enabled:true,
+   service:'LeaveApplicationService',
+   triggers:['apply leave','take leave','request leave','book leave'],
+   actions:[
+     {name:'check_leave_availability',label:'Check Leave Availability',enabled:true,desc:'Verify dates & balance before applying'},
+     {name:'confirm_leave_request',label:'Confirm Leave Request',enabled:true,desc:'Submit and store the leave request'},
+   ]},
+  {id:'g04',label:'Leave Status',desc:'Status of pending/approved leaves',enabled:true,
+   service:'LeaveStatusService',
+   triggers:['leave status','leave approved','leave rejected'],
+   actions:[
+     {name:'get_leave_status',label:'Get Leave Status',enabled:true,desc:'Fetch status of a specific leave request'},
+     {name:'list_leave_requests',label:'List Leave Requests',enabled:true,desc:'List all leave requests for employee'},
+   ]},
+  {id:'g05',label:'Attendance',desc:'Daily attendance records & summary',enabled:true,
+   service:'AttendanceService',
+   triggers:['attendance','check in','check out','late'],
+   actions:[
+     {name:'get_attendance_summary',label:'Get Attendance Summary',enabled:true,desc:'Monthly attendance overview'},
+     {name:'get_attendance_record',label:'Get Attendance Record',enabled:true,desc:'Fetch records for a date range'},
+   ]},
+  {id:'g06',label:'Work From Home',desc:'WFH requests & WFH policy',enabled:true,
+   service:'WorkFromHomeService',
+   triggers:['work from home','wfh','remote work'],
+   actions:[
+     {name:'get_wfh_policy',label:'Get WFH Policy',enabled:true,desc:'Retrieve company WFH rules'},
+     {name:'submit_wfh_request',label:'Submit WFH Request',enabled:true,desc:'Log a WFH request for approval'},
+   ]},
+  {id:'g07',label:'Payroll',desc:'Salary slips, deductions & net pay',enabled:true,
+   service:'PayrollService',
+   triggers:['salary','payroll','payslip','deductions','net pay'],
+   actions:[
+     {name:'get_salary_slip',label:'Get Salary Slip',enabled:true,desc:'Retrieve payslip for a month'},
+     {name:'get_deductions_summary',label:'Get Deductions Summary',enabled:true,desc:'Breakdown of PF, TDS, ESI'},
+   ]},
+  {id:'g08',label:'HR Policy',desc:'Company policies & guidelines',enabled:true,
+   service:'HRPolicyService',
+   triggers:['policy','rules','hr policy','code of conduct'],
+   actions:[
+     {name:'get_policy',label:'Get Policy',enabled:true,desc:'Fetch a specific HR policy document'},
+     {name:'list_policies',label:'List Policies',enabled:true,desc:'List all available policy categories'},
+   ]},
+  {id:'g09',label:'Calendar',desc:'Holidays & work calendar events',enabled:true,
+   service:'CalendarService',
+   triggers:['holiday','calendar','upcoming events'],
+   actions:[
+     {name:'get_holidays',label:'Get Holidays',enabled:true,desc:'List upcoming public holidays'},
+     {name:'get_upcoming_events',label:'Get Upcoming Events',enabled:true,desc:'Fetch scheduled HR events'},
+   ]},
+  {id:'g10',label:'Reminders',desc:'Set & view HR reminders',enabled:true,
+   service:'RemindersService',
+   triggers:['reminder','remind me','schedule reminder'],
+   actions:[
+     {name:'set_reminder',label:'Set Reminder',enabled:true,desc:'Create a new HR reminder for employee'},
+     {name:'list_reminders',label:'List Reminders',enabled:true,desc:'View all scheduled reminders'},
+     {name:'send_reminder_now',label:'Send Reminder Now',enabled:true,desc:'Trigger immediate reminder message'},
+   ]},
+  {id:'g11',label:'Employee Benefits',desc:'Insurance, EPF & welfare schemes',enabled:true,
+   service:'InsuranceService',
+   triggers:['insurance','epf','benefits','schemes'],
+   actions:[
+     {name:'list_insurance_plans',label:'List Insurance Plans',enabled:true,desc:'Return available insurance plan options'},
+     {name:'get_insurance_info',label:'Get Insurance Info',enabled:true,desc:'Fetch employee enrollment details'},
+   ]},
+  {id:'g12',label:'Leave Verification (Outbound)',desc:'Outbound verification calls',enabled:true,
+   service:'LeaveVerificationService',
+   triggers:['verify leave','outbound','leave verification'],
+   actions:[
+     {name:'initiate_verification_call',label:'Initiate Verification Call',enabled:true,desc:'Trigger outbound call for leave check'},
+     {name:'record_verification_outcome',label:'Record Verification Outcome',enabled:true,desc:'Log the result of the verification'},
+   ]},
+  {id:'g13',label:'Coordinator Transfer',desc:'Transfer call to HR coordinator',enabled:true,
+   service:'CoordinatorTransferService',
+   triggers:['transfer','coordinator','speak to human','hr agent'],
+   actions:[
+     {name:'transfer_to_coordinator',label:'Transfer to Coordinator',enabled:true,desc:'Hand off call to human HR coordinator'},
+   ]},
+];
+
+let employees=[
+  {id:'1001',name:'Ravikala',gender:'F',dept:'Embedded Software',desig:'Embedded Software Engineer',email:'ravikala@eoxys.com',phone:'+919500000001',join:'2023-03-31',status:'active',mgr:'1007'},
+  {id:'1002',name:'Deepika',gender:'F',dept:'Embedded Software',desig:'Senior Embedded Software Engineer',email:'deepika@efabric.com',phone:'+919500000002',join:'2022-12-11',status:'on_leave',mgr:'1007'},
+  {id:'1003',name:'Narmatha',gender:'F',dept:'Embedded Software',desig:'Embedded Software Engineer',email:'narmatha@eoxys.com',phone:'+919500000003',join:'2023-09-01',status:'active',mgr:'1007'},
+  {id:'1004',name:'Hashir',gender:'M',dept:'Embedded Software',desig:'Embedded Software Engineer',email:'hashir@efabric.com',phone:'+919500000004',join:'2024-02-21',status:'active',mgr:'1007'},
+  {id:'1005',name:'Saikumar',gender:'M',dept:'Embedded Software',desig:'Embedded Software Engineer',email:'saikumar@efabric.com',phone:'+919500000005',join:'2024-02-21',status:'active',mgr:'1007'},
+  {id:'1006',name:'Bharath',gender:'M',dept:'Embedded Software',desig:'Embedded Software Engineer',email:'bharath@efabric.com',phone:'+919500000006',join:'2024-02-21',status:'active',mgr:'1007'},
+  {id:'1007',name:'Guna',gender:'M',dept:'Embedded Software',desig:'Senior Embedded Software Engineer',email:'guna@efabric.com',phone:'+917639878324',join:'2023-12-21',status:'active',mgr:''},
+  {id:'1008',name:'Shivaraj',gender:'M',dept:'Embedded Software',desig:'Embedded Software Engineer',email:'shivaraj@efabric.com',phone:'+919500000008',join:'2025-02-01',status:'active',mgr:'1007'},
+  {id:'1009',name:'Govindaraj',gender:'M',dept:'Embedded Software',desig:'Embedded Software Engineer',email:'govindaraj@efabric.com',phone:'+919500000009',join:'2025-02-01',status:'active',mgr:'1007'},
+  {id:'1010',name:'Charan',gender:'M',dept:'Embedded Hardware',desig:'Embedded Hardware Engineer',email:'charan@efabric.com',phone:'+919500000010',join:'2024-07-01',status:'active',mgr:'1007'},
+  {id:'1011',name:'Momin',gender:'M',dept:'Embedded Hardware',desig:'Embedded Hardware Engineer',email:'momin@efabric.com',phone:'+919500000011',join:'2023-09-06',status:'active',mgr:'1007'},
+  {id:'1012',name:'Satheesh',gender:'M',dept:'IT Software',desig:'IT Software Engineer',email:'satheesh@efabric.com',phone:'+919500000012',join:'2023-04-07',status:'active',mgr:'1014'},
+  {id:'1013',name:'Kamal',gender:'M',dept:'Embedded Software',desig:'Embedded Software Engineer',email:'kamal@efabric.com',phone:'+919786586806',join:'2025-09-05',status:'active',mgr:'1014'},
+  {id:'1014',name:'Manikandan',gender:'M',dept:'Embedded Software',desig:'Embedded Software Engineer',email:'manikandan@eoxys.com',phone:'+918925355704',join:'2025-09-05',status:'active',mgr:''},
+  {id:'1015',name:'Sujitsaju',gender:'M',dept:'IT Software',desig:'IT Software Engineer',email:'sujitsaju@efabric.com',phone:'+919500000015',join:'2023-04-07',status:'active',mgr:'1014'},
+];
+
+let leaveBalances=[
+  {empId:'1001',name:'Ravikala',code:'CL',entitled:10,used:4},
+  {empId:'1001',name:'Ravikala',code:'SL',entitled:11,used:7},
+  {empId:'1001',name:'Ravikala',code:'MATERNITY',entitled:182,used:0},
+  {empId:'1002',name:'Deepika',code:'CL',entitled:10,used:6},
+  {empId:'1002',name:'Deepika',code:'SL',entitled:11,used:5},
+  {empId:'1002',name:'Deepika',code:'MATERNITY',entitled:182,used:60},
+  {empId:'1014',name:'Manikandan',code:'CL',entitled:10,used:2},
+  {empId:'1014',name:'Manikandan',code:'SL',entitled:11,used:1},
+  {empId:'1014',name:'Manikandan',code:'PATERNITY',entitled:15,used:0},
+];
+
+let leaveRequests=[
+  {id:101,empId:'1001',name:'Ravikala',code:'CL',from:'2026-10-05',to:'2026-10-07',days:3,reason:'Family wedding',status:'approved',email:'manikandan.eoxys@gmail.com'},
+  {id:102,empId:'1001',name:'Ravikala',code:'CL',from:'2026-08-14',to:'2026-08-14',days:1,reason:'Long weekend travel',status:'rejected',email:'manikandan.eoxys@gmail.com'},
+  {id:103,empId:'1001',name:'Ravikala',code:'SL',from:'2026-09-28',to:'2026-09-29',days:2,reason:'Doctor consultation',status:'submitted',email:'manikandan.eoxys@gmail.com'},
+];
+
+let holidays=[
+  {id:1,name:"New Year's Day",date:'2026-01-01',day:'Thursday',mandatory:true},
+  {id:2,name:'Republic Day',date:'2026-01-26',day:'Monday',mandatory:true},
+  {id:3,name:'Maha Shivratri',date:'2026-03-03',day:'Tuesday',mandatory:true},
+  {id:4,name:'Eid-ul-Fitr',date:'2026-03-20',day:'Friday',mandatory:true},
+  {id:5,name:'Good Friday',date:'2026-04-03',day:'Friday',mandatory:true},
+  {id:6,name:'Tamil New Year / Ambedkar Jayanti',date:'2026-04-14',day:'Tuesday',mandatory:true},
+  {id:7,name:'May Day / Labour Day',date:'2026-05-01',day:'Friday',mandatory:true},
+  {id:8,name:'Independence Day',date:'2026-08-15',day:'Saturday',mandatory:true},
+  {id:9,name:'Gandhi Jayanti',date:'2026-10-02',day:'Friday',mandatory:true},
+  {id:10,name:'Ayudha Pooja / Dussehra',date:'2026-10-20',day:'Tuesday',mandatory:true},
+  {id:11,name:'Diwali / Deepavali',date:'2026-11-08',day:'Sunday',mandatory:true},
+  {id:12,name:'Christmas',date:'2026-12-25',day:'Friday',mandatory:true},
+];
+
+let messages=[
+  {id:1,empId:'1014',name:'Manikandan',type:'FORM_SUBMISSION',title:'PF Nomination Form Submission',text:'Good morning Mani. This is a reminder to submit your PF nomination form.',time:'2026-09-23 10:00',status:'Scheduled'},
+  {id:2,empId:'1014',name:'Manikandan',type:'PAYSLIP_DOWNLOAD',title:'September Salary Slip Download',text:'Your September salary slip is available in the employee portal.',time:'2026-09-23 10:00',status:'Scheduled'},
+  {id:3,empId:'1001',name:'Ravikala',type:'FORM_SUBMISSION',title:'PF Nomination Form Submission',text:'Good morning Ravikala. This is a reminder to submit your PF nomination form.',time:'2026-09-23 10:00',status:'Scheduled'},
+];
+
+let attendance=[
+  {empId:'1001',name:'Ravikala',date:'2026-09-17',in:null,out:null,hours:null,status:'Absent',late:0,remarks:'No biometric punch'},
+  {empId:'1001',name:'Ravikala',date:'2026-09-16',in:'09:35',out:'18:15',hours:8.67,status:'Late',late:20,remarks:'Arrived 20 mins past grace'},
+  {empId:'1001',name:'Ravikala',date:'2026-09-15',in:'08:55',out:'18:05',hours:9.17,status:'Present',late:0,remarks:'On time'},
+  {empId:'1014',name:'Manikandan',date:'2026-09-17',in:'08:50',out:'18:30',hours:9.67,status:'Present',late:0,remarks:'On time'},
+  {empId:'1014',name:'Manikandan',date:'2026-09-16',in:'09:00',out:'18:00',hours:9.00,status:'Present',late:0,remarks:'On time'},
+];
+
+let tickets=[
+  {num:'TICK-10021',empId:'1001',cat:'Payroll & Salary Issues',desc:'Salary query regarding August TDS deduction',priority:'Normal',status:'In_Progress',created:'2026-09-20'},
+  {num:'TICK-10022',empId:'1001',cat:'HR Documents',desc:'Request for employment certificate for bank loan',priority:'Normal',status:'Open',created:'2026-09-21'},
+];
+
+const recordings=[
+  {user:'User-1-16.57',emp:'1001 · Ravikala',date:'30 Sep 2026',time:'16:57',dur:'4m 12s',size:'3.1 MB'},
+  {user:'User-2-17.26',emp:'1002 · Deepika',date:'30 Sep 2026',time:'17:26',dur:'3m 44s',size:'2.8 MB'},
+  {user:'User-3-17.26',emp:'1003 · Narmatha',date:'30 Sep 2026',time:'17:26',dur:'5m 01s',size:'3.7 MB'},
+  {user:'User-4-18.09',emp:'1004 · Hashir',date:'30 Sep 2026',time:'18:09',dur:'2m 55s',size:'2.1 MB'},
+  {user:'User-5-18.27',emp:'1005 · Saikumar',date:'30 Sep 2026',time:'18:27',dur:'6m 18s',size:'4.6 MB'},
+  {user:'User-6-18.32',emp:'1006 · Bharath',date:'30 Sep 2026',time:'18:32',dur:'3m 30s',size:'2.6 MB'},
+  {user:'User-7-18.32',emp:'1007 · Guna',date:'30 Sep 2026',time:'18:32',dur:'4m 52s',size:'3.6 MB'},
+  {user:'User-8-18.33',emp:'1008 · Shivaraj',date:'30 Sep 2026',time:'18:33',dur:'2m 10s',size:'1.6 MB'},
+  {user:'User-9-18.34',emp:'1009 · Govindaraj',date:'30 Sep 2026',time:'18:34',dur:'5m 40s',size:'4.2 MB'},
+  {user:'User-10-18.36',emp:'1010 · Charan',date:'30 Sep 2026',time:'18:36',dur:'3m 08s',size:'2.3 MB'},
+];
+
+/* ═══════════ STATE ═══════════ */
+let isOn=false, sec=0, tInt=null, dtBuf='', editEmpIdx=-1;
+
+/* ═══════════ INIT ═══════════ */
+function init(){
+  renderGoalQuick(); renderGoalEditors();
+  renderEmployees(); renderLeaveBalances(); renderLeaveRequests();
+  renderHolidays(); renderMessages(); renderAttendance(); renderTickets();
+  renderRecordings(); renderDtmfGrid(); renderBlockedChips();
+}
+
+/* ═══════════ NAV ═══════════ */
+const TITLES={
+  console:'Call Console', transcript:'Live Transcript', logs:'Activity Log',
+  goals:'Goals & Guardrails', engine:'Engine Stack', phone:'Phone Config', livekit:'LiveKit Config',
+  db_employees:'Employees', db_leaves:'Leave Balances', db_requests:'Leave Requests',
+  db_holidays:'Holidays', db_messages:'Messages & Reminders', db_attendance:'Attendance',
+  db_tickets:'HR Tickets', recordings:'Call Recordings'
+};
+function nav(id,el){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.querySelectorAll('.nav-i').forEach(n=>n.classList.remove('active'));
+  document.getElementById('v-'+id)?.classList.add('active');
+  el?.classList.add('active');
+  document.getElementById('tbTitle').textContent=TITLES[id]||id;
+}
+
+/* ═══════════ CALL ═══════════ */
+function startCall(){
+  isOn=true; sec=0; dtBuf='';
+  document.getElementById('startBtn').style.display='none';
+  document.getElementById('endBtn').style.display='';
+  document.getElementById('timerDisp').style.display='';
+  document.getElementById('callOrb').classList.add('on');
+  document.getElementById('callOrb').textContent='🔊';
+  document.getElementById('wav').classList.add('on');
+  document.getElementById('cStatusTxt').textContent='Call connected — speak or type a message';
+  document.getElementById('csBadge').classList.add('on');
+  document.getElementById('csTxt').textContent='Live Call';
+  document.getElementById('liveDot').style.display='';
+  document.getElementById('metaRoom').textContent='room-hr-'+Math.random().toString(36).slice(2,7);
+  document.getElementById('metaRoom').style.color='var(--ink)';
+  document.querySelectorAll('.dk').forEach(b=>b.disabled=false);
+  document.getElementById('dtmfHint').textContent='⌨️ Keyboard 0–9 * #';
+  for(let i=2;i<=6;i++) setTimeout(()=>document.getElementById('pp'+i)?.classList.add('on'), i*250);
+  tInt=setInterval(()=>{ sec++; document.getElementById('timerDisp').textContent=fmt(sec); },1000);
+  addLog('info','System','Call connected via WebRTC','—');
+  agentSay('Hello! Thank you for calling the HR Voice Agent. Please say or enter your 4-digit Employee ID to get started.','g01');
+  showToast('📞 Call started');
+}
+function endCall(){
+  if(!isOn) return;
+  isOn=false; clearInterval(tInt);
+  document.getElementById('startBtn').style.display='';
+  document.getElementById('endBtn').style.display='none';
+  document.getElementById('timerDisp').style.display='none';
+  document.getElementById('callOrb').classList.remove('on');
+  document.getElementById('callOrb').textContent='🎙️';
+  document.getElementById('wav').classList.remove('on');
+  document.getElementById('cStatusTxt').textContent='Ready — click Start Call to connect';
+  document.getElementById('csBadge').classList.remove('on');
+  document.getElementById('csTxt').textContent='Ready';
+  document.getElementById('liveDot').style.display='none';
+  document.getElementById('metaGoal').textContent='Idle';
+  document.getElementById('metaGoal').style.color='var(--muted)';
+  document.querySelectorAll('.dk').forEach(b=>b.disabled=true);
+  document.getElementById('dtmfHint').textContent='📞 Start a call to use the keypad';
+  for(let i=2;i<=6;i++) document.getElementById('pp'+i)?.classList.remove('on');
+  addLog('warn','System','Call ended — duration '+fmt(sec),'—');
+  agentSay('Thank you for calling HR Voice Agent. Have a great day! Goodbye.',null);
+  showToast('📵 Call ended');
+}
+function fmt(s){ return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0'); }
+function resetAll(){ if(isOn) endCall(); document.getElementById('tcLog').innerHTML='<div class="tc-empty" id="tcEmpty"><div class="ico">🔇</div><span>Start a call and speak…</span></div>'; document.getElementById('tcLog2').innerHTML='<div class="tc-empty"><div class="ico">🔇</div><span>No transcript yet.</span></div>'; dtBuf=''; updateDtmf(); document.getElementById('fullLog').innerHTML='<div class="log-empty">Log cleared.</div>'; document.getElementById('miniLog').innerHTML='<div class="log-empty">No activity yet.</div>'; document.getElementById('metaRoom').textContent='—'; document.getElementById('metaRoom').style.color='var(--muted)'; document.getElementById('metaEmp').textContent='—'; document.getElementById('metaEmp').style.color='var(--muted)'; document.getElementById('timerDisp').textContent='00:00'; showToast('↺ Console reset'); }
+
+/* ═══════════ CHAT ═══════════ */
+const DEMOS={
+  'hello':'Hello! Thank you for calling. Please provide your 4-digit Employee ID.',
+  'hi':'Hi there! Welcome to HR Voice Agent. Could you please provide your Employee ID?',
+  '1001':'Employee ID 1001 verified. Welcome, Ravikala! How can I assist you today?',
+  '1002':'Employee ID 1002 verified. Welcome, Deepika! How can I help you?',
+  '1014':'Employee ID 1014 verified. Welcome, Manikandan! How can I assist?',
+  'leave':'You currently have 6 days of Casual Leave and 4 days of Sick Leave remaining.',
+  'balance':'Leave balance: Casual — 6d, Sick — 4d, Bereavement — 5d.',
+  'apply':'Sure! For leave application I need your start and end date. Please go ahead.',
+  'attendance':'Your attendance this month: 18 days present, 2 days absent, 1 late entry.',
+  'salary':'Your September 2026 net salary: ₹53,100 (Gross ₹60,000 - Deductions ₹6,900).',
+  'policy':'Work From Home policy allows up to 2 days per week with prior manager approval.',
+  'insurance':'You are enrolled in: Individual Health Plan (₹3L) and Accidental Coverage (₹5L).',
+  'holiday':'Upcoming holidays: Gandhi Jayanti — 2 Oct, Dussehra — 20 Oct, Diwali — 8 Nov.',
+  'transfer':'Transferring you to HR Coordinator. Please hold…',
+  'bye':'Thank you for calling. Have a great day! Goodbye.',
+  'default':'I understand. Could you please confirm your Employee ID first so I can assist you better?',
+};
+function getReply(txt){
+  const lo=txt.toLowerCase();
+  let goal=null;
+  if(['leave','balance','apply'].some(k=>lo.includes(k))) goal='g02';
+  else if(lo.includes('attendance')) goal='g05';
+  else if(['salary','payroll','payslip'].some(k=>lo.includes(k))) goal='g07';
+  else if(['policy','wfh','home'].some(k=>lo.includes(k))) goal='g08';
+  else if(['holiday','calendar'].some(k=>lo.includes(k))) goal='g09';
+  else if(['insurance','epf','benefit'].some(k=>lo.includes(k))) goal='g11';
+  else if(['transfer','coordinator'].some(k=>lo.includes(k))) goal='g12';
+  const idM=txt.match(/\b1[01][01][0-9]\b/);
+  if(idM){ const eid=idM[0]; document.getElementById('metaEmp').textContent=eid; document.getElementById('metaEmp').style.color='var(--ink)'; setGoal('g01'); }
+  if(goal) setGoal(goal);
+  for(const [k,v] of Object.entries(DEMOS)) if(lo.includes(k)) return v;
+  return DEMOS.default;
+}
+function sendMsg(){  const i=document.getElementById('chatIn'); const t=i.value.trim(); if(!t) return; i.value=''; if(!isOn){showToast('⚠️ Start a call first');return;} addTurn('u',t); addLog('info','STT','Transcribed: "'+t+'"',(80+Math.random()*60|0)+'ms'); setTimeout(()=>{ const r=getReply(t); addTurn('a',r); addLog('success','LLM','Response generated',(200+Math.random()*300|0)+'ms'); },600+Math.random()*400); }
+function sendMsg2(){ const i=document.getElementById('chatIn2'); const t=i.value.trim(); if(!t) return; i.value=''; if(!isOn){showToast('⚠️ Start a call first');return;} addTurn('u',t); setTimeout(()=>addTurn('a',getReply(t)),600+Math.random()*400); }
+function addTurn(role,text){
+  const now=new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const lbl=role==='u'?'🎤 You':'🤖 Agent';
+  const h=`<div class="msg ${role}"><div class="mb">${text}</div><div class="mm">${lbl} · ${now}</div></div>`;
+  ['tcLog','tcLog2'].forEach(id=>{
+    const el=document.getElementById(id); if(!el) return;
+    el.querySelector('.tc-empty')?.remove();
+    el.insertAdjacentHTML('beforeend',h); el.scrollTop=el.scrollHeight;
+  });
+  const tc=document.getElementById('tcCount'); if(tc) tc.textContent=(parseInt(tc.textContent||0)+1)+' turns';
+}
+function agentSay(t,g){ if(g) setGoal(g); addTurn('a',t); addLog('success','TTS','Spoken: "'+t.slice(0,40)+'…"',(120+Math.random()*80|0)+'ms'); }
+
+/* ═══════════ GOAL HIGHLIGHT ═══════════ */
+function setGoal(id){
+  const g=GOALS_DEF.find(x=>x.id===id);
+  document.getElementById('metaGoal').textContent=g?g.label:'Idle';
+  document.getElementById('metaGoal').style.color=g?'var(--terra-d)':'var(--muted)';
+  document.querySelectorAll('.gqr').forEach(r=>{ r.style.background=''; r.style.borderColor=''; });
+  const el=document.querySelector('[data-gqr="'+id+'"]');
+  if(el){ el.style.background='var(--terra-l)'; el.style.borderColor='var(--terra-b)'; }
+}
+
+/* ═══════════ DTMF ═══════════ */
+const DTMF_KEYS=[['1','2','3'],['4','5','6'],['7','8','9'],['*','0','#']];
+function renderDtmfGrid(){
+  const g=document.getElementById('dtmfGrid'); if(!g) return;
+  g.innerHTML=DTMF_KEYS.flat().map(k=>`<button class="dk" disabled
+    id="dk-${k==='*'?'star':k==='#'?'hash':k}" onclick="pressKey('${k}')">${k}</button>`).join('');
+}
+function pressKey(k){ if(!isOn) return; dtBuf=(dtBuf+k).slice(-8); updateDtmf(); const m=dtBuf.match(/1[01][01][0-9]$/); if(m){ const eid=m[0]; document.getElementById('metaEmp').textContent=eid; document.getElementById('metaEmp').style.color='var(--ink)'; setGoal('g01'); setTimeout(()=>agentSay(`Employee ID ${eid} verified. Welcome! How can I assist you today?`,'g01'),400); } addLog('info','DTMF','Key: '+k,'—'); }
+function updateDtmf(){ const p=document.getElementById('dtmfPh'),d=document.getElementById('dtmfDig'); if(p&&d){ if(dtBuf){p.style.display='none';d.style.display='';d.textContent=dtBuf;}else{p.style.display='';d.style.display='none';} } }
+document.addEventListener('keydown',e=>{ if(!isOn||document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='TEXTAREA') return; if(/^[0-9*#]$/.test(e.key)) pressKey(e.key); });
+
+/* ═══════════ ACTIVITY LOG ═══════════ */
+const TC={info:'b-teal',success:'b-green',warn:'b-amber',err:'b-red'};
+function addLog(type,src,msg,lat){
+  const now=new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const r=`<div class="log-r"><span class="lt">${now}</span><span class="ls badge ${TC[type]||'b-gray'}">${src}</span><span class="lm">${msg}</span><span class="ll">${lat}</span></div>`;
+  ['miniLog','fullLog'].forEach(id=>{ const el=document.getElementById(id); if(!el) return; el.querySelector('.log-empty')?.remove(); el.insertAdjacentHTML('afterbegin',r); });
+}
+function clearLog(){ document.getElementById('fullLog').innerHTML='<div class="log-empty">Log cleared.</div>'; document.getElementById('miniLog').innerHTML='<div class="log-empty">No activity yet.</div>'; }
+
+/* ═══════════ GOALS QUICK ═══════════ */
+function renderGoalQuick(){
+  const el=document.getElementById('goalsQuick'); if(!el) return;
+  el.innerHTML=GOALS_DEF.map((g,i)=>{
+    const actCount=(g.actions||[]).length;
+    const actEnabled=(g.actions||[]).filter(a=>a.enabled).length;
+    return `
+    <div class="gqr" data-gqr="${g.id}" style="display:flex;align-items:center;gap:9px;padding:7px 10px;
+      border-radius:7px;border:1.5px solid var(--bdr);background:var(--white);margin-bottom:3px;cursor:default;transition:all .14s;">
+      <span style="width:21px;height:21px;border-radius:50%;background:${g.enabled?'var(--terra)':'var(--muted)'};color:#fff;
+        display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:800;
+        font-family:var(--fh);flex-shrink:0;">${String(i+1).padStart(2,'0')}</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.label}</div>
+        <div style="font-size:10px;color:var(--muted);font-family:var(--fm);">⚡ ${actEnabled}/${actCount} actions</div>
+      </div>
+      <span style="width:6px;height:6px;border-radius:50%;background:${g.enabled?'var(--green)':'var(--bdr-s)'};"></span>
+    </div>`;
+  }).join('');
+}
+
+/* ═══════════ GOAL EDITORS ═══════════ */
+function renderGoalEditors(){
+  const el=document.getElementById('goalEditors'); if(!el) return;
+  el.innerHTML=GOALS_DEF.map((g,i)=>{
+    const actions=g.actions||[];
+    const actionsHTML=actions.length===0?'':`
+      <div class="field" style="margin-top:4px;">
+        <label style="display:flex;align-items:center;justify-content:space-between;">
+          <span>⚡ Actions <span style="color:var(--muted);font-weight:400;font-size:11px;">(function_tools exposed to LLM)</span></span>
+          <span style="font-family:var(--fm);font-size:11px;color:var(--muted);">Service: <b style="color:var(--terra-d);">${g.service||''}</b></span>
+        </label>
+        <div style="display:flex;flex-direction:column;gap:5px;margin-top:6px;">
+          ${actions.map(a=>`
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;
+            border:1.5px solid ${a.enabled?'var(--terra-b)':'var(--bdr)'};
+            background:${a.enabled?'var(--terra-l)':'var(--inner)'};
+            transition:all .15s;">
+            <span style="font-size:16px;">${a.enabled?'⚡':'○'}</span>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:12px;font-weight:700;font-family:var(--fm);color:var(--ink);">${a.name}<span style="font-weight:400;color:var(--muted);"> ()</span></div>
+              <div style="font-size:11px;color:var(--muted);margin-top:1px;">${a.desc}</div>
+            </div>
+            <label class="toggle-sm" onclick="event.stopPropagation()">
+              <input type="checkbox" ${a.enabled?'checked':''} onchange="toggleAction('${g.id}','${a.name}',this.checked)">
+              <span class="ts-slider"></span>
+            </label>
+          </div>`).join('')}
+        </div>
+      </div>`;
+    return `
+    <div class="goal-ed-card" id="gec-${g.id}">
+      <div class="gec-head" onclick="toggleGec('${g.id}')">
+        <div class="gec-title">
+          <span class="gec-num">${String(i+1).padStart(2,'0')}</span>
+          <div>
+            <div class="gec-name">${g.label}</div>
+            <div class="gec-desc">${g.desc} <span style="color:var(--muted);font-family:var(--fm);font-size:10px;margin-left:4px;">· ${(actions.filter(a=>a.enabled).length)}/${actions.length} actions on</span></div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <label class="toggle-sm" onclick="event.stopPropagation()">
+            <input type="checkbox" id="gen-${g.id}" ${g.enabled?'checked':''} onchange="toggleGoalEnabled('${g.id}',this.checked)">
+            <span class="ts-slider"></span>
+          </label>
+          <span style="font-size:13px;color:var(--muted);">▾</span>
+        </div>
+      </div>
+      <div class="gec-body" id="gecb-${g.id}">
+        <div class="field"><label>Goal Description</label>
+          <input type="text" value="${g.desc}" id="gdesc-${g.id}" placeholder="Describe what this goal handles…"></div>
+        <div class="field">
+          <label>Trigger Phrases <span style="color:var(--muted);font-weight:400;">(words/phrases that activate this goal)</span></label>
+          <div id="triggers-${g.id}" style="margin-bottom:8px;">
+            ${g.triggers.map(t=>`<span class="trigger-chip">${t}<button onclick="removeTrigger('${g.id}','${t}')">✕</button></span>`).join('')}
+          </div>
+          <div style="display:flex;gap:7px;">
+            <input type="text" id="newt-${g.id}" placeholder="Add trigger phrase…" style="flex:1;" onkeydown="if(event.key==='Enter')addTrigger('${g.id}')">
+            <button class="btn btn-s btn-sm" onclick="addTrigger('${g.id}')">+ Add</button>
+          </div>
+        </div>
+        ${actionsHTML}
+        <div class="field"><label>Custom Instructions / Scope</label>
+          <textarea rows="2" placeholder="e.g. Only process CL and SL types. Require manager approval for > 3 days."></textarea></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleAction(goalId, actionName, val){
+  const g=GOALS_DEF.find(x=>x.id===goalId); if(!g) return;
+  const a=(g.actions||[]).find(x=>x.name===actionName); if(!a) return;
+  a.enabled=val;
+  renderGoalQuick();
+  // re-render just the action row highlight without full re-render
+  const cards=document.querySelectorAll(`#gecb-${goalId} [data-act]`);
+  showToast(val?`⚡ ${actionName} enabled`:`○ ${actionName} disabled`);
+}
+
+function toggleGec(id){ const el=document.getElementById('gecb-'+id); el.classList.toggle('open'); }
+function toggleGoalEnabled(id,val){ const g=GOALS_DEF.find(x=>x.id===id); if(g) g.enabled=val; showToast(val?`✅ ${id} enabled`:`⚠️ ${id} disabled`); }
+function addTrigger(id){
+  const inp=document.getElementById('newt-'+id); const val=inp.value.trim(); if(!val) return;
+  const g=GOALS_DEF.find(x=>x.id===id); if(!g) return;
+  g.triggers.push(val); inp.value='';
+  const wrap=document.getElementById('triggers-'+id);
+  const span=document.createElement('span'); span.className='trigger-chip';
+  span.innerHTML=`${val}<button onclick="removeTrigger('${id}','${val}')">✕</button>`;
+  wrap.appendChild(span);
+}
+function removeTrigger(id,t){
+  const g=GOALS_DEF.find(x=>x.id===id); if(!g) return;
+  g.triggers=g.triggers.filter(x=>x!==t); renderGoalEditors();
+}
+function saveGoals(){ showToast('✅ Goals & trigger phrases saved'); }
+function saveGuardrails(){ showToast('✅ Guardrails saved successfully'); }
+
+/* ═══════════ EMPLOYEES CRUD ═══════════ */
+function renderEmployees(){
+  const b=document.getElementById('empBody'); if(!b) return;
+  b.innerHTML=employees.map((e,i)=>`<tr>
+    <td><span style="font-family:var(--fm);font-weight:700;">${e.id}</span></td>
+    <td><b>${e.name}</b></td>
+    <td>${e.gender==='M'?'♂ Male':'♀ Female'}</td>
+    <td>${e.dept}</td>
+    <td style="font-size:11.5px;">${e.desig}</td>
+    <td style="font-size:11.5px;color:var(--muted);">${e.email}</td>
+    <td style="font-family:var(--fm);font-size:11.5px;">${e.phone}</td>
+    <td style="font-size:11.5px;">${e.join}</td>
+    <td><span class="badge ${e.status==='active'?'b-green':e.status==='on_leave'?'b-amber':'b-red'}">${e.status}</span></td>
+    <td><div class="acts">
+      <button class="btn-icon" title="Edit" onclick="editEmployee(${i})">✏️</button>
+      <button class="btn-icon del" title="Delete" onclick="deleteEmployee(${i})">🗑️</button>
+    </div></td>
+  </tr>`).join('');
+}
+function editEmployee(i){
+  const e=employees[i]; editEmpIdx=i;
+  document.getElementById('empModalTitle').textContent='Edit Employee';
+  document.getElementById('empId').value=e.id;
+  document.getElementById('empName').value=e.name;
+  document.getElementById('empGender').value=e.gender;
+  document.getElementById('empEmail').value=e.email;
+  document.getElementById('empPhone').value=e.phone;
+  document.getElementById('empJoin').value=e.join;
+  document.getElementById('empStatus').value=e.status;
+  document.getElementById('empMgr').value=e.mgr||'';
+  openModal('empModal');
+}
+function saveEmployee(){
+  const obj={id:document.getElementById('empId').value,name:document.getElementById('empName').value,
+    gender:document.getElementById('empGender').value,dept:document.getElementById('empDept').value,
+    desig:document.getElementById('empDesig').value,email:document.getElementById('empEmail').value,
+    phone:document.getElementById('empPhone').value,join:document.getElementById('empJoin').value,
+    status:document.getElementById('empStatus').value,mgr:document.getElementById('empMgr').value};
+  if(!obj.id||!obj.name){showToast('⚠️ ID and Name are required');return;}
+  if(editEmpIdx>=0) employees[editEmpIdx]=obj; else employees.push(obj);
+  editEmpIdx=-1; renderEmployees(); closeModal('empModal'); showToast('✅ Employee saved');
+}
+function deleteEmployee(i){
+  if(!confirm(`Delete ${employees[i].name}?`)) return;
+  employees.splice(i,1); renderEmployees(); showToast('🗑️ Employee deleted');
+}
+
+/* ═══════════ LEAVE BALANCES CRUD ═══════════ */
+function renderLeaveBalances(){
+  const b=document.getElementById('lbBody'); if(!b) return;
+  b.innerHTML=leaveBalances.map((r,i)=>`<tr>
+    <td><span style="font-family:var(--fm);font-weight:700;">${r.empId}</span></td>
+    <td>${r.name}</td>
+    <td><span class="badge b-terra">${r.code}</span></td>
+    <td>${r.entitled??'—'}</td>
+    <td>${r.used}</td>
+    <td><b style="color:${(r.entitled-r.used)<=2?'var(--red)':'var(--sage)'};">${r.entitled!=null?r.entitled-r.used:'—'}</b></td>
+    <td><div class="acts">
+      <button class="btn-icon" onclick="editLb(${i})">✏️</button>
+      <button class="btn-icon del" onclick="deleteLb(${i})">🗑️</button>
+    </div></td>
+  </tr>`).join('');
+}
+function editLb(i){ const r=leaveBalances[i]; document.getElementById('lbEmpId').value=r.empId; document.getElementById('lbLeaveCode').value=r.code; document.getElementById('lbEntitled').value=r.entitled; document.getElementById('lbUsed').value=r.used; openModal('lbModal'); }
+function saveLeaveBalance(){ const eid=document.getElementById('lbEmpId').value; const code=document.getElementById('lbLeaveCode').value; const ent=+document.getElementById('lbEntitled').value; const used=+document.getElementById('lbUsed').value; const emp=employees.find(e=>e.id===eid); const name=emp?emp.name:eid; const idx=leaveBalances.findIndex(r=>r.empId===eid&&r.code===code); if(idx>=0) leaveBalances[idx]={empId:eid,name,code,entitled:ent,used}; else leaveBalances.push({empId:eid,name,code,entitled:ent,used}); renderLeaveBalances(); closeModal('lbModal'); showToast('✅ Leave balance updated'); }
+function deleteLb(i){ if(!confirm('Delete this leave balance record?')) return; leaveBalances.splice(i,1); renderLeaveBalances(); showToast('🗑️ Record deleted'); }
+
+/* ═══════════ LEAVE REQUESTS CRUD ═══════════ */
+function renderLeaveRequests(){
+  const b=document.getElementById('lrBody'); if(!b) return;
+  b.innerHTML=leaveRequests.map((r,i)=>`<tr>
+    <td><span style="font-family:var(--fm);">${r.id}</span></td>
+    <td>${r.empId}</td><td>${r.name}</td>
+    <td><span class="badge b-terra">${r.code}</span></td>
+    <td style="font-size:11.5px;">${r.from}</td>
+    <td style="font-size:11.5px;">${r.to}</td>
+    <td style="font-weight:700;">${r.days}</td>
+    <td style="font-size:11.5px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${r.reason}</td>
+    <td class="statusCell"><span class="badge ${r.status==='approved'?'b-green':r.status==='rejected'?'b-red':r.status==='cancelled'?'b-gray':'b-amber'}">${r.status}</span></td>
+    <td><div class="acts">
+      <button class="btn-icon" onclick="approveReq(${i})" title="Approve">✅</button>
+      <button class="btn-icon" onclick="rejectReq(${i})" title="Reject">❌</button>
+      <button class="btn-icon del" onclick="deleteReq(${i})" title="Delete">🗑️</button>
+    </div></td>
+  </tr>`).join('');
+}
+function saveLeaveRequest(){ const eid=document.getElementById('lrEmpId').value; const emp=employees.find(e=>e.id===eid); const from=document.getElementById('lrFrom').value; const to=document.getElementById('lrTo').value; const d=Math.round((new Date(to)-new Date(from))/86400000)+1; leaveRequests.push({id:200+leaveRequests.length,empId:eid,name:emp?emp.name:eid,code:document.getElementById('lrLeaveCode').value,from,to,days:d,reason:document.getElementById('lrReason').value,status:document.getElementById('lrStatus').value,email:document.getElementById('lrEmail').value}); renderLeaveRequests(); closeModal('lrModal'); showToast('✅ Leave request created'); }
+function approveReq(i){ leaveRequests[i].status='approved'; renderLeaveRequests(); showToast('✅ Request approved'); }
+function rejectReq(i){ leaveRequests[i].status='rejected'; renderLeaveRequests(); showToast('❌ Request rejected'); }
+function deleteReq(i){ if(!confirm('Delete this request?')) return; leaveRequests.splice(i,1); renderLeaveRequests(); showToast('🗑️ Deleted'); }
+
+/* ═══════════ HOLIDAYS CRUD ═══════════ */
+function renderHolidays(){
+  const b=document.getElementById('holBody'); if(!b) return;
+  b.innerHTML=holidays.map((h,i)=>`<tr>
+    <td>${h.id}</td>
+    <td><b>${h.name}</b></td>
+    <td style="font-family:var(--fm);">${h.date}</td>
+    <td>${h.day}</td>
+    <td><span class="badge ${h.mandatory?'b-green':'b-gray'}">${h.mandatory?'Yes':'No'}</span></td>
+    <td><div class="acts">
+      <button class="btn-icon del" onclick="deleteHoliday(${i})">🗑️</button>
+    </div></td>
+  </tr>`).join('');
+}
+function saveHoliday(){ holidays.push({id:holidays.length+1,name:document.getElementById('holName').value,date:document.getElementById('holDate').value,day:document.getElementById('holDay').value,mandatory:document.getElementById('holMand').checked}); renderHolidays(); closeModal('holModal'); showToast('✅ Holiday added'); }
+function deleteHoliday(i){ if(!confirm('Delete '+holidays[i].name+'?')) return; holidays.splice(i,1); renderHolidays(); showToast('🗑️ Holiday deleted'); }
+
+/* ═══════════ MESSAGES CRUD ═══════════ */
+function renderMessages(){
+  const b=document.getElementById('msgBody'); if(!b) return;
+  b.innerHTML=messages.map((m,i)=>`<tr>
+    <td>${m.id}</td>
+    <td>${m.empId}</td><td>${m.name}</td>
+    <td><span class="badge b-teal">${m.type}</span></td>
+    <td style="font-size:11.5px;">${m.title}</td>
+    <td style="font-family:var(--fm);font-size:11.5px;">${m.time}</td>
+    <td><span class="badge ${m.status==='Sent'?'b-green':m.status==='Cancelled'?'b-red':'b-amber'}">${m.status}</span></td>
+    <td><div class="acts">
+      <button class="btn-icon" onclick="sendNow(${i})" title="Send Now">📤</button>
+      <button class="btn-icon del" onclick="deleteMsg(${i})" title="Delete">🗑️</button>
+    </div></td>
+  </tr>`).join('');
+}
+function saveMessage(){ const eid=document.getElementById('msgEmpId').value; const emp=employees.find(e=>e.id===eid); messages.push({id:messages.length+1,empId:eid,name:emp?emp.name:eid,type:document.getElementById('msgType').value,title:document.getElementById('msgTitle').value,text:document.getElementById('msgText').value,time:document.getElementById('msgTime').value,status:'Scheduled'}); renderMessages(); closeModal('msgModal'); showToast('✅ Message scheduled'); }
+function sendNow(i){ messages[i].status='Sent'; renderMessages(); showToast('📤 Message sent to '+messages[i].name); }
+function deleteMsg(i){ if(!confirm('Delete?')) return; messages.splice(i,1); renderMessages(); showToast('🗑️ Deleted'); }
+function broadcastMsg(){ employees.forEach(e=>messages.push({id:messages.length+1,empId:e.id,name:e.name,type:'PAYSLIP_DOWNLOAD',title:'October Payslip Available',text:'October payslip is available.',time:'2026-10-06 10:00',status:'Scheduled'})); renderMessages(); showToast('📢 Broadcast scheduled for '+employees.length+' employees'); }
+
+/* ═══════════ ATTENDANCE CRUD ═══════════ */
+function renderAttendance(){
+  const b=document.getElementById('attBody'); if(!b) return;
+  b.innerHTML=attendance.map((r,i)=>`<tr>
+    <td><span style="font-family:var(--fm);font-weight:700;">${r.empId}</span></td>
+    <td>${r.name}</td>
+    <td style="font-family:var(--fm);">${r.date}</td>
+    <td style="font-family:var(--fm);">${r.in||'—'}</td>
+    <td style="font-family:var(--fm);">${r.out||'—'}</td>
+    <td>${r.hours!=null?r.hours+'h':'—'}</td>
+    <td><span class="badge ${r.status==='Present'?'b-green':r.status==='Absent'?'b-red':r.status==='Late'?'b-amber':r.status==='On_Leave'?'b-teal':'b-gray'}">${r.status}</span></td>
+    <td>${r.late>0?`<span style="color:var(--red);">${r.late}m</span>`:'—'}</td>
+    <td style="font-size:11.5px;color:var(--muted);">${r.remarks}</td>
+    <td><div class="acts">
+      <button class="btn-icon" onclick="editAtt(${i})">✏️</button>
+      <button class="btn-icon del" onclick="deleteAtt(${i})">🗑️</button>
+    </div></td>
+  </tr>`).join('');
+}
+function editAtt(i){ const r=attendance[i]; document.getElementById('attEmpId').value=r.empId; document.getElementById('attDate').value=r.date; document.getElementById('attIn').value=r.in||''; document.getElementById('attOut').value=r.out||''; document.getElementById('attStatus').value=r.status; document.getElementById('attLate').value=r.late; document.getElementById('attRemarks').value=r.remarks; openModal('attModal'); }
+function saveAttendance(){ const eid=document.getElementById('attEmpId').value; const emp=employees.find(e=>e.id===eid); const tin=document.getElementById('attIn').value; const tout=document.getElementById('attOut').value; let hrs=null; if(tin&&tout){ const [h1,m1]=tin.split(':').map(Number); const [h2,m2]=tout.split(':').map(Number); hrs=Math.round(((h2*60+m2)-(h1*60+m1))/60*100)/100; } attendance.push({empId:eid,name:emp?emp.name:eid,date:document.getElementById('attDate').value,in:tin||null,out:tout||null,hours:hrs,status:document.getElementById('attStatus').value,late:+document.getElementById('attLate').value,remarks:document.getElementById('attRemarks').value}); renderAttendance(); closeModal('attModal'); showToast('✅ Attendance record saved'); }
+function deleteAtt(i){ if(!confirm('Delete?')) return; attendance.splice(i,1); renderAttendance(); showToast('🗑️ Record deleted'); }
+
+/* ═══════════ TICKETS CRUD ═══════════ */
+function renderTickets(){
+  const b=document.getElementById('tickBody'); if(!b) return;
+  b.innerHTML=tickets.map((t,i)=>`<tr>
+    <td><span style="font-family:var(--fm);font-size:11.5px;">${t.num}</span></td>
+    <td>${t.empId}</td>
+    <td><span class="badge b-teal" style="font-size:10px;">${t.cat}</span></td>
+    <td style="font-size:11.5px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.desc}</td>
+    <td><span class="badge ${t.priority==='Normal'?'b-gray':t.priority==='Urgent'?'b-amber':'b-red'}">${t.priority}</span></td>
+    <td><span class="badge ${t.status==='Open'?'b-terra':t.status==='In_Progress'?'b-amber':t.status==='Resolved'?'b-green':'b-gray'}">${t.status}</span></td>
+    <td style="font-size:11px;">${t.created}</td>
+    <td><div class="acts">
+      <button class="btn-icon" onclick="resolveTicket(${i})" title="Resolve">✅</button>
+      <button class="btn-icon del" onclick="deleteTicket(${i})" title="Delete">🗑️</button>
+    </div></td>
+  </tr>`).join('');
+}
+function saveTicket(){ const eid=document.getElementById('tickEmpId').value; tickets.push({num:'TICK-'+Math.floor(10000+Math.random()*90000),empId:eid,cat:document.getElementById('tickCat').value,desc:document.getElementById('tickDesc').value,priority:document.getElementById('tickPri').value,status:document.getElementById('tickStat').value,created:new Date().toISOString().slice(0,10)}); renderTickets(); closeModal('tickModal'); showToast('✅ Ticket raised'); }
+function resolveTicket(i){ tickets[i].status='Resolved'; renderTickets(); showToast('✅ Ticket resolved'); }
+function deleteTicket(i){ if(!confirm('Delete?')) return; tickets.splice(i,1); renderTickets(); showToast('🗑️ Deleted'); }
+
+/* ═══════════ RECORDINGS ═══════════ */
+function renderRecordings(){
+  const el=document.getElementById('recList'); if(!el) return;
+  el.innerHTML=recordings.map((r,i)=>`
+    <div class="rec-row">
+      <div class="rec-ic">🎙️</div>
+      <div class="rec-info">
+        <div class="rec-name">${r.user}</div>
+        <div class="rec-meta">${r.emp} · ${r.date} ${r.time} · ${r.size}</div>
+      </div>
+      <span class="rec-dur">${r.dur}</span>
+      <div class="rec-acts">
+        <button class="btn btn-s btn-xs" onclick="playRec(${i})">▶ Play</button>
+        <button class="btn btn-s btn-xs" onclick="showToast('📥 Downloading ${r.user}…')">⬇</button>
+        <button class="btn-icon del btn-xs" onclick="deleteRec(${i})" title="Delete">🗑️</button>
+      </div>
+    </div>
+    <div class="audio-mini" id="apm-${i}"><audio controls src=""></audio><p style="font-size:10.5px;color:var(--muted);margin-top:4px;">📁 Recordings/30-09-2026/${r.user}/</p></div>
+  `).join('');
+}
+function playRec(i){ document.querySelectorAll('.audio-mini').forEach((el,j)=>el.classList.toggle('show',j===i&&!el.classList.contains('show'))); }
+function deleteRec(i){ if(!confirm('Delete recording '+recordings[i].user+'?')) return; recordings.splice(i,1); renderRecordings(); showToast('🗑️ Recording deleted'); }
+
+/* ═══════════ MODAL HELPERS ═══════════ */
+function openModal(id){ document.getElementById(id).classList.add('open'); }
+function closeModal(id){ document.getElementById(id).classList.remove('open'); editEmpIdx=-1; }
+document.querySelectorAll('.modal-ov').forEach(m=>m.addEventListener('click',e=>{ if(e.target===m) m.classList.remove('open'); }));
+
+/* ═══════════ TABLE UTILS ═══════════ */
+function filterTable(tblId,q){ const rows=document.querySelectorAll('#'+tblId+' tbody tr'); rows.forEach(r=>r.style.display=r.textContent.toLowerCase().includes(q.toLowerCase())?'':'none'); }
+function filterByStatus(tblId,val,cellClass){ const rows=document.querySelectorAll('#'+tblId+' tbody tr'); rows.forEach(r=>{ const c=r.querySelector('.'+cellClass); r.style.display=(!val||c?.textContent.trim()===val)?'':'none'; }); }
+
+/* ═══════════ CONNECTION TESTS ═══════════ */
+function testConn(type){
+  if(type==='sip'){ showToast('🔍 Testing SIP…'); setTimeout(()=>{ document.getElementById('sipStatus').style.display='flex'; showToast('✅ SIP trunk reachable'); },1200); }
+  if(type==='livekit'){ showToast('🔍 Testing LiveKit…'); setTimeout(()=>{ document.getElementById('lkStatus').style.display='flex'; showToast('✅ LiveKit connected'); },1000); }
+}
+function togglePwd(id,btn){ const el=document.getElementById(id); el.type=el.type==='password'?'text':'password'; btn.textContent=el.type==='password'?'👁️':'🙈'; }
+
+/* ═══════════ PHONE & BLOCKED NUMBERS CONFIG ═══════════ */
+let blockedNumbers = ['+919000000000', '+919111111111'];
+
+function renderBlockedChips(){
+  const container = document.getElementById('blockedChips');
+  const countBadge = document.getElementById('blockedCount');
+  if(!container) return;
+  container.innerHTML = blockedNumbers.map(n => `
+    <span class="chip" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--card-bg,#fff);border:1.5px solid var(--border,#d4a373);border-radius:20px;font-size:12px;font-weight:600;">
+      <span>${n}</span>
+      <button type="button" onclick="removeBlockedNum('${n}')" style="background:none;border:none;cursor:pointer;color:var(--danger,#d90429);font-weight:bold;padding:0 2px;">×</button>
+    </span>
+  `).join('');
+  if(countBadge) countBadge.textContent = blockedNumbers.length + ' blocked';
+}
+
+function addBlockedNum(){
+  const inp = document.getElementById('blockNumInp');
+  if(!inp) return;
+  const num = inp.value.trim();
+  if(!num){ showToast('⚠️ Enter a phone number'); return; }
+  if(blockedNumbers.includes(num)){ showToast('⚠️ Number already blocked'); return; }
+  blockedNumbers.push(num);
+  inp.value = '';
+  renderBlockedChips();
+  showToast('🚫 Added ' + num + ' to blocklist');
+}
+
+function removeBlockedNum(num){
+  blockedNumbers = blockedNumbers.filter(n => n !== num);
+  renderBlockedChips();
+  showToast('✅ Removed ' + num + ' from blocklist');
+}
+
+function importBlockedJson(){
+  const ta = document.getElementById('blockedJson');
+  if(!ta) return;
+  try {
+    const list = JSON.parse(ta.value.trim());
+    if(!Array.isArray(list)) throw new Error('Must be an array of phone numbers');
+    let added = 0;
+    list.forEach(n => {
+      const s = String(n).trim();
+      if(s && !blockedNumbers.includes(s)){ blockedNumbers.push(s); added++; }
+    });
+    renderBlockedChips();
+    showToast(`✅ Imported ${added} numbers`);
+  } catch(e) {
+    showToast('⚠️ Invalid JSON: ' + e.message);
+  }
+}
+
+function saveCoordinator(){
+  const coordNum = document.getElementById('coordNum')?.value || '';
+  const coordTimeout = document.getElementById('coordTimeout')?.value || '30';
+  const coordName = document.getElementById('coordName')?.value || 'HR Coordinator';
+  showToast(`✅ Coordinator saved: ${coordName} (${coordNum})`);
+}
+
+function testCallCoord(){
+  const coordNum = document.getElementById('coordNum')?.value || '+918925355704';
+  showToast(`📞 Dialing coordinator at ${coordNum}…`);
+  const statusEl = document.getElementById('coordTestStatus');
+  if(statusEl) statusEl.style.display = 'flex';
+  setTimeout(()=>{
+    showToast(`✅ Coordinator line test successful!`);
+  }, 1200);
+}
+
+function savePhoneConfig(){
+  const sipHost = document.getElementById('sipHost')?.value || '';
+  const sipUser = document.getElementById('sipUser')?.value || '';
+  const coordNum = document.getElementById('coordNum')?.value || '';
+  showToast('✅ Phone & Transfer Configuration Saved!');
+}
+
+
+/* ═══════════ TOAST ═══════════ */
+function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2600); }
+
+/* ═══════════ BOOT ═══════════ */
+init();
+</script>
+</body>
+</html>

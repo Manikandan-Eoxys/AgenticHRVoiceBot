@@ -156,7 +156,9 @@ class Config:
 # ---------------------------------------------------------
 # Module-level aliases (imported directly by main.py etc.)
 # ---------------------------------------------------------
-PROMPT_FILE = BASE_DIR / "prompts" / "system_prompt.txt"
+PROMPT_FILE = BASE_DIR / "config" / "system_prompt.txt"
+if not PROMPT_FILE.exists():
+    PROMPT_FILE = BASE_DIR / "prompts" / "system_prompt.txt"
  
 with open(PROMPT_FILE, "r", encoding="utf-8") as f:
     SYSTEM_PROMPT = f.read()

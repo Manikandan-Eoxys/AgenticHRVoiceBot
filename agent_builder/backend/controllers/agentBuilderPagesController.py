@@ -245,8 +245,10 @@ class AgentBuilderPagesController:
         async def publish_agent(agent_id: str):
             export_doc = await export_agent(agent_id)
 
-            # 1. Write to hr_voice_agent/agent_config.json
-            runtime_agent_config = _BUILDER_ROOT.parent / "hr_voice_agent" / "agent_config.json"
+            # 1. Write to hr_voice_agent/config/agent_config.json
+            runtime_agent_config = _BUILDER_ROOT.parent / "hr_voice_agent" / "config" / "agent_config.json"
+            if not runtime_agent_config.parent.exists():
+                runtime_agent_config = _BUILDER_ROOT.parent / "hr_voice_agent" / "agent_config.json"
             try:
                 runtime_agent_config.write_text(json.dumps(export_doc, indent=2), encoding="utf-8")
                 logger.info(f"🚀 [Pages] Published config for '{agent_id}' to {runtime_agent_config}")

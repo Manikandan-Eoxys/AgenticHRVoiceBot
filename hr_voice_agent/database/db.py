@@ -42,7 +42,6 @@ from pathlib import Path
 import mysql.connector
  
 logger = logging.getLogger("db-init")
-logging.basicConfig(level=logging.INFO, format="%(message)s")
  
 # ---------------------------------------------------------------
 # Config — deliberately mirrors hr_tools.py's DB_CONFIG so both files
@@ -202,5 +201,6 @@ def run_startup_check() -> None:
  
  
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     create_database()
     run_startup_check()

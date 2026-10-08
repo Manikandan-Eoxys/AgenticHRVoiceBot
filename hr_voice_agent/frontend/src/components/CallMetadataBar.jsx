@@ -1,8 +1,7 @@
 /**
  * hr_voice_agent/frontend/src/components/CallMetadataBar.jsx
  *
- * Metadata bar displaying: call type badge (SIP / WebRTC), active LiveKit room ID,
- * and the currently active HR goal (e.g. "Leave Application").
+ * Three-column metadata strip: call type badge, room ID, active HR goal.
  */
 
 export default function CallMetadataBar({ callType, roomId, activeGoal }) {
@@ -17,13 +16,15 @@ export default function CallMetadataBar({ callType, roomId, activeGoal }) {
 
       <div className="call-meta__item">
         <span className="call-meta__label">Room</span>
-        <span className="call-meta__value">{roomId || <em>—</em>}</span>
+        <span className="call-meta__value">
+          {roomId ? roomId : <em style={{ color: "var(--text-3)", fontStyle: "normal" }}>—</em>}
+        </span>
       </div>
 
       <div className="call-meta__item">
         <span className="call-meta__label">Active Goal</span>
         <span className="call-meta__value call-meta__value--goal">
-          {activeGoal || <em>Idle</em>}
+          {activeGoal || <em style={{ color: "var(--text-3)", fontStyle: "normal" }}>Idle</em>}
         </span>
       </div>
     </div>

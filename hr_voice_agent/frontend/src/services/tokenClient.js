@@ -19,6 +19,7 @@ export async function fetchToken(participantName) {
   const data = await res.json();
   return {
     token: data.accessToken || data.token,
-    url: data.url || import.meta.env.VITE_LIVEKIT_URL || "",
+    url: data.ws_url || data.url || import.meta.env.VITE_LIVEKIT_URL || "",
   };
 }
+
