@@ -17,7 +17,22 @@ Durable state written: hr_tickets, policy_acknowledgements (DB)
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.policy_tools import (
+    execute_get_leave_policy,
+    execute_get_hr_policy,
+)
+from tools.grievance_tools import (
+    execute_get_code_of_conduct_policy,
+    execute_report_confidential_grievance,
+)
+from tools.reminder_tools import (
+    execute_check_pending_policy_acknowledgements,
+    execute_acknowledge_hr_policy,
+)
+from tools.ticket_tools import (
+    execute_raise_hr_ticket,
+    execute_check_my_hr_tickets,
+)
 
 
 class HRPolicyService(GoalService):
@@ -65,19 +80,19 @@ class HRPolicyService(GoalService):
     async def get_leave_policy(self, leave_type: str) -> str:
         """Look up company rules for a specific leave type."""
         self.log_action("get_leave_policy", leave_type=leave_type)
-        return await hr_tools.get_leave_policy(leave_type)
+        return await execute_get_leave_policy(leave_type=leave_type)
 
     @function_tool
     async def get_hr_policy(self, topic: str = "") -> str:
         """Look up general HR policy information (probation, notice period, working hours, benefits, appraisal)."""
         self.log_action("get_hr_policy", topic=topic)
-        return await hr_tools.get_hr_policy(topic)
+        return await execute_get_hr_policy(policy_name=topic)
 
     @function_tool
     async def get_code_of_conduct_policy(self, topic: str = "") -> str:
         """Look up company guidelines on workplace conduct, dress code, anti-harassment (POSH), remote work etiquette, or security."""
         self.log_action("get_code_of_conduct_policy", topic=topic)
-        return await hr_tools.get_code_of_conduct_policy(topic)
+        return await execute_get_code_of_conduct_policy(topic=topic)
 
     @function_tool
     async def check_pending_policy_acknowledgements(
@@ -87,7 +102,7 @@ class HRPolicyService(GoalService):
     ) -> str:
         """Check if there are any mandatory company policies or documents the caller must acknowledge or sign."""
         self.log_action("check_pending_policy_acknowledgements", employee_id=employee_id)
-        return await hr_tools.check_pending_policy_acknowledgements(
+        return await execute_check_pending_policy_acknowledgements(
             employee_id=employee_id,
             context=context,
         )
@@ -101,10 +116,9 @@ class HRPolicyService(GoalService):
     ) -> str:
         """Record the employee's formal acknowledgement/agreement to a specific policy or updated terms."""
         self.log_action("acknowledge_hr_policy", policy_topic=policy_topic)
-        return await hr_tools.acknowledge_hr_policy(
-            employee_id=employee_id,
-            policy_type="company_policy",
+        return await execute_acknowledge_hr_policy(
             policy_name=policy_topic,
+            employee_id=employee_id,
             context=context,
         )
 
@@ -120,12 +134,12 @@ class HRPolicyService(GoalService):
     ) -> str:
         """Raise an official HR support ticket to escalate an issue to human HR coordinators."""
         self.log_action("raise_hr_ticket", subject=subject, category=category)
-        return await hr_tools.raise_hr_ticket(
-            employee_id=employee_id,
+        return await execute_raise_hr_ticket(
             category=category,
-            priority=priority,
-            subject=subject,
+            ticket_type=subject,
             description=description,
+            priority=priority,
+            employee_id=employee_id,
             context=context,
         )
 
@@ -138,9 +152,8 @@ class HRPolicyService(GoalService):
     ) -> str:
         """Check the status of tickets previously raised by the caller."""
         self.log_action("check_my_hr_tickets", ticket_id=ticket_id)
-        return await hr_tools.check_my_hr_tickets(
+        return await execute_check_my_hr_tickets(
             employee_id=employee_id,
-            ticket_id=ticket_id,
             context=context,
         )
 
@@ -155,11 +168,10 @@ class HRPolicyService(GoalService):
     ) -> str:
         """Privately lodge a confidential grievance, harassment report, or ethical violation."""
         self.log_action("report_confidential_grievance", grievance_category=grievance_category)
-        return await hr_tools.report_confidential_grievance(
+        return await execute_report_confidential_grievance(
+            complaint_details=description,
+            issue_type=grievance_category,
             employee_id=employee_id,
-            department_id=department_id,
-            grievance_category=grievance_category,
-            description=description,
             context=context,
         )
 

@@ -17,7 +17,7 @@ _leave_service = LeaveService()
 
 
 @function_tool
-async def get_leave_balance(leave_type: str, employee_id: str, context: RunContext) -> str:
+async def execute_get_leave_balance(leave_type: str, employee_id: str, context: RunContext) -> str:
     """Look up an employee's remaining balance for a specific leave type
     (Casual Leave, Sick Leave, Maternity, Paternity, Comp Off, Bereavement, Short Leave, LWP).
     Always verify the caller first."""
@@ -31,7 +31,7 @@ async def get_leave_balance(leave_type: str, employee_id: str, context: RunConte
 
 
 @function_tool
-async def get_all_leave_balances(employee_id: str, context: RunContext) -> str:
+async def execute_get_all_leave_balances(employee_id: str, context: RunContext) -> str:
     """Look up the caller's complete leave balance summary across all leave types they are eligible for."""
     err = require_verified(context, employee_id)
     if err:
@@ -43,7 +43,7 @@ async def get_all_leave_balances(employee_id: str, context: RunContext) -> str:
 
 
 @function_tool
-async def check_leave_availability(
+async def execute_check_leave_availability(
     employee_id: str,
     leave_type: str,
     start_date: str,
@@ -63,7 +63,7 @@ async def check_leave_availability(
 
 
 @function_tool
-async def confirm_leave_request(
+async def execute_confirm_leave_request(
     employee_id: str,
     leave_type: str,
     start_date: str,
@@ -84,7 +84,7 @@ async def confirm_leave_request(
 
 
 @function_tool
-async def cancel_leave_request(
+async def execute_cancel_leave_request(
     employee_id: str,
     request_id: int = 0,
     context: RunContext = None,
@@ -102,7 +102,11 @@ async def cancel_leave_request(
 
 
 @function_tool
-async def get_leave_request_status(employee_id: str, context: RunContext) -> str:
+async def execute_get_leave_request_status(
+    employee_id: str,
+    context: RunContext = None,
+    request_id: int = 0,
+) -> str:
     """Check the approval status of the caller's latest leave request.
     Informs whether it has been approved by their manager, rejected (along with the manager's reason),
     or is still pending approval."""
@@ -116,7 +120,7 @@ async def get_leave_request_status(employee_id: str, context: RunContext) -> str
 
 
 @function_tool
-async def send_manager_leave_reminder(
+async def execute_send_manager_leave_reminder(
     employee_id: str,
     request_id: int = 0,
     context: RunContext = None,
@@ -130,3 +134,49 @@ async def send_manager_leave_reminder(
     req_id = request_id if request_id > 0 else None
     res = _leave_service.send_manager_reminder(emp_id, req_id)
     return res["message"]
+
+
+@function_tool
+async def execute_list_leave_types() -> str:
+    """List all leave types available in the policy, with a one-line
+    summary of each. Use this when a caller asks about leave in general,
+    or asks 'what leave can I apply for' without naming a specific type."""
+    res = _leave_service.list_leave_types()
+    return res["message"]
+
+
+@function_tool
+async def execute_get_pending_leave_request(employee_id: str, context: RunContext) -> str:
+    """Look up this employee's most recent leave request that is still
+    awaiting approval (status = 'submitted'). Use this at the start of
+    an OUTBOUND leave-verification call, right after the caller's
+    identity has been confirmed, to find out which request you're
+    calling about."""
+    err = require_verified(context, employee_id)
+    if err:
+        return err
+
+    emp_id = get_verified_id(context, employee_id)
+    res = _leave_service.get_pending_leave_request(emp_id)
+    return res["message"]
+
+
+@function_tool
+async def execute_record_leave_verification_reason(request_id: int, reason: str, context: RunContext) -> str:
+    """Save the reason an employee gives during an OUTBOUND leave
+    verification call, for the request ID returned by get_pending_leave_request."""
+    res = _leave_service.record_leave_verification_reason(request_id, reason)
+    return res["message"]
+
+
+# ── Backward compatibility aliases ────────────────────────────────────────────
+get_leave_balance = execute_get_leave_balance
+get_all_leave_balances = execute_get_all_leave_balances
+check_leave_availability = execute_check_leave_availability
+confirm_leave_request = execute_confirm_leave_request
+cancel_leave_request = execute_cancel_leave_request
+get_leave_request_status = execute_get_leave_request_status
+send_manager_leave_reminder = execute_send_manager_leave_reminder
+list_leave_types = execute_list_leave_types
+get_pending_leave_request = execute_get_pending_leave_request
+record_leave_verification_reason = execute_record_leave_verification_reason

@@ -14,7 +14,11 @@ Durable state written:  none (read-only goal)
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.employee_tools import (
+    execute_list_insurance_plans,
+    execute_get_insurance_info,
+    execute_get_employee_schemes,
+)
 
 
 class EmployeeBenefitsService(GoalService):
@@ -53,14 +57,14 @@ class EmployeeBenefitsService(GoalService):
     async def list_insurance_plans(self) -> str:
         """List all company-provided insurance plans with coverage amounts and premiums."""
         self.log_action("list_insurance_plans")
-        return await hr_tools.list_insurance_plans()
+        return await execute_list_insurance_plans()
 
     @function_tool
     async def get_insurance_info(self, context: RunContext, employee_id: str = "") -> str:
         """Look up the caller's active company insurance policy (policy number,
         plan name, coverage amount, valid-through date)."""
         self.log_action("get_insurance_info", employee_id=employee_id)
-        return await hr_tools.get_insurance_info(employee_id, context)
+        return await execute_get_insurance_info(employee_id, context)
 
     @function_tool
     async def get_employee_schemes(self, context: RunContext, employee_id: str = "") -> str:
@@ -68,7 +72,7 @@ class EmployeeBenefitsService(GoalService):
         enrolled in (e.g. ESI with insurance number, EPF / Provident Fund
         with UAN number, Gratuity eligibility)."""
         self.log_action("get_employee_schemes", employee_id=employee_id)
-        return await hr_tools.get_employee_schemes(employee_id, context)
+        return await execute_get_employee_schemes(employee_id, context)
 
 
 # Semantic alias matching the user's Goal / UI naming

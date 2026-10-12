@@ -15,7 +15,12 @@ Durable state written:  wfh_requests (DB) — survives across calls for status c
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.wfh_tools import (
+    execute_check_wfh_eligibility,
+    execute_get_wfh_quota_balance,
+    execute_apply_wfh_request,
+    execute_get_wfh_request_status,
+)
 
 
 class WorkFromHomeService(GoalService):
@@ -56,7 +61,7 @@ class WorkFromHomeService(GoalService):
     ) -> str:
         """Check whether the caller is eligible to work from home under company policy."""
         self.log_action("check_wfh_eligibility", employee_id=employee_id)
-        return await hr_tools.check_wfh_eligibility(
+        return await execute_check_wfh_eligibility(
             employee_id=employee_id,
             context=context,
         )
@@ -69,7 +74,7 @@ class WorkFromHomeService(GoalService):
     ) -> str:
         """Check how many WFH days the caller has remaining in their monthly quota."""
         self.log_action("get_wfh_quota_balance", employee_id=employee_id)
-        return await hr_tools.get_wfh_quota_balance(
+        return await execute_get_wfh_quota_balance(
             employee_id=employee_id,
             context=context,
         )
@@ -85,7 +90,7 @@ class WorkFromHomeService(GoalService):
     ) -> str:
         """Submit a request to work from home for specific dates."""
         self.log_action("apply_wfh_request", from_date=from_date, to_date=to_date)
-        return await hr_tools.apply_wfh_request(
+        return await execute_apply_wfh_request(
             employee_id=employee_id,
             from_date=from_date,
             to_date=to_date,
@@ -102,7 +107,7 @@ class WorkFromHomeService(GoalService):
     ) -> str:
         """Check the approval status of a submitted WFH request."""
         self.log_action("get_wfh_request_status", request_id=request_id)
-        return await hr_tools.get_wfh_request_status(
+        return await execute_get_wfh_request_status(
             request_id=request_id,
             employee_id=employee_id,
             context=context,

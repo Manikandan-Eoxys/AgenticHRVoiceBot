@@ -14,6 +14,7 @@ Supported Policies:
 import logging
 from datetime import date, datetime
 from database.db import get_db_connection
+from services.leave_service import resolve_leave_code
 
 logger = logging.getLogger("policy-service")
 
@@ -204,3 +205,31 @@ class PolicyService:
                 (limit,)
             )
         return rows
+
+    def get_leave_policy(self, leave_type: str) -> dict:
+        code = resolve_leave_code(leave_type)
+        if not code:
+            return {
+                "success": False,
+                "message": (
+                    f"'{leave_type}' isn't one of the leave types on file. The available "
+                    f"types are Casual Leave, Sick Leave, Maternity Leave, Paternity Leave, "
+                    f"Comp Off, Bereavement Leave, Short Leave, and Leave Without Pay."
+                )
+            }
+        try:
+            rows = self._query(
+                "SELECT leave_name, annual_range, applies_to, description FROM leave_policy WHERE leave_code = %s",
+                (code,),
+            )
+            if not rows:
+                return {"success": False, "message": f"No policy found for '{leave_type}'."}
+            r = rows[0]
+            scope = "" if r["applies_to"] == "All" else f" This applies to {r['applies_to'].lower()} employees only."
+            return {
+                "success": True,
+                "message": f"{r['leave_name']} ({r['annual_range']}): {r['description']}{scope}"
+            }
+        except Exception as e:
+            logger.error("Error getting leave policy: %s", e)
+            return {"success": False, "message": f"Sorry, something went wrong looking that up ({e})."}

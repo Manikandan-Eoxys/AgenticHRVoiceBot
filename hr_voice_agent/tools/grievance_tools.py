@@ -14,7 +14,7 @@ _grievance_service = GrievanceService()
 
 
 @function_tool
-async def get_code_of_conduct_policy(topic: str) -> str:
+async def execute_get_code_of_conduct_policy(topic: str) -> str:
     """Answer questions about workplace code of conduct:
     - Dress code rules (business casual Mon-Thu, smart casual Fri)
     - Company assets and laptop rules (authorized use, mandatory VPN)
@@ -25,7 +25,7 @@ async def get_code_of_conduct_policy(topic: str) -> str:
 
 
 @function_tool
-async def report_confidential_grievance(
+async def execute_report_confidential_grievance(
     complaint_details: str,
     issue_type: str,
     employee_id: str,
@@ -41,3 +41,8 @@ async def report_confidential_grievance(
     emp_id = get_verified_id(context, employee_id)
     res = _grievance_service.log_confidential_grievance(emp_id, complaint_details, issue_type)
     return res["message"]
+
+
+# ── Backward compatibility aliases ────────────────────────────────────────────
+get_code_of_conduct_policy = execute_get_code_of_conduct_policy
+report_confidential_grievance = execute_report_confidential_grievance

@@ -14,7 +14,11 @@ Durable state read:     leave_balances, leave_policy (DB)
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.leave_tools import (
+    execute_check_leave_availability,
+    execute_confirm_leave_request,
+    execute_cancel_leave_request,
+)
 
 
 class LeaveApplicationService(GoalService):
@@ -64,7 +68,7 @@ class LeaveApplicationService(GoalService):
         Does NOT submit the request and does NOT write anything to the
         database or send any email."""
         self.log_action("check_leave_availability", leave_type=leave_type, from_date=from_date, to_date=to_date)
-        return await hr_tools.check_leave_availability(
+        return await execute_check_leave_availability(
             employee_id=employee_id,
             leave_type=leave_type,
             start_date=from_date,
@@ -89,7 +93,7 @@ class LeaveApplicationService(GoalService):
         a successful check_leave_availability call. Inserts the request,
         updates used days, and notifies HR."""
         self.log_action("confirm_leave_request", leave_type=leave_type, from_date=from_date, to_date=to_date)
-        return await hr_tools.confirm_leave_request(
+        return await execute_confirm_leave_request(
             employee_id=employee_id,
             leave_type=leave_type,
             start_date=from_date,
@@ -109,7 +113,7 @@ class LeaveApplicationService(GoalService):
         """Cancel a pending or approved leave request previously submitted by the caller.
         If request_id is 0 or omitted, cancels the most recent request."""
         self.log_action("cancel_leave_request", request_id=request_id)
-        return await hr_tools.cancel_leave_request(
+        return await execute_cancel_leave_request(
             employee_id=employee_id,
             request_id=request_id,
             context=context,

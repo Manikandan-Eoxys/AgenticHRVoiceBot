@@ -15,7 +15,12 @@ Durable state written:  attendance_regularizations (DB) — must survive across 
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.attendance_tools import (
+    execute_check_attendance_status,
+    execute_get_late_marks,
+    execute_submit_attendance_regularization,
+    execute_get_regularization_status,
+)
 
 
 class AttendanceService(GoalService):
@@ -57,7 +62,7 @@ class AttendanceService(GoalService):
     ) -> str:
         """Check the attendance punch record (in time, out time, present/absent status) for a specific date (e.g. 'today', 'yesterday', or 'YYYY-MM-DD')."""
         self.log_action("check_attendance_status", date_str=date_str)
-        return await hr_tools.check_attendance_status(
+        return await execute_check_attendance_status(
             date_str=date_str,
             employee_id=employee_id,
             context=context,
@@ -72,7 +77,7 @@ class AttendanceService(GoalService):
     ) -> str:
         """Check how many times the caller arrived late this month (or in a specified month 1-12)."""
         self.log_action("get_late_marks", month=month)
-        return await hr_tools.get_late_marks(
+        return await execute_get_late_marks(
             month=month,
             employee_id=employee_id,
             context=context,
@@ -90,7 +95,7 @@ class AttendanceService(GoalService):
     ) -> str:
         """Submit a request to regularize a missed punch (e.g. forgot to punch IN/OUT or biometric machine glitch)."""
         self.log_action("submit_attendance_regularization", punch_date=punch_date, punch_type=punch_type)
-        return await hr_tools.submit_attendance_regularization(
+        return await execute_submit_attendance_regularization(
             employee_id=employee_id,
             punch_date=punch_date,
             punch_type=punch_type,
@@ -108,7 +113,7 @@ class AttendanceService(GoalService):
     ) -> str:
         """Check whether a submitted attendance regularization request was approved, rejected, or is pending."""
         self.log_action("get_regularization_status", regularization_id=regularization_id)
-        return await hr_tools.get_regularization_status(
+        return await execute_get_regularization_status(
             regularization_id=regularization_id,
             employee_id=employee_id,
             context=context,

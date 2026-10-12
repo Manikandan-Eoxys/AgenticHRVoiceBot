@@ -15,7 +15,7 @@ _reminder_service = ReminderService()
 
 
 @function_tool
-async def check_pending_policy_acknowledgements(employee_id: str, context: RunContext) -> str:
+async def execute_check_pending_policy_acknowledgements(employee_id: str, context: RunContext) -> str:
     """Check if there are any mandatory company HR policies that the employee is required
     to acknowledge before an upcoming deadline (e.g. newly released Work From Home policy)."""
     err = require_verified(context, employee_id)
@@ -28,7 +28,7 @@ async def check_pending_policy_acknowledgements(employee_id: str, context: RunCo
 
 
 @function_tool
-async def acknowledge_hr_policy(
+async def execute_acknowledge_hr_policy(
     policy_name: str,
     employee_id: str,
     context: RunContext,
@@ -49,7 +49,7 @@ async def acknowledge_hr_policy(
 
 
 @function_tool
-async def schedule_employee_reminder(
+async def execute_schedule_employee_reminder(
     reminder_topic: str,
     scheduled_time: str,
     employee_id: str,
@@ -72,7 +72,7 @@ async def schedule_employee_reminder(
 
 
 @function_tool
-async def check_my_scheduled_reminders(employee_id: str, context: RunContext) -> str:
+async def execute_check_my_scheduled_reminders(employee_id: str, context: RunContext) -> str:
     """Check what messages or reminders are currently scheduled for the caller
     (such as form submission reminders or salary slip download reminders)."""
     err = require_verified(context, employee_id)
@@ -85,7 +85,7 @@ async def check_my_scheduled_reminders(employee_id: str, context: RunContext) ->
 
 
 @function_tool
-async def acknowledge_scheduled_reminder(
+async def execute_acknowledge_scheduled_reminder(
     reminder_topic_or_id: str,
     response_text: str,
     employee_id: str,
@@ -105,3 +105,11 @@ async def acknowledge_scheduled_reminder(
         response_text=response_text or "Yes, completed",
     )
     return res["message"]
+
+
+# ── Backward compatibility aliases ────────────────────────────────────────────
+check_pending_policy_acknowledgements = execute_check_pending_policy_acknowledgements
+acknowledge_hr_policy = execute_acknowledge_hr_policy
+schedule_employee_reminder = execute_schedule_employee_reminder
+check_my_scheduled_reminders = execute_check_my_scheduled_reminders
+acknowledge_scheduled_reminder = execute_acknowledge_scheduled_reminder

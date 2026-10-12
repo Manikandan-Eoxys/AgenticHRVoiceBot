@@ -17,7 +17,11 @@ from typing import Any
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.employee_tools import (
+    execute_confirm_employee_identity,
+    execute_get_employee_by_id,
+    execute_list_department_employees,
+)
 
 logger = logging.getLogger("goals.g01_identity")
 
@@ -63,7 +67,7 @@ class IdentityVerificationService(GoalService):
         this call, even if the caller later mentions a different ID. Must be
         called before any leave, balance, or insurance tool."""
         self.log_action("confirm_employee_identity", employee_id=employee_id)
-        return await hr_tools.confirm_employee_identity(employee_id, context)
+        return await execute_confirm_employee_identity(employee_id, context)
 
     @function_tool
     async def get_employee_by_id(self, employee_id: str) -> str:
@@ -75,7 +79,7 @@ class IdentityVerificationService(GoalService):
         is that correct?'). Also returns department, designation, and
         status for your own context."""
         self.log_action("get_employee_by_id", employee_id=employee_id)
-        return await hr_tools.get_employee_by_id(employee_id)
+        return await execute_get_employee_by_id(employee_id)
 
     @function_tool
     async def collect_employee_id_via_keypad(self, context: RunContext) -> str:
@@ -107,5 +111,5 @@ class IdentityVerificationService(GoalService):
     async def list_department_employees(self, department_name: str) -> str:
         """List employees in a given department."""
         self.log_action("list_department_employees", department_name=department_name)
-        return await hr_tools.list_department_employees(department_name)
+        return await execute_list_department_employees(department_name)
 

@@ -18,7 +18,12 @@ raise_hr_ticket (g08_hr_policy). This goal only handles read-only inquiries.
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.payroll_tools import (
+    execute_get_salary_credit_date,
+    execute_get_basic_salary_info,
+    execute_get_salary_deductions_info,
+    execute_check_payslip_status,
+)
 
 
 class PayrollService(GoalService):
@@ -57,7 +62,7 @@ class PayrollService(GoalService):
     async def get_salary_credit_date(self) -> str:
         """Tell the caller the expected salary credit date for the current month."""
         self.log_action("get_salary_credit_date")
-        return await hr_tools.get_salary_credit_date()
+        return await execute_get_salary_credit_date()
 
     @function_tool
     async def get_basic_salary_info(
@@ -67,7 +72,7 @@ class PayrollService(GoalService):
     ) -> str:
         """Look up the caller's current salary structure details."""
         self.log_action("get_basic_salary_info", employee_id=employee_id)
-        return await hr_tools.get_basic_salary_info(
+        return await execute_get_basic_salary_info(
             employee_id=employee_id,
             context=context,
         )
@@ -80,7 +85,7 @@ class PayrollService(GoalService):
     ) -> str:
         """Explain typical payroll deductions (PF, professional tax, income tax / TDS, leave without pay)."""
         self.log_action("get_salary_deductions_info", employee_id=employee_id)
-        return await hr_tools.get_salary_deductions_info(
+        return await execute_get_salary_deductions_info(
             employee_id=employee_id,
             context=context,
         )
@@ -94,7 +99,7 @@ class PayrollService(GoalService):
     ) -> str:
         """Check whether the payslip for a given month is generated and available for download."""
         self.log_action("check_payslip_status", month=month)
-        return await hr_tools.check_payslip_status(
+        return await execute_check_payslip_status(
             month=month,
             employee_id=employee_id,
             context=context,

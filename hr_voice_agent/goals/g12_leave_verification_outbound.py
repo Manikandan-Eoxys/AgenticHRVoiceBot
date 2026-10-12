@@ -21,7 +21,10 @@ This goal's tools must survive across call boundaries by design:
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.leave_tools import (
+    execute_get_pending_leave_request,
+    execute_record_leave_verification_reason,
+)
 
 
 class LeaveVerificationOutboundService(GoalService):
@@ -52,7 +55,7 @@ class LeaveVerificationOutboundService(GoalService):
     ) -> str:
         """Retrieve details of any currently pending leave requests for the employee to verify during an outbound call."""
         self.log_action("get_pending_leave_request", employee_id=employee_id)
-        return await hr_tools.get_pending_leave_request(
+        return await execute_get_pending_leave_request(
             employee_id=employee_id,
             context=context,
         )
@@ -66,7 +69,7 @@ class LeaveVerificationOutboundService(GoalService):
     ) -> str:
         """Record the employee's verbal explanation for their pending leave request so the approving manager has full context."""
         self.log_action("record_leave_verification_reason", request_id=request_id)
-        return await hr_tools.record_leave_verification_reason(
+        return await execute_record_leave_verification_reason(
             request_id=request_id,
             reason=reason,
             context=context,

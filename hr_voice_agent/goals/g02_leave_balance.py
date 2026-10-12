@@ -13,7 +13,11 @@ Durable state read:     leave_balances, leave_policy tables (DB)
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.leave_tools import (
+    execute_get_leave_balance,
+    execute_get_all_leave_balances,
+    execute_list_leave_types,
+)
 
 
 class LeaveBalanceService(GoalService):
@@ -48,7 +52,7 @@ class LeaveBalanceService(GoalService):
         the caller. leave_type can be casual leave, sick leave, maternity leave,
         paternity leave, comp off, bereavement leave, short leave, or leave without pay."""
         self.log_action("get_leave_balance", leave_type=leave_type, employee_id=employee_id)
-        return await hr_tools.get_leave_balance(employee_id, leave_type, context)
+        return await execute_get_leave_balance(leave_type=leave_type, employee_id=employee_id, context=context)
 
     @function_tool
     async def get_all_leave_balances(self, context: RunContext, employee_id: str = "") -> str:
@@ -56,12 +60,12 @@ class LeaveBalanceService(GoalService):
         types at once. Use this when the caller asks generally 'how many leaves
         do I have left?' or wants a full summary."""
         self.log_action("get_all_leave_balances", employee_id=employee_id)
-        return await hr_tools.get_all_leave_balances(employee_id, context)
+        return await execute_get_all_leave_balances(employee_id=employee_id, context=context)
 
     @function_tool
     async def list_leave_types(self) -> str:
         """List all valid leave types in the company policy and how many
         annual days each allows."""
         self.log_action("list_leave_types")
-        return await hr_tools.list_leave_types()
+        return await execute_list_leave_types()
 

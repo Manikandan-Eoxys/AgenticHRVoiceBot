@@ -16,7 +16,7 @@ _policy_service = PolicyService()
 
 
 @function_tool
-async def get_hr_policy(policy_name: str) -> str:
+async def execute_get_hr_policy(policy_name: str) -> str:
     """Look up official details on one of the 5 company HR policies:
     1. Leave & Holiday Policy (entitlements, carry-forward, types of leave)
     2. Attendance & Regularization Policy (working hours, grace period, 3 late marks rule)
@@ -31,7 +31,7 @@ async def get_hr_policy(policy_name: str) -> str:
 
 
 @function_tool
-async def check_company_holiday(date_or_day: str) -> str:
+async def execute_check_company_holiday(date_or_day: str) -> str:
     """Check if a specific calendar date (e.g. '2026-10-02'), relative day ('tomorrow', 'today'),
     weekday ('Monday', 'Friday'), or holiday name ('Diwali', 'Gandhi Jayanti') is a company holiday."""
     res = _policy_service.check_is_holiday(date_or_day)
@@ -39,10 +39,27 @@ async def check_company_holiday(date_or_day: str) -> str:
 
 
 @function_tool
-async def list_upcoming_company_holidays() -> str:
+async def execute_list_upcoming_company_holidays() -> str:
     """List the upcoming declared company holidays for the current year."""
     holidays = _policy_service.list_upcoming_holidays(limit=5)
     if not holidays:
         return "No upcoming holidays found on the company calendar."
     lines = [f"{h['holiday_date']} ({h['holiday_day']}): {h['holiday_name']}" for h in holidays]
     return "Upcoming company holidays: " + "; ".join(lines)
+
+
+@function_tool
+async def execute_get_leave_policy(leave_type: str) -> str:
+    """Get the full written policy description for one leave type, e.g.
+    Casual Leave, Sick Leave, Maternity, Paternity, Comp Off, Bereavement,
+    Short Leave, or LWP. Use this when the caller asks how a specific
+    leave type works, its eligibility, or how many days it covers."""
+    res = _policy_service.get_leave_policy(leave_type)
+    return res["message"]
+
+
+# ── Backward compatibility aliases ────────────────────────────────────────────
+get_hr_policy = execute_get_hr_policy
+check_company_holiday = execute_check_company_holiday
+list_upcoming_company_holidays = execute_list_upcoming_company_holidays
+get_leave_policy = execute_get_leave_policy

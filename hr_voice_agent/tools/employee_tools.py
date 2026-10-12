@@ -12,6 +12,8 @@ security/auth_service.py performs after this returns.
  
 from datetime import datetime
 from database.db import get_db_connection
+from livekit.agents import function_tool, RunContext
+from tools.tool_helpers import clean_id, require_verified
  
  
 class EmployeeTools:
@@ -337,4 +339,230 @@ class EmployeeTools:
         conn.close()
  
         return count > 0
+
+
+# ===========================================================================
+# LiveKit Agent Function Tools (Identity, Directory & Benefits)
+# ===========================================================================
+
+_employee_tools_impl = EmployeeTools()
+
+
+@function_tool
+async def execute_confirm_employee_identity(employee_id: str, context: RunContext) -> str:
+    """Call this immediately after the caller says yes to the identity
+    verification question (e.g. 'This is employee 1001, Ravikala, is that
+    correct?' -> caller says yes). Locks this call to that employee ID —
+    every other tool (leave balance, leave requests, insurance info,
+    schemes) will refuse to act on any other employee ID for the rest of
+    this call, even if the caller later mentions a different ID. Must be
+    called before any leave, balance, or insurance tool."""
+    emp_id = clean_id(employee_id)
+    context.session.verified_employee_id = emp_id
+    return f"Identity locked to employee {emp_id} for this call."
+
+
+@function_tool
+async def execute_get_employee_by_id(employee_id: str) -> str:
+    """Look up an employee by their employee ID (e.g. 1001 through 1015).
+    Always call this first when a caller starts a conversation or gives
+    an ID, before any other lookup. Returns a verification line — read
+    the name back to the caller and get an explicit yes before treating
+    them as that employee (e.g. 'This is employee ID 1001, Ravikala —
+    is that correct?'). Also returns department, designation, and
+    status for your own context."""
+    emp_id = clean_id(employee_id)
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """SELECT e.employee_id, e.full_name, e.status,
+                      des.designation_name, d.department_name
+               FROM employees e
+               JOIN designations des ON des.designation_id = e.designation_id
+               JOIN departments d ON d.department_id = e.department_id
+               WHERE e.employee_id = %s
+               LIMIT 1""",
+            (emp_id,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return f"Sorry, something went wrong looking that up ({e})."
+
+    if not rows:
+        return f"No employee found with ID {employee_id}. Employee IDs run from 1001 to 1015. Could you confirm the ID?"
+    r = rows[0]
+    return (
+        f"VERIFY WITH CALLER: This is employee ID {r['employee_id']}, {r['full_name']} — "
+        f"is that correct? ({r['designation_name']} in {r['department_name']}, status: {r['status']}.) "
+        f"Do not proceed with any other request until the caller confirms this is them."
+    )
+
+
+def get_employee_contact(employee_id: str) -> dict | None:
+    """Plain helper (NOT a function_tool — not exposed to the LLM).
+    Used by the outbound-calling script to look up an employee's name
+    and phone number before dialing them."""
+    emp_id = clean_id(employee_id)
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            "SELECT employee_id, full_name, phone_number FROM employees WHERE employee_id = %s LIMIT 1",
+            (emp_id,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception:
+        return None
+
+    if not rows or not rows[0].get("phone_number"):
+        return None
+    r = rows[0]
+    phone = r["phone_number"].strip()
+    if not phone.startswith("+"):
+        phone = "+91" + phone.lstrip("0")
+    return {"employee_id": r["employee_id"], "full_name": r["full_name"], "phone_number": phone}
+
+
+@function_tool
+async def execute_list_department_employees(department_name: str) -> str:
+    """List everyone in a given department, by department name."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """SELECT e.full_name, des.designation_name
+               FROM employees e
+               JOIN departments d ON d.department_id = e.department_id
+               JOIN designations des ON des.designation_id = e.designation_id
+               WHERE d.department_name LIKE %s
+               ORDER BY e.full_name""",
+            (f"%{department_name}%",),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return f"Sorry, something went wrong looking that up ({e})."
+
+    if not rows:
+        return f"No department found matching '{department_name}'."
+    return "\n".join(f"{r['full_name']} — {r['designation_name']}" for r in rows)
+
+
+@function_tool
+async def execute_list_insurance_plans() -> str:
+    """List the office health insurance plans the company offers, with
+    coverage amounts."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT plan_name, sum_insured, description FROM insurance_plans ORDER BY plan_code")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return f"Sorry, something went wrong looking that up ({e})."
+
+    return "\n".join(
+        f"{r['plan_name']} — {r['description']} (sum insured Rs.{r['sum_insured']:,.0f})"
+        for r in rows
+    )
+
+
+@function_tool
+async def execute_get_insurance_info(employee_id: str, context: RunContext) -> str:
+    """Check an employee's office health insurance status."""
+    guard = require_verified(context, employee_id)
+    if guard:
+        return guard
+    emp_id = clean_id(employee_id)
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT plan_code, plan_name, sum_insured FROM insurance_plans ORDER BY plan_code")
+        plan_rows = cur.fetchall()
+
+        cur.execute(
+            """SELECT e.full_name, ip.plan_name, ei.applied_date, ei.claimed, ei.claimed_date
+               FROM employee_insurance ei
+               JOIN employees e ON e.employee_id = ei.employee_id
+               JOIN insurance_plans ip ON ip.plan_code = ei.plan_code
+               WHERE ei.employee_id = %s
+               ORDER BY ip.plan_code""",
+            (emp_id,),
+        )
+        emp_rows = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return f"Sorry, something went wrong looking that up ({e})."
+
+    plan_list = ", ".join(f"{p['plan_name']} (up to Rs.{p['sum_insured']:,.0f})" for p in plan_rows)
+
+    if not emp_rows:
+        return (
+            f"There are {len(plan_rows)} office health insurance plans available: {plan_list}. "
+            f"Employee {employee_id} has not applied for any of them yet."
+        )
+
+    name = emp_rows[0]["full_name"]
+    applied = [r["plan_name"] for r in emp_rows]
+    claimed = [r["plan_name"] for r in emp_rows if r["claimed"]]
+
+    applied_str = ", ".join(applied)
+    claimed_str = ", ".join(claimed) if claimed else "none of them yet"
+
+    return (
+        f"There are {len(plan_rows)} office health insurance plans available: {plan_list}. "
+        f"Of these, {name} has applied for {len(applied)}: {applied_str}. "
+        f"{name} has claimed {claimed_str}."
+    )
+
+
+@function_tool
+async def execute_get_employee_schemes(employee_id: str, context: RunContext) -> str:
+    """List the statutory or company schemes an employee is enrolled in,
+    such as EPF, Maternity Benefit, or Paternity Benefit."""
+    guard = require_verified(context, employee_id)
+    if guard:
+        return guard
+    emp_id = clean_id(employee_id)
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """SELECT s.scheme_name, s.category, es.enrolled_date
+               FROM employee_schemes es
+               JOIN employees e ON e.employee_id = es.employee_id
+               JOIN schemes s ON s.scheme_id = es.scheme_id
+               WHERE e.employee_id = %s
+               ORDER BY s.scheme_name""",
+            (emp_id,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        return f"Sorry, something went wrong looking that up ({e})."
+
+    if not rows:
+        return f"No scheme enrollments found for employee {employee_id}. Please confirm the ID."
+    return "\n".join(
+        f"{r['scheme_name']} ({r['category']}), enrolled {r['enrolled_date']}"
+        for r in rows
+    )
+
+
+# ── Backward compatibility aliases ────────────────────────────────────────────
+confirm_employee_identity = execute_confirm_employee_identity
+get_employee_by_id = execute_get_employee_by_id
+list_department_employees = execute_list_department_employees
+list_insurance_plans = execute_list_insurance_plans
+get_insurance_info = execute_get_insurance_info
+get_employee_schemes = execute_get_employee_schemes
  

@@ -13,7 +13,10 @@ Durable state written:  none (reminder is a push notification, no DB write)
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.leave_tools import (
+    execute_get_leave_request_status,
+    execute_send_manager_leave_reminder,
+)
 
 
 class LeaveStatusService(GoalService):
@@ -54,7 +57,7 @@ class LeaveStatusService(GoalService):
         """Check the approval status of a submitted leave request. If request_id
         is 0 or omitted, looks up the caller's most recent request."""
         self.log_action("get_leave_request_status", request_id=request_id)
-        return await hr_tools.get_leave_request_status(
+        return await execute_get_leave_request_status(
             employee_id=employee_id,
             context=context,
         )
@@ -68,7 +71,7 @@ class LeaveStatusService(GoalService):
     ) -> str:
         """Send a gentle notification reminder to the manager asking them to review a pending leave request."""
         self.log_action("send_manager_leave_reminder", request_id=request_id)
-        return await hr_tools.send_manager_leave_reminder(
+        return await execute_send_manager_leave_reminder(
             employee_id=employee_id,
             request_id=request_id,
             context=context,

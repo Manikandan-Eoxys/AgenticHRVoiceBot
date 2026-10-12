@@ -14,7 +14,10 @@ import urllib.request
 import atexit
 import asyncio
 from enum import Enum, auto
-from typing import Dict, Any, Optional, Tuple, Callable
+from typing import Dict, Any, Optional, Tuple, Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from goals.base import GoalService
 
 from livekit.agents import (
     AgentSession,
@@ -32,26 +35,6 @@ from config import (
 from integrations.sync_scheduler import start_scheduler, stop_scheduler
 from controllers.global_monitor_fsm import GlobalMonitorFSM
 from controllers.agentToolsController import AgentToolsController
-from goals import (
-    GoalService,
-    ALL_GOAL_CLASSES,
-    INBOUND_GOALS,
-    OUTBOUND_LEAVE_VERIFICATION_GOALS,
-    OUTBOUND_REMINDER_GOALS,
-    IdentityVerificationService,
-    LeaveBalanceService,
-    LeaveApplicationService,
-    LeaveStatusService,
-    AttendanceService,
-    WorkFromHomeService,
-    PayrollService,
-    HRPolicyService,
-    CalendarService,
-    RemindersService,
-    EmployeeBenefitsService,
-    LeaveVerificationOutboundService,
-    CoordinatorTransferService,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -146,14 +129,10 @@ class VoiceController:
         self.collector: Any = collector
         self.call_metadata: dict = call_metadata or {}
 
-        # 1. Tools Controller manages strictly Third-Party & DB tools
-        self.tools_controller: AgentToolsController = AgentToolsController()
-
-        # 2. Voice Controller manages all Goals and GoalServices
-        self.goal_classes: list[type[GoalService]] = goal_classes or ALL_GOAL_CLASSES
-        self._services: dict[str, GoalService] = {}
-        self._init_goals(
-            goal_classes=self.goal_classes,
+        # Tools Controller manages all Domain Business Logic (Goal Services), DB tools & 3rd-party integrations
+        self.tools_controller: AgentToolsController = AgentToolsController(
+            goal_classes=goal_classes,
+            call_type=self.call_type,
             job_ctx=self.job_ctx,
             collector=self.collector,
             call_metadata=self.call_metadata,
@@ -186,33 +165,6 @@ class VoiceController:
         logger.info(f"➡️ VC Transition [{tag}]: {old.name} → {new_state.name}")
         self._report_to_global_fsm()
 
-    def _instantiate_goal(
-        self,
-        goal_cls: type[GoalService],
-        job_ctx: Any = None,
-        collector: Any = None,
-        call_metadata: dict | None = None,
-    ) -> GoalService:
-        """Instantiate a GoalService with call runtime context."""
-        if goal_cls is IdentityVerificationService:
-            return goal_cls(collector=collector)
-        if goal_cls is CoordinatorTransferService:
-            return goal_cls(job_ctx=job_ctx)
-        return goal_cls()
-
-    def _init_goals(
-        self,
-        goal_classes: list[type[GoalService]],
-        job_ctx: Any = None,
-        collector: Any = None,
-        call_metadata: dict | None = None,
-    ) -> None:
-        """Initializes the GoalService map for this session."""
-        self._services = {
-            svc.meta.id: svc
-            for cls in goal_classes
-            for svc in [self._instantiate_goal(cls, job_ctx=job_ctx, collector=collector, call_metadata=call_metadata)]
-        }
 
     def ensure_fsm_running(self) -> None:
         """Lazily starts GlobalMonitorFSM task and VoiceController 12-state FSM loop."""
@@ -257,38 +209,23 @@ class VoiceController:
     ) -> None:
         """
         Configures this VoiceController instance for an active call session,
-        initializing goals, services, and tools for the specified call type.
-        This allows reusing a single VoiceController instance across the application.
+        delegating all domain goal services and tool setup to tools_controller.
         """
-        mapping = {
-            "inbound": INBOUND_GOALS,
-            "leave_verification": OUTBOUND_LEAVE_VERIFICATION_GOALS,
-            "scheduled_reminder": OUTBOUND_REMINDER_GOALS,
-            "policy_acknowledgement": OUTBOUND_REMINDER_GOALS,
-        }
         self.call_type = call_type or "inbound"
         self.job_ctx = job_ctx
         self.collector = collector
         self.call_metadata = call_metadata or {}
-        self.goal_classes = mapping.get(self.call_type, INBOUND_GOALS)
 
-        self._init_goals(
-            goal_classes=self.goal_classes,
+        self.tools_controller.setup_call(
+            call_type=self.call_type,
             job_ctx=job_ctx,
             collector=collector,
             call_metadata=self.call_metadata,
         )
 
-        try:
-            from controllers.agentConfigController import AgentConfigController
-            cfg = AgentConfigController.instance().get_agent_config()
-            self.apply_config(cfg)
-        except Exception as err:
-            logger.debug(f"[VoiceController] Defaulting to code goal defaults: {err}")
-
         logger.info(
             f"🎯 [VoiceController] Configured for call_type='{self.call_type}' "
-            f"with {len(self.active_goal_ids)} active goals."
+            f"with {len(self.active_goal_ids)} active goals via AgentToolsController."
         )
 
     def attach_session(
@@ -333,9 +270,33 @@ class VoiceController:
         logger.info(f"🎙️ [VoiceController] LiveKit AgentSession attached to FSM [room='{self._room_name}'].")
 
         # ── Agent sub-state changes (LISTENING / THINKING / SPEAKING) ────────────
+        # @session.on("agent_state_changed")
+        # def _on_agent_state_changed(ev):
+        #     self.on_agent_substate_changed(getattr(ev, "new_state", str(ev)))
+        # ── Agent sub-state changes (LISTENING / THINKING / SPEAKING) ────────────
         @session.on("agent_state_changed")
         def _on_agent_state_changed(ev):
-            self.on_agent_substate_changed(getattr(ev, "new_state", str(ev)))
+            # Ignore events after the call has ended
+            if (
+                self._active_session is None
+                or self.current_state in (ControllerState.ENDING, ControllerState.ERROR)
+            ):
+                return
+
+            substate = getattr(ev, "new_state", str(ev))
+            sub_upper = str(substate).upper()
+
+            target_map = {
+                "LISTENING": ControllerState.LISTENING,       # STT phase
+                "THINKING": ControllerState.THINKING,         # LLM / tool execution phase
+                "SPEAKING": ControllerState.SPEAKING,         # TTS phase
+                "INITIALIZING": ControllerState.SESSION_ACTIVE,  # Session warmup
+            }
+
+            target = target_map.get(sub_upper, ControllerState.SESSION_ACTIVE)
+
+            # Update FSM state, reset watchdog timer, and log transition
+            self._set_state(target)
 
         # ── Session close / error ─────────────────────────────────────────────────
         @session.on("close")
@@ -452,225 +413,129 @@ class VoiceController:
         return GlobalMonitorFSM.instance()
 
     # ------------------------------------------------------------------
-    # Goal & Service Introspection and Accessors
+    # Goal & Service Introspection (Delegated to AgentToolsController)
     # ------------------------------------------------------------------
     @property
-    def services(self) -> dict[str, GoalService]:
+    def services(self) -> dict[str, Any]:
         """All GoalService instances keyed by goal ID."""
-        return self._services
+        return self.tools_controller.services
 
     @property
     def goal_ids(self) -> list[str]:
         """All registered goal IDs."""
-        return list(self._services.keys())
+        return self.tools_controller.goal_ids
 
     @property
     def active_goal_ids(self) -> list[str]:
         """IDs of currently enabled goals."""
-        return [gid for gid, svc in self._services.items() if svc.is_enabled()]
+        return self.tools_controller.active_goal_ids
 
-    def get_service(self, goal_id: str) -> Optional[GoalService]:
+    def get_service(self, goal_id: str) -> Optional[Any]:
         """Retrieve a GoalService instance by goal ID (e.g. 'g01_identity')."""
-        return self._services.get(goal_id)
+        return self.tools_controller.get_service(goal_id)
 
-    def get_goal(self, goal_id: str) -> Optional[GoalService]:
+    def get_goal(self, goal_id: str) -> Optional[Any]:
         """Alias for get_service."""
-        return self.get_service(goal_id)
+        return self.tools_controller.get_goal(goal_id)
 
     @property
-    def identity_service(self) -> Optional[IdentityVerificationService]:
-        svc = self._services.get("g01_identity")
-        return svc if isinstance(svc, IdentityVerificationService) else None
+    def identity_service(self) -> Optional[Any]:
+        return self.tools_controller.identity_service
 
     @property
-    def leave_balance_service(self) -> Optional[LeaveBalanceService]:
-        svc = self._services.get("g02_leave_balance")
-        return svc if isinstance(svc, LeaveBalanceService) else None
+    def leave_balance_service(self) -> Optional[Any]:
+        return self.tools_controller.leave_balance_service
 
     @property
-    def leave_application_service(self) -> Optional[LeaveApplicationService]:
-        svc = self._services.get("g03_leave_application")
-        return svc if isinstance(svc, LeaveApplicationService) else None
+    def leave_application_service(self) -> Optional[Any]:
+        return self.tools_controller.leave_application_service
 
     @property
-    def leave_status_service(self) -> Optional[LeaveStatusService]:
-        svc = self._services.get("g04_leave_status")
-        return svc if isinstance(svc, LeaveStatusService) else None
+    def leave_status_service(self) -> Optional[Any]:
+        return self.tools_controller.leave_status_service
 
     @property
-    def attendance_service(self) -> Optional[AttendanceService]:
-        svc = self._services.get("g05_attendance")
-        return svc if isinstance(svc, AttendanceService) else None
+    def attendance_service(self) -> Optional[Any]:
+        return self.tools_controller.attendance_service
 
     @property
-    def wfh_service(self) -> Optional[WorkFromHomeService]:
-        svc = self._services.get("g06_wfh")
-        return svc if isinstance(svc, WorkFromHomeService) else None
+    def wfh_service(self) -> Optional[Any]:
+        return self.tools_controller.wfh_service
 
     @property
-    def payroll_service(self) -> Optional[PayrollService]:
-        svc = self._services.get("g07_payroll")
-        return svc if isinstance(svc, PayrollService) else None
+    def payroll_service(self) -> Optional[Any]:
+        return self.tools_controller.payroll_service
 
     @property
-    def hr_policy_service(self) -> Optional[HRPolicyService]:
-        svc = self._services.get("g08_hr_policy")
-        return svc if isinstance(svc, HRPolicyService) else None
+    def hr_policy_service(self) -> Optional[Any]:
+        return self.tools_controller.hr_policy_service
 
     @property
-    def calendar_service(self) -> Optional[CalendarService]:
-        svc = self._services.get("g09_calendar")
-        return svc if isinstance(svc, CalendarService) else None
+    def calendar_service(self) -> Optional[Any]:
+        return self.tools_controller.calendar_service
 
     @property
-    def reminders_service(self) -> Optional[RemindersService]:
-        svc = self._services.get("g10_reminders")
-        return svc if isinstance(svc, RemindersService) else None
+    def reminders_service(self) -> Optional[Any]:
+        return self.tools_controller.reminders_service
 
     @property
-    def insurance_service(self) -> Optional[EmployeeBenefitsService]:
-        svc = self._services.get("g11_benefits")
-        return svc if isinstance(svc, EmployeeBenefitsService) else None
+    def insurance_service(self) -> Optional[Any]:
+        return self.tools_controller.insurance_service
 
     @property
-    def coordinator_service(self) -> Optional[CoordinatorTransferService]:
-        svc = self._services.get("g13_coordinator")
-        return svc if isinstance(svc, CoordinatorTransferService) else None
+    def coordinator_service(self) -> Optional[Any]:
+        return self.tools_controller.coordinator_service
 
     @property
-    def outbound_verification_service(self) -> Optional[LeaveVerificationOutboundService]:
-        svc = self._services.get("g12_leave_verification_outbound")
-        return svc if isinstance(svc, LeaveVerificationOutboundService) else None
+    def outbound_verification_service(self) -> Optional[Any]:
+        return self.tools_controller.outbound_verification_service
 
-    # ------------------------------------------------------------------
-    # Goal Management & Tool Compilation
-    # ------------------------------------------------------------------
     def disable_goal(self, goal_id: str) -> None:
         """Disables all tools for the specified goal at runtime."""
-        svc = self._services.get(goal_id)
-        if svc:
-            svc.disable()
-            logger.info(f"🔕 [AgentVoiceController] Goal '{goal_id}' disabled.")
-        else:
-            logger.warning(f"⚠️ [AgentVoiceController] Cannot disable unknown goal '{goal_id}'.")
+        self.tools_controller.disable_goal(goal_id)
 
     def enable_goal(self, goal_id: str) -> None:
         """Re-enables a previously disabled goal."""
-        svc = self._services.get(goal_id)
-        if svc:
-            svc.enable()
-            logger.info(f"🔔 [AgentVoiceController] Goal '{goal_id}' enabled.")
-        else:
-            logger.warning(f"⚠️ [AgentVoiceController] Cannot enable unknown goal '{goal_id}'.")
+        self.tools_controller.enable_goal(goal_id)
 
     def is_goal_enabled(self, goal_id: str) -> bool:
         """Checks if a specific goal is currently active/enabled."""
-        svc = self._services.get(goal_id)
-        return bool(svc and svc.is_enabled())
+        return self.tools_controller.is_goal_enabled(goal_id)
 
-    def get_goal_tools(self) -> list[Callable]:
-        """Returns flat list of all @function_tool callables from active GoalServices."""
-        tools: list[Callable] = []
-        for svc in self._services.values():
-            if svc.is_enabled():
-                tools.extend(svc.tools())
-        return tools
+    def session_goal_tools(self) -> list[Callable]:
+        """Returns all @function_tool callables active in the current call session (from enabled GoalServices)."""
+        return self.tools_controller.get_goal_tools()
 
-    def get_tools_for_goals(self, *goal_ids: str) -> list[Callable]:
-        """Returns tools only from the specified goal IDs."""
-        tools: list[Callable] = []
-        for gid in goal_ids:
-            svc = self._services.get(gid)
-            if svc and svc.is_enabled():
-                tools.extend(svc.tools())
-        return tools
+    def session_tools_for_goals(self, *goal_ids: str) -> list[Callable]:
+        """Returns tools from the specified goal IDs for the current call session."""
+        return self.tools_controller.get_tools_for_goals(*goal_ids)
 
-    def get_all_tools(self) -> list[Callable]:
+    def session_all_tools(self) -> list[Callable]:
         """
-        Returns all tools for the voice agent session:
-        Combines GoalService action tools + Third-Party & DB tools.
-        Guarantees unique function names to prevent LiveKit duplicate tool registration errors.
+        Returns the full deduplicated tool list for the current call session via AgentToolsController.
+        Combines GoalService action tools + Third-Party & DB tools with unique names.
         """
-        raw_tools: list[Callable] = self.get_goal_tools()
-        if self.tools_controller:
-            raw_tools.extend(self.tools_controller.get_all_tools())
+        return self.tools_controller.get_all_tools()
 
-        seen_names = set()
-        unique_tools = []
-        for t in raw_tools:
-            name = getattr(getattr(t, "info", None), "name", None) or getattr(t, "__name__", None) or str(t)
-            if name not in seen_names:
-                seen_names.add(name)
-                unique_tools.append(t)
-            else:
-                logger.warning(f"[VoiceController] Skipping duplicate tool '{name}'")
-        return unique_tools
+    def session_tool_names(self) -> list[str]:
+        """Returns sorted list of all active tool function names for the current call session."""
+        return self.tools_controller.get_tool_names()
 
-    def get_tool_names(self) -> list[str]:
-        """Returns sorted list of all enabled tool function names across goals and tools controller."""
-        names = []
-        for svc in self._services.values():
-            if svc.is_enabled():
-                names.extend(svc.tool_names())
-        if self.tools_controller:
-            for t in self.tools_controller.get_all_tools():
-                names.append(getattr(t, "__name__", str(t)))
-        return sorted(list(set(names)))
+    def session_tool_count(self) -> int:
+        """Returns total count of active tools for the current call session."""
+        return self.tools_controller.get_tool_count()
 
-    def tool_count(self) -> int:
-        """Returns total count of enabled tools."""
-        return len(self.get_all_tools())
+    def session_goal_summary(self) -> list[dict]:
+        """Returns goal status summary for the current call session (for builder UI / monitoring)."""
+        return self.tools_controller.get_goal_summary()
 
-    def goal_summary(self) -> list[dict]:
-        """Returns a list of dicts for builder UI / monitoring."""
-        return [
-            {
-                "id": svc.meta.id,
-                "name": svc.meta.name,
-                "enabled": svc.is_enabled(),
-                "tool_count": len(svc.tools()),
-                "tools": svc.tool_names(),
-            }
-            for svc in self._services.values()
-        ]
-
-    def log_manifest(self) -> None:
-        """Logs the full tool manifest grouped by goal, plus third-party & DB tools."""
-        logger.info("📋 [AgentVoiceController] Goal → Tool manifest:")
-        logger.info(f"  {'GOAL ID':<35} {'STATUS':<10} TOOLS")
-        logger.info("  " + "-" * 75)
-        for gid, svc in self._services.items():
-            status = "enabled " if svc.is_enabled() else "DISABLED"
-            names = ", ".join(svc.tool_names()) if svc.is_enabled() else "-"
-            logger.info(f"  {gid:<35} {status:<10} {names}")
-        extra_tools = self.tools_controller.get_all_tools() if self.tools_controller else []
-        if extra_tools:
-            ext_names = ", ".join(getattr(t, "__name__", str(t)) for t in extra_tools)
-            logger.info(f"  {'third_party_and_db':<35} {'enabled ':<10} {ext_names}")
-        logger.info(
-            f"  Total: {self.tool_count()} tools across {len(self.active_goal_ids)} active goals."
-        )
+    def log_session_manifest(self) -> None:
+        """Logs the full tool registry manifest for the current call session."""
+        self.tools_controller.log_get_manifest()
 
     def apply_config(self, agent_config: Any) -> None:
-        """
-        Applies goals enablement from AgentConfig to GoalServices,
-        and forwards configuration to the Third-Party & DB tools controller.
-        """
-        if not agent_config:
-            return
-
-        # 1. Sync goal enabled states
-        goal_states = {g.id: g.enabled for g in getattr(agent_config, "goals", [])}
-        for gid, svc in self._services.items():
-            if gid in goal_states:
-                if goal_states[gid]:
-                    svc.enable()
-                else:
-                    svc.disable()
-
-        # 2. Sync third-party & DB declarative actions
-        if self.tools_controller:
-            self.tools_controller.apply_config(agent_config)
+        """Applies goals enablement from AgentConfig to tools_controller."""
+        self.tools_controller.apply_config(agent_config)
 
     # -----------------------
     # EXTERNAL ENTRY POINTS
@@ -761,27 +626,27 @@ class VoiceController:
                 self.on_participant_joined(p.identity)  # Advance FSM: CONNECTING → SESSION_ACTIVE
                 break
 
-    def on_agent_state(self, new_state: str) -> None:
-        """Alias for on_agent_substate_changed."""
-        self.on_agent_substate_changed(new_state)
+    # def on_agent_state(self, new_state: str) -> None:
+    #     """Alias for on_agent_substate_changed."""
+    #     self.on_agent_substate_changed(new_state)
 
-    def on_agent_substate_changed(self, substate: str) -> None:
-        """Tracks active turn sub-states: LISTENING, THINKING, SPEAKING.
-        Uses _set_state() so the watchdog timer resets on every LLM/STT/TTS transition.
-        Ignores events that arrive after the call has ended (no active session)."""
-        # Guard: trailing agent_state_changed("idle") arrives after on_call_end and
-        # would push the FSM back to SESSION_ACTIVE with no active call.
-        if self._active_session is None or self.current_state in (ControllerState.ENDING, ControllerState.ERROR):
-            return
-        sub_upper = str(substate).upper()
-        target_map = {
-            "LISTENING": ControllerState.LISTENING,   # STT phase — user is speaking
-            "THINKING": ControllerState.THINKING,     # LLM phase — generating reply or calling tools
-            "SPEAKING": ControllerState.SPEAKING,     # TTS phase — audio is being synthesized/played
-            "INITIALIZING": ControllerState.SESSION_ACTIVE,  # Session warmup before first turn
-        }
-        target = target_map.get(sub_upper, ControllerState.SESSION_ACTIVE)
-        self._set_state(target)  # Resets watchdog timer; logs the transition
+    # def on_agent_substate_changed(self, substate: str) -> None:
+    #     """Tracks active turn sub-states: LISTENING, THINKING, SPEAKING.
+    #     Uses _set_state() so the watchdog timer resets on every LLM/STT/TTS transition.
+    #     Ignores events that arrive after the call has ended (no active session)."""
+    #     # Guard: trailing agent_state_changed("idle") arrives after on_call_end and
+    #     # would push the FSM back to SESSION_ACTIVE with no active call.
+    #     if self._active_session is None or self.current_state in (ControllerState.ENDING, ControllerState.ERROR):
+    #         return
+    #     sub_upper = str(substate).upper()
+    #     target_map = {
+    #         "LISTENING": ControllerState.LISTENING,   # STT phase — user is speaking
+    #         "THINKING": ControllerState.THINKING,     # LLM phase — generating reply or calling tools
+    #         "SPEAKING": ControllerState.SPEAKING,     # TTS phase — audio is being synthesized/played
+    #         "INITIALIZING": ControllerState.SESSION_ACTIVE,  # Session warmup before first turn
+    #     }
+    #     target = target_map.get(sub_upper, ControllerState.SESSION_ACTIVE)
+    #     self._set_state(target)  # Resets watchdog timer; logs the transition
 
     def on_call_end(self, room_name: str = "") -> None:
         """Called when call ends or participant disconnects.

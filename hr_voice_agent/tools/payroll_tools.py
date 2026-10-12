@@ -16,14 +16,14 @@ _payroll_service = PayrollService()
 
 
 @function_tool
-async def get_salary_credit_date() -> str:
+async def execute_get_salary_credit_date() -> str:
     """Inform caller about company salary payment dates and payslip distribution schedule."""
     res = _payroll_service.get_salary_credit_schedule()
     return res["message"]
 
 
 @function_tool
-async def get_basic_salary_info(employee_id: str, context: RunContext) -> str:
+async def execute_get_basic_salary_info(employee_id: str, context: RunContext) -> str:
     """Look up the caller's current basic salary, HRA, allowances, and gross salary."""
     err = require_verified(context, employee_id)
     if err:
@@ -35,10 +35,11 @@ async def get_basic_salary_info(employee_id: str, context: RunContext) -> str:
 
 
 @function_tool
-async def get_salary_deductions_info(
-    month_year: str,
-    employee_id: str,
-    context: RunContext,
+async def execute_get_salary_deductions_info(
+    month_year: str = "",
+    employee_id: str = "",
+    context: RunContext = None,
+    month: str = "",
 ) -> str:
     """Explain the breakdown of deductions (Provident Fund / EPF, Professional Tax, TDS / Income Tax,
     and any unpaid leave deductions) for a specific month (e.g. 'August 2026') or recent paycheck."""
@@ -47,15 +48,17 @@ async def get_salary_deductions_info(
         return err
 
     emp_id = get_verified_id(context, employee_id)
-    res = _payroll_service.get_salary_deductions_breakdown(emp_id, month_year)
+    target_month = month_year or month or None
+    res = _payroll_service.get_salary_deductions_breakdown(emp_id, target_month)
     return res["message"]
 
 
 @function_tool
-async def check_payslip_status(
-    month_year: str,
-    employee_id: str,
-    context: RunContext,
+async def execute_check_payslip_status(
+    month_year: str = "",
+    employee_id: str = "",
+    context: RunContext = None,
+    month: str = "",
 ) -> str:
     """Check if the caller's payslip for a specific month (e.g. 'August 2026') is available,
     and confirm where they can access/download it."""
@@ -64,5 +67,13 @@ async def check_payslip_status(
         return err
 
     emp_id = get_verified_id(context, employee_id)
-    res = _payroll_service.check_payslip_status(emp_id, month_year)
+    target_month = month_year or month or None
+    res = _payroll_service.check_payslip_status(emp_id, target_month)
     return res["message"]
+
+
+# ── Backward compatibility aliases ────────────────────────────────────────────
+get_salary_credit_date = execute_get_salary_credit_date
+get_basic_salary_info = execute_get_basic_salary_info
+get_salary_deductions_info = execute_get_salary_deductions_info
+check_payslip_status = execute_check_payslip_status

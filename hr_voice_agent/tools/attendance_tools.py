@@ -16,7 +16,7 @@ _attendance_service = AttendanceService()
 
 
 @function_tool
-async def check_attendance_status(
+async def execute_check_attendance_status(
     date_str: str,
     employee_id: str,
     context: RunContext,
@@ -33,31 +33,37 @@ async def check_attendance_status(
 
 
 @function_tool
-async def get_late_marks(employee_id: str, context: RunContext) -> str:
-    """Check how many late marks the caller has accumulated in the current month,
+async def execute_get_late_marks(
+    employee_id: str,
+    context: RunContext = None,
+    month: int = 0,
+) -> str:
+    """Check how many late marks the caller has accumulated in the current or specified month,
     and explains the policy consequence (e.g. 3 late marks result in a half-day deduction)."""
     err = require_verified(context, employee_id)
     if err:
         return err
 
     emp_id = get_verified_id(context, employee_id)
-    res = _attendance_service.get_late_marks_count(emp_id)
+    target_month = month if month > 0 else None
+    res = _attendance_service.get_late_marks_count(emp_id, month=target_month)
     return res["message"]
 
 
 @function_tool
-async def submit_attendance_regularization(
-    date_str: str,
-    punch_type: str,
-    actual_time: str,
-    reason: str,
-    employee_id: str,
-    context: RunContext,
+async def execute_submit_attendance_regularization(
+    punch_date: str = "",
+    punch_type: str = "",
+    actual_time: str = "",
+    reason: str = "",
+    employee_id: str = "",
+    context: RunContext = None,
+    date_str: str = "",
 ) -> str:
     """Submit an attendance regularization request when the caller forgot to punch in, forgot to punch out,
     experienced a biometric scanner failure, or wants to regularize a late mark.
     Parameters:
-    - date_str: date of attendance ('today', 'yesterday', or YYYY-MM-DD)
+    - punch_date / date_str: date of attendance ('today', 'yesterday', or YYYY-MM-DD)
     - punch_type: 'missing_punch_in', 'missing_punch_out', or 'late_regularization'
     - actual_time: estimated actual entry/exit time (e.g. '09:05:00' or '18:15:00')
     - reason: brief reason for the regularization request"""
@@ -66,12 +72,17 @@ async def submit_attendance_regularization(
         return err
 
     emp_id = get_verified_id(context, employee_id)
-    res = _attendance_service.submit_regularization(emp_id, date_str, punch_type, actual_time, reason)
+    target_date = punch_date or date_str or "today"
+    res = _attendance_service.submit_regularization(emp_id, target_date, punch_type, actual_time, reason)
     return res["message"]
 
 
 @function_tool
-async def get_regularization_status(employee_id: str, context: RunContext) -> str:
+async def execute_get_regularization_status(
+    employee_id: str = "",
+    context: RunContext = None,
+    regularization_id: int = 0,
+) -> str:
     """Check the status of the caller's most recent attendance regularization request."""
     err = require_verified(context, employee_id)
     if err:
@@ -80,3 +91,10 @@ async def get_regularization_status(employee_id: str, context: RunContext) -> st
     emp_id = get_verified_id(context, employee_id)
     res = _attendance_service.get_regularization_status(emp_id)
     return res["message"]
+
+
+# ── Backward compatibility aliases ────────────────────────────────────────────
+check_attendance_status = execute_check_attendance_status
+get_late_marks = execute_get_late_marks
+submit_attendance_regularization = execute_submit_attendance_regularization
+get_regularization_status = execute_get_regularization_status

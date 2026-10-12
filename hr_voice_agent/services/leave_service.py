@@ -399,3 +399,89 @@ class LeaveService:
             "request_id": req["request_id"],
             "message": f"I have sent a reminder notification to your manager regarding your pending {req['leave_name']} request for {req['start_date']} to {req['end_date']}."
         }
+
+    def list_leave_types(self) -> dict:
+        try:
+            rows = self._query(
+                """SELECT leave_code, leave_name, annual_range, short_note, applies_to
+                   FROM leave_policy
+                   ORDER BY FIELD(leave_code, 'CL','SL','MATERNITY','PATERNITY','COMP_OFF','BEREAVEMENT','SHORT_LEAVE','LWP')"""
+            )
+            if not rows:
+                return {"success": False, "message": "No leave types found in the policy."}
+            lines = []
+            for r in rows:
+                scope = "" if r["applies_to"] == "All" else f", {r['applies_to']} employees only"
+                lines.append(f"{r['leave_name']} ({r['annual_range']}{scope}) — {r['short_note']}.")
+            return {"success": True, "message": "\n".join(lines)}
+        except Exception as e:
+            logger.error("Error listing leave types: %s", e)
+            return {"success": False, "message": f"Sorry, something went wrong looking that up ({e})."}
+
+    def get_pending_leave_request(self, employee_id: str) -> dict:
+        try:
+            rows = self._query(
+                """SELECT lr.request_id, lr.start_date, lr.end_date, lr.reason,
+                          lp.leave_name
+                   FROM leave_requests lr
+                   JOIN leave_policy lp ON lp.leave_code = lr.leave_code
+                   WHERE lr.employee_id = %s AND lr.status = 'submitted'
+                   ORDER BY lr.requested_at DESC
+                   LIMIT 1""",
+                (str(employee_id),),
+            )
+            if not rows:
+                return {"success": False, "message": "No leave request is currently pending approval for this employee."}
+            r = rows[0]
+            sd, ed = r["start_date"], r["end_date"]
+            if hasattr(sd, "strftime") and hasattr(ed, "strftime"):
+                if sd == ed:
+                    date_phrase = sd.strftime("%B %d, %Y")
+                elif sd.year == ed.year and sd.month == ed.month:
+                    date_phrase = f"{sd.strftime('%B %d')} to {ed.strftime('%d, %Y')}"
+                else:
+                    date_phrase = f"{sd.strftime('%B %d, %Y')} to {ed.strftime('%B %d, %Y')}"
+            else:
+                date_phrase = f"{sd} to {ed}"
+            existing = r["reason"].strip() if r["reason"] else ""
+            reason_note = f" A reason is already on file: '{existing}'." if existing else " No reason is on file yet."
+            return {
+                "success": True,
+                "request_id": r["request_id"],
+                "message": (
+                    f"Pending request found — request ID {r['request_id']}, {r['leave_name']}, "
+                    f"{date_phrase}.{reason_note} Read the dates back to the "
+                    f"caller and ask for a brief reason to pass along for approval."
+                )
+            }
+        except Exception as e:
+            logger.error("Error getting pending leave request: %s", e)
+            return {"success": False, "message": f"Sorry, something went wrong looking that up ({e})."}
+
+    def record_leave_verification_reason(self, request_id: int, reason: str) -> dict:
+        try:
+            reason_clean = (reason or "").strip()
+            result = self._execute(
+                "UPDATE leave_requests SET reason = %s WHERE request_id = %s AND status = 'submitted'",
+                (reason_clean, request_id),
+            )
+            if result == 0:
+                return {
+                    "success": False,
+                    "message": (
+                        f"Request ID {request_id} was not found, or is no longer pending "
+                        f"(already approved/rejected). Let the caller know their reason "
+                        f"could not be attached and HR should be contacted directly."
+                    )
+                }
+            return {
+                "success": True,
+                "message": (
+                    "Reason recorded against the pending request. Let the caller know "
+                    "this has been noted and passed along for approval — it does not "
+                    "mean the leave is approved yet."
+                )
+            }
+        except Exception as e:
+            logger.error("Error recording leave verification reason: %s", e)
+            return {"success": False, "message": f"Sorry, the reason could not be saved ({e})."}

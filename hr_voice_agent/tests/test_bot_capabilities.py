@@ -28,7 +28,7 @@ from services.payroll_service import PayrollService
 from services.grievance_service import GrievanceService
 from services.ticket_service import TicketService
 
-import hr_tools
+from database.db import run_startup_check
 from tools.policy_tools import get_hr_policy, check_company_holiday, list_upcoming_company_holidays
 from tools.leave_tools import get_leave_balance, check_leave_availability, get_leave_request_status, send_manager_leave_reminder
 from tools.attendance_tools import check_attendance_status, get_late_marks, submit_attendance_regularization
@@ -60,7 +60,7 @@ async def run_all_tests():
 
     # 1. Test Startup Check Log Silence
     print("\n[TEST 1] Startup Check Execution (Checking stdout format)...")
-    hr_tools.run_startup_check()
+    run_startup_check()
     print("✅ Startup check ran without dumping all 15 employees.")
 
     # 2. Test 5 Core Policies & Holidays

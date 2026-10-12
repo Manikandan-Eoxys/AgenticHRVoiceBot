@@ -41,22 +41,33 @@ class GoalService(ABC):
 
     def tools(self) -> list[Callable]:
         """
-        Return the list of @function_tool callables for this goal.
-        By default, auto-discovers all member methods decorated with @function_tool.
+        Collects all action functions in this service that have the @function_tool decorator.
+        This allows LiveKit and the LLM to call them during a conversation.
         """
-        discovered: list[Callable] = []
-        for name in dir(self):
-            if name.startswith("_"):
+        discovered_tools: list[Callable] = []
+
+        # dir(self) returns all method and attribute names on this class
+        for attr_name in dir(self):
+            # Skip private/internal Python methods (like __init__, _action_call_counts)
+            if attr_name.startswith("_"):
                 continue
+
             try:
-                attr = getattr(self, name)
-                if FunctionTool is not None and isinstance(attr, FunctionTool):
-                    discovered.append(attr)
-                elif hasattr(attr, "__livekit_tool_info") or hasattr(attr, "info"):
-                    discovered.append(attr)
+                method_obj = getattr(self, attr_name)
+
+                # Check if this method was decorated with LiveKit's @function_tool
+                is_function_tool = (
+                    (FunctionTool is not None and isinstance(method_obj, FunctionTool))
+                    or hasattr(method_obj, "__livekit_tool_info")
+                    or hasattr(method_obj, "info")
+                )
+
+                if is_function_tool:
+                    discovered_tools.append(method_obj)
             except Exception:
                 pass
-        return discovered
+
+        return discovered_tools
 
     def log_action(self, action_name: str, **kwargs: Any) -> None:
         """Structured per-goal logging when an action is executed."""
@@ -87,13 +98,17 @@ class GoalService(ABC):
             logger.info(f"🔔 Goal '{self.meta.id}' enabled.")
 
     def tool_names(self) -> list[str]:
+        """Returns the list of tool function names registered on this service."""
         names = []
-        for t in self.tools():
-            info = getattr(t, "info", None)
+        for tool in self.tools():
+            # If wrapped by LiveKit, the tool name is in tool.info.name
+            info = getattr(tool, "info", None)
             if info and hasattr(info, "name"):
                 names.append(info.name)
+            elif hasattr(tool, "__name__"):
+                names.append(tool.__name__)
             else:
-                names.append(getattr(t, "__name__", repr(t)))
+                names.append(str(tool))
         return names
 
     def __repr__(self) -> str:

@@ -18,7 +18,7 @@ _ticket_service = TicketService()
 
 
 @function_tool
-async def raise_hr_ticket(
+async def execute_raise_hr_ticket(
     category: str,
     ticket_type: str,
     description: str,
@@ -45,7 +45,7 @@ async def raise_hr_ticket(
 
 
 @function_tool
-async def check_my_hr_tickets(
+async def execute_check_my_hr_tickets(
     employee_id: str,
     context: RunContext,
 ) -> str:
@@ -57,3 +57,8 @@ async def check_my_hr_tickets(
     emp_id = get_verified_id(context, employee_id)
     res = _ticket_service.get_employee_tickets(emp_id)
     return res["message"]
+
+
+# ── Backward compatibility aliases ────────────────────────────────────────────
+raise_hr_ticket = execute_raise_hr_ticket
+check_my_hr_tickets = execute_check_my_hr_tickets

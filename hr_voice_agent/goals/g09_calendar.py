@@ -13,7 +13,10 @@ Durable state written:  none
 from livekit.agents import function_tool
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.policy_tools import (
+    execute_check_company_holiday,
+    execute_list_upcoming_company_holidays,
+)
 
 
 class CalendarService(GoalService):
@@ -48,11 +51,11 @@ class CalendarService(GoalService):
     async def check_company_holiday(self, target_date: str) -> str:
         """Check whether a specific date is an official company holiday."""
         self.log_action("check_company_holiday", target_date=target_date)
-        return await hr_tools.check_company_holiday(target_date)
+        return await execute_check_company_holiday(target_date)
 
     @function_tool
     async def list_upcoming_company_holidays(self, limit: int = 5) -> str:
         """List upcoming official company holidays (dates, holiday names, and mandatory/optional status)."""
         self.log_action("list_upcoming_company_holidays", limit=limit)
-        return await hr_tools.list_upcoming_company_holidays(limit)
+        return await execute_list_upcoming_company_holidays()
 

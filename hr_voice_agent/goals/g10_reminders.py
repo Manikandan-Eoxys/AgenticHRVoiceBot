@@ -19,7 +19,11 @@ employee's acknowledgement).
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-import hr_tools
+from tools.reminder_tools import (
+    execute_schedule_employee_reminder,
+    execute_check_my_scheduled_reminders,
+    execute_acknowledge_scheduled_reminder,
+)
 
 
 class RemindersService(GoalService):
@@ -63,11 +67,10 @@ class RemindersService(GoalService):
     ) -> str:
         """Schedule a future reminder notification or call for the caller (e.g. document submission, tax deadline)."""
         self.log_action("schedule_employee_reminder", reminder_type=reminder_type, scheduled_date=scheduled_date)
-        return await hr_tools.schedule_employee_reminder(
+        return await execute_schedule_employee_reminder(
             employee_id=employee_id,
-            reminder_type=reminder_type,
-            scheduled_date=scheduled_date,
-            reminder_notes=reminder_notes,
+            reminder_topic=reminder_type or reminder_notes,
+            scheduled_time=scheduled_date,
             context=context,
         )
 
@@ -79,7 +82,7 @@ class RemindersService(GoalService):
     ) -> str:
         """List upcoming reminders scheduled for the caller."""
         self.log_action("check_my_scheduled_reminders", employee_id=employee_id)
-        return await hr_tools.check_my_scheduled_reminders(
+        return await execute_check_my_scheduled_reminders(
             employee_id=employee_id,
             context=context,
         )
@@ -93,8 +96,9 @@ class RemindersService(GoalService):
     ) -> str:
         """Acknowledge or mark complete a delivered reminder or notification."""
         self.log_action("acknowledge_scheduled_reminder", reminder_id=reminder_id)
-        return await hr_tools.acknowledge_scheduled_reminder(
-            reminder_id=reminder_id,
+        return await execute_acknowledge_scheduled_reminder(
+            reminder_topic_or_id=str(reminder_id),
+            response_text="Completed",
             employee_id=employee_id,
             context=context,
         )

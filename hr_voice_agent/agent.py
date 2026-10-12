@@ -40,7 +40,7 @@ try:
 except ImportError:
     HAS_AI_COUSTICS = False
 
-import hr_tools
+from database.db import run_startup_check
 from security.call_blocklist import is_call_blocked
 from config import (
     DEEPGRAM_API_KEY, OLLAMA_MODEL, OLLAMA_BASE_URL,
@@ -925,13 +925,13 @@ class Assistant(Agent):
     def __init__(
         self,
         job_ctx: agents.JobContext,
-        call_metadata: dict | None = None,
+        call_metadata: dict | None = None,              #It expects either a Python dictionary or None.  
         collector: DtmfCollector | None = None,
     ) -> None:
         self._job_ctx = job_ctx
         self.collector = collector
         today_str = date.today().strftime("%A, %B %-d, %Y")
-        call_metadata = call_metadata or {}
+        call_metadata = call_metadata or {}             #if call_metadata was passed as None (or empty), replace it with an empty dictionary {}.
         call_type = call_metadata.get("call_type")
 
         if call_type == "leave_verification":
@@ -959,11 +959,11 @@ class Assistant(Agent):
         )
         self.voice_controller = voice_controller
         self.tools_controller = voice_controller.tools_controller
-        active_tools = voice_controller.get_all_tools()
+        active_tools = voice_controller.session_all_tools()
 
         super().__init__(
             instructions=instructions,
-            tools=active_tools,
+            tools=active_tools,         # ← All @function_tool methods from ALL GoalServices
         )
 
     async def end_call(self, context: RunContext) -> None:
@@ -995,7 +995,7 @@ voice_controller = VoiceController()
 
 # Prewarm Ollama and run DB health check once per worker process tree.
 # Subsequent fork/spawn processes see the /tmp marker and skip to READY immediately.
-voice_controller.run_worker_startup_once(extra_checks=hr_tools.run_startup_check)
+voice_controller.run_worker_startup_once(extra_checks=run_startup_check)
 
 agent_worker_name = WORKER_AGENT_NAME
 
@@ -1195,6 +1195,7 @@ async def _my_agent_impl(ctx: agents.JobContext):
         """Called by VoiceController when a blocked participant joins."""
         asyncio.create_task(_hangup(ctx))
 
+    #1.Read JSON string from LiveKit job metadata
     try:
         call_metadata = json.loads(ctx.job.metadata) if ctx.job.metadata else {}
     except (json.JSONDecodeError, TypeError):
@@ -1217,7 +1218,7 @@ async def _my_agent_impl(ctx: agents.JobContext):
         close_on_disconnect=False,
         audio_input=audio_input_opts if audio_input_opts else room_io.AudioInputOptions(),
     )
-
+    #2.Pass call_metadata into the Assistant
     assistant = Assistant(ctx, call_metadata=call_metadata, collector=collector)
 
     # Wire all session lifecycle events into the FSM via attach_session.
