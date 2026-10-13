@@ -62,10 +62,7 @@ class CoordinatorTransferService(GoalService):
 
     @function_tool
     async def transfer_to_coordinator(self, context: RunContext) -> str:
-        """Call this ONLY after the caller has explicitly confirmed
-        (e.g. said 'yes, proceed') that they want to be connected to
-        the coordinator. Dials the coordinator's phone number into
-        this same call with a ring tone while dialing."""
+        """Transfer the call to a human HR coordinator after the caller confirms they wish to proceed."""
         self.log_action("transfer_to_coordinator")
         coord_num = os.environ.get("COORDINATOR_PHONE_NUMBER", COORDINATOR_PHONE_NUMBER)
 
@@ -136,9 +133,7 @@ class CoordinatorTransferService(GoalService):
 
     @function_tool
     async def end_call(self, context: RunContext) -> None:
-        """Call this exactly once, as the very last action of the call,
-        immediately after you've said your closing goodbye and the caller
-        has nothing further to ask. Hangs up the phone line."""
+        """Terminates and hangs up the phone call after saying goodbye."""
         self.log_action("end_call")
         await context.wait_for_playout()
         if self.job_ctx and getattr(self.job_ctx, "room", None):

@@ -4,12 +4,8 @@ goals/g01_identity_verification.py  —  Goal 1: Identity Verification
 Handles all actions related to verifying the caller's identity before
 any HR data access is permitted.
 
-Runtime state (CallSession):
-  - verified_employee_id  → set when confirmed, read as security gate
-  - verified_employee_name
-
-Config state (AgentRuntimeConfig / DB):
-  - employee_id_range (future: configurable per deployment)
+Layer flow:
+  Agent / LLM -> Goal 1 (g01_identity) -> EmployeeService (services layer) -> DB
 """
 
 import logging
@@ -17,11 +13,8 @@ from typing import Any
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-from tools.employee_tools import (
-    execute_confirm_employee_identity,
-    execute_get_employee_by_id,
-    execute_list_department_employees,
-)
+from goals.helpers import clean_id
+from services.employee_service import EmployeeService
 
 logger = logging.getLogger("goals.g01_identity")
 
@@ -56,37 +49,26 @@ class IdentityVerificationService(GoalService):
     def __init__(self, collector: Any = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.collector = collector
+        self.employee_service = EmployeeService()
 
     @function_tool
     async def confirm_employee_identity(self, employee_id: str, context: RunContext) -> str:
-        """Call this immediately after the caller says yes to the identity
-        verification question (e.g. 'This is employee 1001, Ravikala, is that
-        correct?' -> caller says yes). Locks this call to that employee ID —
-        every other tool (leave balance, leave requests, insurance info,
-        schemes) will refuse to act on any other employee ID for the rest of
-        this call, even if the caller later mentions a different ID. Must be
-        called before any leave, balance, or insurance tool."""
+        """Locks the active call session to the verified employee ID. Call immediately after caller confirms their name."""
         self.log_action("confirm_employee_identity", employee_id=employee_id)
-        return await execute_confirm_employee_identity(employee_id, context)
+        emp_id = clean_id(employee_id)
+        if context and hasattr(context, "session"):
+            context.session.verified_employee_id = emp_id
+        return f"Identity locked to employee {emp_id} for this call."
 
     @function_tool
     async def get_employee_by_id(self, employee_id: str) -> str:
-        """Look up an employee by their employee ID (e.g. 1001 through 1015).
-        Always call this first when a caller starts a conversation or gives
-        an ID, before any other lookup. Returns a verification line — read
-        the name back to the caller and get an explicit yes before treating
-        them as that employee (e.g. 'This is employee ID 1001, Ravikala —
-        is that correct?'). Also returns department, designation, and
-        status for your own context."""
+        """Look up employee name, department, and designation by 4-digit employee ID (1001 to 1015)."""
         self.log_action("get_employee_by_id", employee_id=employee_id)
-        return await execute_get_employee_by_id(employee_id)
+        return self.employee_service.get_employee_verification(employee_id)
 
     @function_tool
     async def collect_employee_id_via_keypad(self, context: RunContext) -> str:
-        """Use this when a spoken employee ID didn't match any employee on
-        file, or when the caller denied the name verification question, or
-        spoke in another language, or asks to key in their ID. Prompts caller to enter
-        their 4-digit employee ID on their phone keypad, keyboard, or speak digits."""
+        """Capture caller's 4-digit employee ID via phone keypad (DTMF) or digit speech when voice ID fails."""
         self.log_action("collect_employee_id_via_keypad")
         if not self.collector:
             return "Keypad collector not initialized. Please ask the caller to speak their 4-digit employee ID clearly."
@@ -111,5 +93,21 @@ class IdentityVerificationService(GoalService):
     async def list_department_employees(self, department_name: str) -> str:
         """List employees in a given department."""
         self.log_action("list_department_employees", department_name=department_name)
-        return await execute_list_department_employees(department_name)
+        return self.employee_service.list_department_employees(department_name)
 
+
+# ── Standalone tool execution helpers & aliases ───────────────────────────────
+_default_identity_goal = IdentityVerificationService()
+
+async def confirm_employee_identity(employee_id: str, context: RunContext) -> str:
+    return await _default_identity_goal.confirm_employee_identity(employee_id, context)
+
+async def get_employee_by_id(employee_id: str) -> str:
+    return await _default_identity_goal.get_employee_by_id(employee_id)
+
+async def list_department_employees(department_name: str) -> str:
+    return await _default_identity_goal.list_department_employees(department_name)
+
+execute_confirm_employee_identity = confirm_employee_identity
+execute_get_employee_by_id = get_employee_by_id
+execute_list_department_employees = list_department_employees

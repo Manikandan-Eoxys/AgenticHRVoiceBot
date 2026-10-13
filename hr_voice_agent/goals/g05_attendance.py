@@ -7,20 +7,15 @@ Actions:
   ├── submit_attendance_regularization()  request a punch correction
   └── get_regularization_status()         check regularization request outcome
 
-Runtime state consumed: verified_employee_id
-Durable state read:     attendance_records (DB)
-Durable state written:  attendance_regularizations (DB) — must survive across calls
+Layer flow:
+  Agent / LLM -> Goal 5 (g05_attendance) -> AttendanceService (services layer) -> DB
 """
 
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-from tools.attendance_tools import (
-    execute_check_attendance_status,
-    execute_get_late_marks,
-    execute_submit_attendance_regularization,
-    execute_get_regularization_status,
-)
+from goals.helpers import require_verified, get_verified_id
+from services.attendance_service import AttendanceService as AttendanceBackendService
 
 
 class AttendanceService(GoalService):
@@ -53,6 +48,10 @@ class AttendanceService(GoalService):
         ],
     )
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.attendance_service = AttendanceBackendService()
+
     @function_tool
     async def check_attendance_status(
         self,
@@ -62,11 +61,12 @@ class AttendanceService(GoalService):
     ) -> str:
         """Check the attendance punch record (in time, out time, present/absent status) for a specific date (e.g. 'today', 'yesterday', or 'YYYY-MM-DD')."""
         self.log_action("check_attendance_status", date_str=date_str)
-        return await execute_check_attendance_status(
-            date_str=date_str,
-            employee_id=employee_id,
-            context=context,
-        )
+        err = require_verified(context, employee_id)
+        if err:
+            return err
+        emp_id = get_verified_id(context, employee_id)
+        res = self.attendance_service.get_attendance_status(emp_id, date_str)
+        return res["message"]
 
     @function_tool
     async def get_late_marks(
@@ -77,45 +77,84 @@ class AttendanceService(GoalService):
     ) -> str:
         """Check how many times the caller arrived late this month (or in a specified month 1-12)."""
         self.log_action("get_late_marks", month=month)
-        return await execute_get_late_marks(
-            month=month,
-            employee_id=employee_id,
-            context=context,
-        )
+        err = require_verified(context, employee_id)
+        if err:
+            return err
+        emp_id = get_verified_id(context, employee_id)
+        target_month = month if month > 0 else None
+        res = self.attendance_service.get_late_marks_count(emp_id, month=target_month)
+        return res["message"]
 
     @function_tool
     async def submit_attendance_regularization(
         self,
-        punch_date: str,
-        punch_type: str,
-        actual_time: str,
-        reason: str,
-        context: RunContext,
+        punch_date: str = "",
+        punch_type: str = "",
+        actual_time: str = "",
+        reason: str = "",
+        context: RunContext = None,
         employee_id: str = "",
+        date_str: str = "",
     ) -> str:
         """Submit a request to regularize a missed punch (e.g. forgot to punch IN/OUT or biometric machine glitch)."""
-        self.log_action("submit_attendance_regularization", punch_date=punch_date, punch_type=punch_type)
-        return await execute_submit_attendance_regularization(
-            employee_id=employee_id,
-            punch_date=punch_date,
-            punch_type=punch_type,
-            actual_time=actual_time,
-            reason=reason,
-            context=context,
-        )
+        target_date = punch_date or date_str or "today"
+        self.log_action("submit_attendance_regularization", punch_date=target_date, punch_type=punch_type)
+        err = require_verified(context, employee_id)
+        if err:
+            return err
+        emp_id = get_verified_id(context, employee_id)
+        res = self.attendance_service.submit_regularization(emp_id, target_date, punch_type, actual_time, reason)
+        return res["message"]
 
     @function_tool
     async def get_regularization_status(
         self,
         context: RunContext,
-        regularization_id: int = 0,
         employee_id: str = "",
+        regularization_id: int = 0,
     ) -> str:
-        """Check whether a submitted attendance regularization request was approved, rejected, or is pending."""
+        """Check the status of the caller's most recent attendance regularization request."""
         self.log_action("get_regularization_status", regularization_id=regularization_id)
-        return await execute_get_regularization_status(
-            regularization_id=regularization_id,
-            employee_id=employee_id,
-            context=context,
-        )
+        err = require_verified(context, employee_id)
+        if err:
+            return err
+        emp_id = get_verified_id(context, employee_id)
+        res = self.attendance_service.get_regularization_status(emp_id)
+        return res["message"]
 
+
+# ── Standalone tool execution helpers & aliases ───────────────────────────────
+_default_attendance_goal = AttendanceService()
+
+async def check_attendance_status(date_str: str = "today", employee_id: str = "", context: RunContext = None) -> str:
+    return await _default_attendance_goal.check_attendance_status(context=context, date_str=date_str, employee_id=employee_id)
+
+async def get_late_marks(employee_id: str = "", context: RunContext = None, month: int = 0) -> str:
+    return await _default_attendance_goal.get_late_marks(context=context, month=month, employee_id=employee_id)
+
+async def submit_attendance_regularization(
+    punch_date: str = "",
+    punch_type: str = "",
+    actual_time: str = "",
+    reason: str = "",
+    employee_id: str = "",
+    context: RunContext = None,
+    date_str: str = "",
+) -> str:
+    return await _default_attendance_goal.submit_attendance_regularization(
+        punch_date=punch_date,
+        punch_type=punch_type,
+        actual_time=actual_time,
+        reason=reason,
+        context=context,
+        employee_id=employee_id,
+        date_str=date_str,
+    )
+
+async def get_regularization_status(employee_id: str = "", context: RunContext = None, regularization_id: int = 0) -> str:
+    return await _default_attendance_goal.get_regularization_status(context=context, employee_id=employee_id, regularization_id=regularization_id)
+
+execute_check_attendance_status = check_attendance_status
+execute_get_late_marks = get_late_marks
+execute_submit_attendance_regularization = submit_attendance_regularization
+execute_get_regularization_status = get_regularization_status

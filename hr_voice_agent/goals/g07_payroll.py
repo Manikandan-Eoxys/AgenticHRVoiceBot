@@ -7,23 +7,15 @@ Actions:
   ├── get_salary_deductions_info()  PF, PT, TDS, LWP breakdown
   └── check_payslip_status()        is this month's payslip available?
 
-Runtime state consumed: verified_employee_id
-Durable state read:     employees, payroll records (DB)
-Durable state written:  none (read-only goal)
-
-Note: salary DISCREPANCIES that can't be resolved automatically trigger
-raise_hr_ticket (g08_hr_policy). This goal only handles read-only inquiries.
+Layer flow:
+  Agent / LLM -> Goal 7 (g07_payroll) -> PayrollService (services layer) -> DB
 """
 
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-from tools.payroll_tools import (
-    execute_get_salary_credit_date,
-    execute_get_basic_salary_info,
-    execute_get_salary_deductions_info,
-    execute_check_payslip_status,
-)
+from goals.helpers import require_verified, get_verified_id
+from services.payroll_service import PayrollService as PayrollBackendService
 
 
 class PayrollService(GoalService):
@@ -58,11 +50,16 @@ class PayrollService(GoalService):
         ],
     )
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.payroll_service = PayrollBackendService()
+
     @function_tool
     async def get_salary_credit_date(self) -> str:
         """Tell the caller the expected salary credit date for the current month."""
         self.log_action("get_salary_credit_date")
-        return await execute_get_salary_credit_date()
+        res = self.payroll_service.get_salary_credit_schedule()
+        return res["message"]
 
     @function_tool
     async def get_basic_salary_info(
@@ -72,23 +69,30 @@ class PayrollService(GoalService):
     ) -> str:
         """Look up the caller's current salary structure details."""
         self.log_action("get_basic_salary_info", employee_id=employee_id)
-        return await execute_get_basic_salary_info(
-            employee_id=employee_id,
-            context=context,
-        )
+        err = require_verified(context, employee_id)
+        if err:
+            return err
+        emp_id = get_verified_id(context, employee_id)
+        res = self.payroll_service.get_basic_salary_info(emp_id)
+        return res["message"]
 
     @function_tool
     async def get_salary_deductions_info(
         self,
         context: RunContext,
         employee_id: str = "",
+        month_year: str = "",
+        month: str = "",
     ) -> str:
         """Explain typical payroll deductions (PF, professional tax, income tax / TDS, leave without pay)."""
         self.log_action("get_salary_deductions_info", employee_id=employee_id)
-        return await execute_get_salary_deductions_info(
-            employee_id=employee_id,
-            context=context,
-        )
+        err = require_verified(context, employee_id)
+        if err:
+            return err
+        emp_id = get_verified_id(context, employee_id)
+        target_month = month_year or month or None
+        res = self.payroll_service.get_salary_deductions_breakdown(emp_id, target_month)
+        return res["message"]
 
     @function_tool
     async def check_payslip_status(
@@ -96,12 +100,55 @@ class PayrollService(GoalService):
         context: RunContext,
         month: str = "",
         employee_id: str = "",
+        month_year: str = "",
     ) -> str:
         """Check whether the payslip for a given month is generated and available for download."""
-        self.log_action("check_payslip_status", month=month)
-        return await execute_check_payslip_status(
-            month=month,
-            employee_id=employee_id,
-            context=context,
-        )
+        self.log_action("check_payslip_status", month=month or month_year)
+        err = require_verified(context, employee_id)
+        if err:
+            return err
+        emp_id = get_verified_id(context, employee_id)
+        target_month = month_year or month or None
+        res = self.payroll_service.check_payslip_status(emp_id, target_month)
+        return res["message"]
 
+
+# ── Standalone tool execution helpers & aliases ───────────────────────────────
+_default_payroll_goal = PayrollService()
+
+async def get_salary_credit_date() -> str:
+    return await _default_payroll_goal.get_salary_credit_date()
+
+async def get_basic_salary_info(employee_id: str = "", context: RunContext = None) -> str:
+    return await _default_payroll_goal.get_basic_salary_info(context=context, employee_id=employee_id)
+
+async def get_salary_deductions_info(
+    month_year: str = "",
+    employee_id: str = "",
+    context: RunContext = None,
+    month: str = "",
+) -> str:
+    return await _default_payroll_goal.get_salary_deductions_info(
+        context=context,
+        employee_id=employee_id,
+        month_year=month_year,
+        month=month,
+    )
+
+async def check_payslip_status(
+    month_year: str = "",
+    employee_id: str = "",
+    context: RunContext = None,
+    month: str = "",
+) -> str:
+    return await _default_payroll_goal.check_payslip_status(
+        context=context,
+        employee_id=employee_id,
+        month=month,
+        month_year=month_year,
+    )
+
+execute_get_salary_credit_date = get_salary_credit_date
+execute_get_basic_salary_info = get_basic_salary_info
+execute_get_salary_deductions_info = get_salary_deductions_info
+execute_check_payslip_status = check_payslip_status

@@ -5,18 +5,14 @@ Actions:
   ├── check_company_holiday()           is a specific date a holiday?
   └── list_upcoming_company_holidays()  what holidays are coming up?
 
-Runtime state consumed: none (public info — no identity gate required)
-Durable state read:     company_holidays (DB)
-Durable state written:  none
+Layer flow:
+  Agent / LLM -> Goal 9 (g09_calendar) -> PolicyService (services layer) -> DB
 """
 
 from livekit.agents import function_tool
 
 from goals.base import GoalService, GoalMeta
-from tools.policy_tools import (
-    execute_check_company_holiday,
-    execute_list_upcoming_company_holidays,
-)
+from services.policy_service import PolicyService
 
 
 class CalendarService(GoalService):
@@ -47,15 +43,36 @@ class CalendarService(GoalService):
         ],
     )
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.policy_service = PolicyService()
+
     @function_tool
     async def check_company_holiday(self, target_date: str) -> str:
         """Check whether a specific date is an official company holiday."""
         self.log_action("check_company_holiday", target_date=target_date)
-        return await execute_check_company_holiday(target_date)
+        res = self.policy_service.check_is_holiday(target_date)
+        return res["message"]
 
     @function_tool
     async def list_upcoming_company_holidays(self, limit: int = 5) -> str:
         """List upcoming official company holidays (dates, holiday names, and mandatory/optional status)."""
         self.log_action("list_upcoming_company_holidays", limit=limit)
-        return await execute_list_upcoming_company_holidays()
+        holidays = self.policy_service.list_upcoming_holidays(limit=limit)
+        if not holidays:
+            return "No upcoming holidays found on the company calendar."
+        lines = [f"{h['holiday_date']} ({h['holiday_day']}): {h['holiday_name']}" for h in holidays]
+        return "Upcoming company holidays: " + "; ".join(lines)
 
+
+# ── Standalone tool execution helpers & aliases ───────────────────────────────
+_default_calendar_goal = CalendarService()
+
+async def check_company_holiday(target_date: str) -> str:
+    return await _default_calendar_goal.check_company_holiday(target_date)
+
+async def list_upcoming_company_holidays(limit: int = 5) -> str:
+    return await _default_calendar_goal.list_upcoming_company_holidays(limit)
+
+execute_check_company_holiday = check_company_holiday
+execute_list_upcoming_company_holidays = list_upcoming_company_holidays

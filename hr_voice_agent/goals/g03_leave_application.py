@@ -6,19 +6,15 @@ Two-step submit flow:
   Step 2 → confirm_leave_request()       write to DB + email HR (after caller confirms)
   Also   → cancel_leave_request()        cancels a pending/approved leave
 
-Runtime state consumed: verified_employee_id
-Durable state written:  leave_requests (DB), leave_balances.used_days (DB)
-Durable state read:     leave_balances, leave_policy (DB)
+Layer flow:
+  Agent / LLM -> Goal 3 (g03_leave_application) -> LeaveService (services layer) -> DB
 """
 
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-from tools.leave_tools import (
-    execute_check_leave_availability,
-    execute_confirm_leave_request,
-    execute_cancel_leave_request,
-)
+from goals.helpers import require_verified, get_verified_id
+from services.leave_service import LeaveService
 
 
 class LeaveApplicationService(GoalService):
@@ -50,6 +46,10 @@ class LeaveApplicationService(GoalService):
         ],
     )
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.leave_service = LeaveService()
+
     @function_tool
     async def check_leave_availability(
         self,
@@ -60,21 +60,19 @@ class LeaveApplicationService(GoalService):
         employee_id: str = "",
         reason: str = "",
         is_half_day: bool = False,
+        start_date: str = "",
+        end_date: str = "",
     ) -> str:
-        """Step 1 of applying for leave. ALWAYS call this first when a caller
-        says they want to apply for or take leave. Computes the number of
-        days requested, checks whether the employee has enough balance,
-        and tells you if the leave can be taken.
-        Does NOT submit the request and does NOT write anything to the
-        database or send any email."""
-        self.log_action("check_leave_availability", leave_type=leave_type, from_date=from_date, to_date=to_date)
-        return await execute_check_leave_availability(
-            employee_id=employee_id,
-            leave_type=leave_type,
-            start_date=from_date,
-            end_date=to_date,
-            context=context,
-        )
+        """Step 1: Check available leave balance and date validity before submitting a request (does not save to DB)."""
+        s_date = from_date or start_date
+        e_date = to_date or end_date
+        self.log_action("check_leave_availability", leave_type=leave_type, from_date=s_date, to_date=e_date)
+        err = require_verified(context, employee_id)
+        if err:
+            return err
+        emp_id = get_verified_id(context, employee_id)
+        res = self.leave_service.check_leave_availability(emp_id, leave_type, s_date, e_date)
+        return res["message"]
 
     @function_tool
     async def confirm_leave_request(
@@ -86,36 +84,84 @@ class LeaveApplicationService(GoalService):
         context: RunContext,
         employee_id: str = "",
         is_half_day: bool = False,
+        start_date: str = "",
+        end_date: str = "",
     ) -> str:
-        """Step 2 of applying for leave. Call this ONLY AFTER the caller has
-        explicitly confirmed (e.g. said 'yes, go ahead and submit', 'please
-        apply', etc.) that they want the leave request submitted, following
-        a successful check_leave_availability call. Inserts the request,
-        updates used days, and notifies HR."""
-        self.log_action("confirm_leave_request", leave_type=leave_type, from_date=from_date, to_date=to_date)
-        return await execute_confirm_leave_request(
-            employee_id=employee_id,
-            leave_type=leave_type,
-            start_date=from_date,
-            end_date=to_date,
-            reason=reason,
-            context=context,
-        )
+        """Step 2: Submit and record a confirmed leave request after availability check and caller approval."""
+        s_date = from_date or start_date
+        e_date = to_date or end_date
+        self.log_action("confirm_leave_request", leave_type=leave_type, from_date=s_date, to_date=e_date)
+        err = require_verified(context, employee_id)
+        if err:
+            return err
+        emp_id = get_verified_id(context, employee_id)
+        res = self.leave_service.confirm_leave_request(emp_id, leave_type, s_date, e_date, reason)
+        return res["message"]
 
     @function_tool
     async def cancel_leave_request(
         self,
         context: RunContext,
         request_id: int = 0,
-        reason: str = "",
         employee_id: str = "",
     ) -> str:
-        """Cancel a pending or approved leave request previously submitted by the caller.
-        If request_id is 0 or omitted, cancels the most recent request."""
+        """Cancel a previously submitted or approved leave request and restore the leave balance."""
         self.log_action("cancel_leave_request", request_id=request_id)
-        return await execute_cancel_leave_request(
-            employee_id=employee_id,
-            request_id=request_id,
-            context=context,
-        )
+        err = require_verified(context, employee_id)
+        if err:
+            return err
+        emp_id = get_verified_id(context, employee_id)
+        req_id = request_id if request_id > 0 else None
+        res = self.leave_service.cancel_leave_request(emp_id, req_id)
+        return res["message"]
 
+
+# ── Standalone tool execution helpers & aliases ───────────────────────────────
+_default_leave_app_goal = LeaveApplicationService()
+
+async def check_leave_availability(
+    leave_type: str,
+    from_date: str = "",
+    to_date: str = "",
+    context: RunContext = None,
+    employee_id: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    **kwargs
+) -> str:
+    return await _default_leave_app_goal.check_leave_availability(
+        leave_type=leave_type,
+        from_date=from_date or start_date,
+        to_date=to_date or end_date,
+        context=context,
+        employee_id=employee_id,
+        **kwargs
+    )
+
+async def confirm_leave_request(
+    leave_type: str,
+    from_date: str = "",
+    to_date: str = "",
+    reason: str = "",
+    context: RunContext = None,
+    employee_id: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    **kwargs
+) -> str:
+    return await _default_leave_app_goal.confirm_leave_request(
+        leave_type=leave_type,
+        from_date=from_date or start_date,
+        to_date=to_date or end_date,
+        reason=reason,
+        context=context,
+        employee_id=employee_id,
+        **kwargs
+    )
+
+async def cancel_leave_request(employee_id: str = "", request_id: int = 0, context: RunContext = None) -> str:
+    return await _default_leave_app_goal.cancel_leave_request(context=context, request_id=request_id, employee_id=employee_id)
+
+execute_check_leave_availability = check_leave_availability
+execute_confirm_leave_request = confirm_leave_request
+execute_cancel_leave_request = cancel_leave_request

@@ -8,23 +8,15 @@ Actions:
   ├── get_pending_leave_request()          find the pending request to discuss
   └── record_leave_verification_reason()  save employee's stated reason to DB
 
-Runtime state consumed: verified_employee_id (confirmed from outbound call metadata)
-Durable state read:     leave_requests (DB) — born during an inbound call, must persist
-Durable state written:  leave_requests.verification_reason (DB)
-
-This goal's tools must survive across call boundaries by design:
-  - leave_requests row is created on call A (inbound, employee submits leave)
-  - get_pending_leave_request reads that row on call B (outbound, system calls employee)
-  - record_leave_verification_reason updates it on call B
+Layer flow:
+  Agent / LLM -> Goal 12 (g12_leave_verification_outbound) -> LeaveService (services layer) -> DB
 """
 
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
-from tools.leave_tools import (
-    execute_get_pending_leave_request,
-    execute_record_leave_verification_reason,
-)
+from goals.helpers import require_verified, get_verified_id
+from services.leave_service import LeaveService
 
 
 class LeaveVerificationOutboundService(GoalService):
@@ -47,6 +39,10 @@ class LeaveVerificationOutboundService(GoalService):
         enabled=True,
     )
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.leave_service = LeaveService()
+
     @function_tool
     async def get_pending_leave_request(
         self,
@@ -55,10 +51,12 @@ class LeaveVerificationOutboundService(GoalService):
     ) -> str:
         """Retrieve details of any currently pending leave requests for the employee to verify during an outbound call."""
         self.log_action("get_pending_leave_request", employee_id=employee_id)
-        return await execute_get_pending_leave_request(
-            employee_id=employee_id,
-            context=context,
-        )
+        err = require_verified(context, employee_id)
+        if err:
+            return err
+        emp_id = get_verified_id(context, employee_id)
+        res = self.leave_service.get_pending_leave_request(emp_id)
+        return res["message"]
 
     @function_tool
     async def record_leave_verification_reason(
@@ -69,9 +67,18 @@ class LeaveVerificationOutboundService(GoalService):
     ) -> str:
         """Record the employee's verbal explanation for their pending leave request so the approving manager has full context."""
         self.log_action("record_leave_verification_reason", request_id=request_id)
-        return await execute_record_leave_verification_reason(
-            request_id=request_id,
-            reason=reason,
-            context=context,
-        )
+        res = self.leave_service.record_leave_verification_reason(request_id, reason)
+        return res["message"]
 
+
+# ── Standalone tool execution helpers & aliases ───────────────────────────────
+_default_outbound_goal = LeaveVerificationOutboundService()
+
+async def get_pending_leave_request(employee_id: str = "", context: RunContext = None) -> str:
+    return await _default_outbound_goal.get_pending_leave_request(context=context, employee_id=employee_id)
+
+async def record_leave_verification_reason(request_id: int, reason: str, context: RunContext = None) -> str:
+    return await _default_outbound_goal.record_leave_verification_reason(request_id=request_id, reason=reason, context=context)
+
+execute_get_pending_leave_request = get_pending_leave_request
+execute_record_leave_verification_reason = record_leave_verification_reason

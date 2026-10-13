@@ -1,7 +1,7 @@
 """
 goals/__init__.py
 
-Exports all Goal Service classes and the base class.
+Exports all Goal Service classes, base class, and security/validation helpers.
 
 Ordered list GOALS reflects the canonical order shown in the builder UI.
 INBOUND_GOALS  — all goals active for standard inbound calls
@@ -9,6 +9,7 @@ OUTBOUND_GOALS — goals added for outbound leave_verification calls
 """
 
 from goals.base import GoalService, GoalMeta
+from goals.helpers import clean_id, require_verified, get_verified_id
 
 from goals.g01_identity_verification       import IdentityVerificationService
 from goals.g02_leave_balance               import LeaveBalanceService
@@ -66,6 +67,9 @@ OUTBOUND_REMINDER_GOALS: list[type[GoalService]] = [
 __all__ = [
     "GoalService",
     "GoalMeta",
+    "clean_id",
+    "require_verified",
+    "get_verified_id",
     "ALL_GOAL_CLASSES",
     "INBOUND_GOALS",
     "OUTBOUND_LEAVE_VERIFICATION_GOALS",
@@ -85,4 +89,3 @@ __all__ = [
     "LeaveVerificationOutboundService",
     "CoordinatorTransferService",
 ]
-

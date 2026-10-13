@@ -467,5 +467,12 @@ class AgentToolsController:
         except Exception as e:
             logger.debug(f"[AgentToolsController] Declarative tools compilation note: {e}")
 
+    # Aliases for backwards compatibility
+    registry_all_tools = get_all_tools
+    registry_goal_tools = get_goal_tools
+    registry_tool_names = get_tool_names
+    registry_tool_count = get_tool_count
+    registry_goal_summary = get_goal_summary
+
 
 __all__ = ["AgentToolsController"]

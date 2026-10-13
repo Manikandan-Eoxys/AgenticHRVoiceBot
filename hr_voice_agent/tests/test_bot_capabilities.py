@@ -29,16 +29,23 @@ from services.grievance_service import GrievanceService
 from services.ticket_service import TicketService
 
 from database.db import run_startup_check
-from tools.policy_tools import get_hr_policy, check_company_holiday, list_upcoming_company_holidays
-from tools.leave_tools import get_leave_balance, check_leave_availability, get_leave_request_status, send_manager_leave_reminder
-from tools.attendance_tools import check_attendance_status, get_late_marks, submit_attendance_regularization
-from tools.wfh_tools import check_wfh_eligibility, get_wfh_quota_balance, apply_wfh_request
-from tools.payroll_tools import get_salary_credit_date, get_basic_salary_info, get_salary_deductions_info, check_payslip_status
-from tools.grievance_tools import get_code_of_conduct_policy, report_confidential_grievance
-from tools.ticket_tools import raise_hr_ticket, check_my_hr_tickets
-from tools.reminder_tools import (
+from goals.g08_hr_policy import (
+    get_hr_policy,
+    get_code_of_conduct_policy,
+    report_confidential_grievance,
+    raise_hr_ticket,
+    check_my_hr_tickets,
     check_pending_policy_acknowledgements,
     acknowledge_hr_policy,
+)
+from goals.g09_calendar import check_company_holiday, list_upcoming_company_holidays
+from goals.g02_leave_balance import get_leave_balance
+from goals.g03_leave_application import check_leave_availability
+from goals.g04_leave_status import get_leave_request_status, send_manager_leave_reminder
+from goals.g05_attendance import check_attendance_status, get_late_marks, submit_attendance_regularization
+from goals.g06_wfh import check_wfh_eligibility, get_wfh_quota_balance, apply_wfh_request
+from goals.g07_payroll import get_salary_credit_date, get_basic_salary_info, get_salary_deductions_info, check_payslip_status
+from goals.g10_reminders import (
     schedule_employee_reminder,
     check_my_scheduled_reminders,
     acknowledge_scheduled_reminder,
