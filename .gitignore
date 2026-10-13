@@ -54,3 +54,6 @@ bin/lib/
 Backup/
 backup/
 *.zip
+
+# Ollama runtime libraries - do not commit
+hr_voice_agent/bin/lib/ollama/
