@@ -9,6 +9,7 @@ Layer flow:
   Agent / LLM -> Goal 9 (g09_calendar) -> PolicyService (services layer) -> DB
 """
 
+from typing import Any, cast
 from livekit.agents import function_tool
 
 from goals.base import GoalService, GoalMeta
@@ -45,7 +46,7 @@ class CalendarService(GoalService):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.policy_service = PolicyService()
+        self.policy_service: PolicyService = PolicyService()
 
     @function_tool
     async def check_company_holiday(self, target_date: str) -> str:
@@ -69,10 +70,10 @@ class CalendarService(GoalService):
 _default_calendar_goal = CalendarService()
 
 async def check_company_holiday(target_date: str) -> str:
-    return await _default_calendar_goal.check_company_holiday(target_date)
+    return await cast(Any, _default_calendar_goal).check_company_holiday(target_date)
 
 async def list_upcoming_company_holidays(limit: int = 5) -> str:
-    return await _default_calendar_goal.list_upcoming_company_holidays(limit)
+    return await cast(Any, _default_calendar_goal).list_upcoming_company_holidays(limit)
 
 execute_check_company_holiday = check_company_holiday
 execute_list_upcoming_company_holidays = list_upcoming_company_holidays

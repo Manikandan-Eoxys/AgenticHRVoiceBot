@@ -20,6 +20,7 @@ import os
 import time
 from datetime import date
 from pathlib import Path
+from typing import Any, cast
 
 import re
 import aiohttp
@@ -62,6 +63,23 @@ _env_path = Path(__file__).resolve().parent / ".env"
 if not _env_path.exists():
     _env_path = Path(__file__).resolve().parent / ".env.local"
 load_dotenv(_env_path)
+
+# Ensure prewarm logs (INITIALIZING → PREWARMING → READY) are visible in the terminal.
+# MonitoringHandler (installed above) ships logs to HTTP only — not to the terminal.
+# Explicitly add a stderr StreamHandler so startup logs appear in the console.
+
+import sys as _sys
+_root = logging.getLogger()
+_root.setLevel(logging.DEBUG)   # unconditional: root defaults to WARNING, not NOTSET
+_has_stream = any(
+    isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) in (_sys.stderr, _sys.stdout)
+    for h in _root.handlers
+)
+if not _has_stream:
+    _sh = logging.StreamHandler(_sys.stderr)
+    _sh.setLevel(logging.DEBUG)
+    _sh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s %(name)s - %(message)s"))
+    _root.addHandler(_sh)
 
 logger = logging.getLogger("agent")
 
@@ -165,7 +183,7 @@ DTMF_FREQUENCIES: dict[str, tuple[float, float]] = {
 
 def _dtmf_samples(sample_rate: int, digit: str, duration_s: float = 0.14, amplitude: int = 5500) -> np.ndarray:
     """Generates authentic ITU-T dual-frequency sine waves for telephone DTMF keys with fade-in/out."""
-    freqs = DTMF_FREQUENCIES.get(str(digit).upper())
+    freqs = DTMF_FREQUENCIES.get(digit.upper())
     if not freqs:
         return np.zeros(int(sample_rate * duration_s), dtype=np.int16)
     f1, f2 = freqs
@@ -210,8 +228,8 @@ class DtmfPlayer:
 
     def play_tone(self, digit: str) -> None:
         """Enqueues digit for immediate dual-tone audio playback."""
-        if str(digit).upper() in DTMF_FREQUENCIES:
-            self._queue.put_nowait(str(digit))
+        if digit.upper() in DTMF_FREQUENCIES:
+            self._queue.put_nowait(digit)
 
     async def _play_worker(self) -> None:
         while True:
@@ -364,7 +382,7 @@ class DtmfCollector:
         return self._collecting
 
     async def on_dtmf(self, digit: str) -> None:
-        d = str(digit).strip().upper()
+        d = digit.strip().upper()
         if not d:
             return
 
@@ -402,10 +420,8 @@ class DtmfCollector:
                 if not self._collecting and self.session and not getattr(self.session, "verified_employee_id", None):
                     self._buffer.clear()
                     logger.info(f"🔢 [Keypad DTMF] Caller typed full ID '{cand}' at prompt. Triggering verification.")
-                    asyncio.create_task(
-                        self.session.generate_reply(
-                            user_input=f"The caller entered employee ID {cand} on their phone keypad."
-                        )
+                    self.session.generate_reply(
+                        user_input=f"The caller entered employee ID {cand} on their phone keypad."
                     )
 
     def on_spoken_text(self, text: str) -> None:
@@ -576,7 +592,7 @@ async def _stop_call_recording(job_ctx: agents.JobContext, egress_id: str) -> No
 async def _download_and_cleanup_recording(job_ctx: agents.JobContext, egress_id: str) -> None:
     """Polls until egress finishes, downloads from S3 into RECORDINGS_LOCAL_DIR, then deletes S3 copy."""
     try:
-        import boto3
+        import boto3  # type: ignore
     except ImportError:
         logger.warning("boto3 not installed — skipping recording download.")
         return
@@ -654,8 +670,11 @@ Today's actual date is {today_str}. Use this as ground truth for every relative 
 🔒 1. IDENTITY VERIFICATION GATE
 ════════════════════════════════════════════════════════════════
 - At the start of the call, greet the caller and ask for their 4-digit employee ID (1001 to 1015).
-- Look up the ID, read back their full name, and ask for confirmation: "This is employee ID [ID], [Name], is that correct?"
-- When confirmed YES: lock the session to this employee ID immediately before performing any HR lookup.
+- When the caller provides an employee ID:
+  * You MUST IMMEDIATELY call the tool `get_employee_by_id(employee_id=...)` to look up the caller's actual name in the database.
+  * NEVER invent, guess, or hallucinate employee names. You do NOT have names in memory; you must get them from `get_employee_by_id`.
+  * Read back the exact name returned by the tool: "This is employee ID [ID], [Name], is that correct?"
+- When the caller confirms YES: call `confirm_employee_identity(employee_id=...)` to lock the session immediately before performing any HR action.
 - If verification fails (wrong ID, denied name, or unclear speech): say ONCE:
   "Please enter your 4-digit employee ID using your phone keypad or keyboard, or say it one digit at a time."
   and invoke the keypad collection tool in that same turn.
@@ -788,7 +807,7 @@ class Assistant(Agent):
 
         super().__init__(
             instructions=instructions,
-            tools=active_tools,         # ← All @function_tool methods from ALL GoalServices
+            tools=cast(list[Any], active_tools),         # ← All @function_tool methods from ALL GoalServices
         )
 
     async def end_call(self, context: RunContext) -> None:
@@ -827,6 +846,16 @@ agent_worker_name = WORKER_AGENT_NAME
 def _ensure_global_fsm_running() -> None:
     """Lazily starts GlobalMonitorFSM and VoiceController 12-state FSM tasks."""
     voice_controller.ensure_fsm_running()
+
+def _worker_setup(proc: agents.JobProcess) -> None:
+    """Prewarm hook called by LiveKit on worker process spawn (synchronous only).
+    setup_fnc is called before the async event loop exists — never call
+    asyncio.create_task() / ensure_future() here.
+    FSM tasks are started later inside _my_agent_impl() which runs in async context.
+    """
+    voice_controller.request_prewarm(proc)
+
+server.setup_fnc = _worker_setup
 
 
 async def on_job_request(job_req: agents.JobRequest) -> None:
@@ -872,13 +901,19 @@ async def _my_agent_impl(ctx: agents.JobContext):
     stt_lang = os.environ.get("DEEPGRAM_LANGUAGE", "en")
 
     # Engines: Direct Deepgram STT + FallbackLLM (Cloud -> Ollama) + Configurable TTS (Cartesia via LiveKit Inference)
-    stt_engine = STT(api_key=DEEPGRAM_API_KEY, model="nova-3", language=stt_lang)
-    cloud_llm = inference.LLM(model=llm_model)
-    local_ollama = OllamaLLM(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL)
-    llm_engine = FallbackLLM(primary_llm=cloud_llm, fallback_llm=local_ollama)
+    stt_engine = STT(api_key=DEEPGRAM_API_KEY or "", model="nova-3", language=stt_lang)
+    local_ollama = OllamaLLM(model=OLLAMA_MODEL.strip(), base_url=OLLAMA_BASE_URL, think=False)
+    # Read USE_CLOUD_LLM from .env; True only if it is "true" or "1"
+    # (case-insensitive), otherwise False.
+    use_cloud = os.getenv("USE_CLOUD_LLM", "false").lower() in ("true", "1")
+    if use_cloud:
+        cloud_llm = inference.LLM(model=llm_model)
+        llm_engine = FallbackLLM(primary_llm=cloud_llm, fallback_llm=local_ollama)
+    else:
+        llm_engine = local_ollama
 
     if tts_provider == "deepgram":
-        tts_engine = DeepgramTTS(api_key=DEEPGRAM_API_KEY)
+        tts_engine = DeepgramTTS(api_key=DEEPGRAM_API_KEY or "")
     else:
         tts_engine = inference.TTS(model=tts_model, voice=tts_voice)
 
@@ -904,7 +939,7 @@ async def _my_agent_impl(ctx: agents.JobContext):
     collector = DtmfCollector(player=dtmf_player, session=session)
 
     def _on_sip_dtmf(ev: rtc.SipDTMF):
-        digit = str(ev.digit).strip()
+        digit = (ev.digit).strip()
         logger.info(f"📞 [SIP DTMF Event] Received digit '{digit}' from participant {getattr(ev.participant, 'identity', 'unknown')}")
         # Keypad barge-in: stop speech if agent is currently speaking
         if session.agent_state == "speaking":
@@ -975,12 +1010,12 @@ async def _my_agent_impl(ctx: agents.JobContext):
         if not getattr(session, "coordinator_connected", False):
             return
         logger.info("Coordinator left the call — re-engaging with the caller.")
-        session.coordinator_connected = False
+        setattr(session, "coordinator_connected", False)
         session.input.set_audio_enabled(True)
         session.output.set_audio_enabled(True)
         egress_id = getattr(session, "recording_egress_id", None)
         if egress_id:
-            session.recording_egress_id = None
+            setattr(session, "recording_egress_id", None)
             await _stop_call_recording(ctx, egress_id)
         await session.generate_reply(
             instructions=(
@@ -1011,7 +1046,7 @@ async def _my_agent_impl(ctx: agents.JobContext):
                     logger.warning(f"Error finalizing recorder: {err}")
             egress_id = getattr(session, "recording_egress_id", None)
             if egress_id:
-                session.recording_egress_id = None
+                setattr(session, "recording_egress_id", None)
                 await _stop_call_recording(ctx, egress_id)
             await _hangup(ctx)
         asyncio.create_task(_cleanup())
@@ -1050,6 +1085,10 @@ async def _my_agent_impl(ctx: agents.JobContext):
     # Participant events, agent state, idle watchdog, and shutdown hook are all
     # handled inside the controller — agent.py only keeps recorder/DTMF concerns.
     IDLE_HANGUP_SECONDS = float(os.environ.get("IDLE_HANGUP_SECONDS", "60.0"))
+
+    def _handle_coordinator_left() -> None:
+        asyncio.create_task(_on_coordinator_left_cb())
+
     voice_controller.attach_session(
         session,
         assistant=assistant,
@@ -1057,7 +1096,7 @@ async def _my_agent_impl(ctx: agents.JobContext):
         idle_hangup_seconds=IDLE_HANGUP_SECONDS,
         on_blocked=_on_blocked_cb,
         on_caller_disconnect=_on_caller_disconnect_cb,
-        on_coordinator_left=lambda: asyncio.create_task(_on_coordinator_left_cb()),
+        on_coordinator_left=_handle_coordinator_left,
         is_call_blocked_fn=is_call_blocked,
     )
 
@@ -1076,7 +1115,7 @@ async def _my_agent_impl(ctx: agents.JobContext):
 
     # Start local session recording (MP3 audio and Conversation_log)
     recorder = SessionRecorder()
-    session.recorder = recorder
+    setattr(session, "recorder", recorder)
     await recorder.start(ctx, session)
 
     # Allow SIP media stream 1s to settle before speaking initial greeting
@@ -1087,16 +1126,19 @@ async def _my_agent_impl(ctx: agents.JobContext):
     if call_metadata.get("call_type") == "leave_verification":
         employee_name = call_metadata.get("employee_name", "there")
         await session.say(
-            f"Hello {employee_name}, this is the HR voice assistant calling regarding your leave request. Could you please confirm your identity to proceed?"
+            f"Hello {employee_name}, this is the HR voice assistant calling regarding your leave request. Could you please confirm your identity to proceed?",
+            allow_interruptions=False,
         )
     elif call_metadata.get("call_type") in ("scheduled_reminder", "policy_acknowledgement"):
         employee_name = call_metadata.get("employee_name", "there")
         await session.say(
-            f"Hello {employee_name}, this is the HR voice assistant with a scheduled notification. Could you please confirm your identity to get started?"
+            f"Hello {employee_name}, this is the HR voice assistant with a scheduled notification. Could you please confirm your identity to get started?",
+            allow_interruptions=False,
         )
     else:
         await session.say(
-            "Hello! Welcome to Eoxys HR voice assistant. Please state or enter your employee ID to get started."
+            "Hello! Welcome to Eoxys HR voice assistant. Please state or enter your employee ID to get started.",
+            allow_interruptions=False,
         )
 
 

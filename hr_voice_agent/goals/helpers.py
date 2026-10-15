@@ -14,7 +14,7 @@ def clean_id(employee_id: str | int) -> str:
     return re.sub(r"[^0-9]", "", str(employee_id or ""))
 
 
-def require_verified(context: RunContext, employee_id: str | int = "") -> str | None:
+def require_verified(context: RunContext | None, employee_id: str | int = "") -> str | None:
     """Security gate: goal action must only ever act on the employee ID that was
     actually verified for THIS call."""
     if not context or not hasattr(context, "session"):
@@ -38,7 +38,7 @@ def require_verified(context: RunContext, employee_id: str | int = "") -> str | 
     return None
 
 
-def get_verified_id(context: RunContext, employee_id: str | int = "") -> str:
+def get_verified_id(context: RunContext | None, employee_id: str | int = "") -> str:
     """Returns the cleaned verified employee ID from context or parameter."""
     if context and hasattr(context, "session"):
         verified = getattr(context.session, "verified_employee_id", None)

@@ -9,7 +9,7 @@ Actions:
 Layer flow:
   Agent / LLM -> Goal 11 (g11_benefits) -> EmployeeService (services layer) -> DB
 """
-
+from typing import Any, cast
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
@@ -51,7 +51,7 @@ class EmployeeBenefitsService(GoalService):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.employee_service = EmployeeService()
+        self.employee_service: EmployeeService = EmployeeService()
 
     @function_tool
     async def list_insurance_plans(self) -> str:
@@ -89,11 +89,11 @@ _default_benefits_goal = EmployeeBenefitsService()
 async def list_insurance_plans() -> str:
     return await _default_benefits_goal.list_insurance_plans()
 
-async def get_insurance_info(employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_benefits_goal.get_insurance_info(context=context, employee_id=employee_id)
+async def get_insurance_info(employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any,_default_benefits_goal).get_insurance_info(context=context, employee_id=employee_id)
 
-async def get_employee_schemes(employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_benefits_goal.get_employee_schemes(context=context, employee_id=employee_id)
+async def get_employee_schemes(employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any,_default_benefits_goal).get_employee_schemes(context=context, employee_id=employee_id)
 
 execute_list_insurance_plans = list_insurance_plans
 execute_get_insurance_info = get_insurance_info

@@ -11,6 +11,7 @@ Layer flow:
   Agent / LLM -> Goal 7 (g07_payroll) -> PayrollService (services layer) -> DB
 """
 
+from typing import Any, cast
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
@@ -52,7 +53,7 @@ class PayrollService(GoalService):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.payroll_service = PayrollBackendService()
+        self.payroll_service: PayrollBackendService = PayrollBackendService()
 
     @function_tool
     async def get_salary_credit_date(self) -> str:
@@ -117,18 +118,18 @@ class PayrollService(GoalService):
 _default_payroll_goal = PayrollService()
 
 async def get_salary_credit_date() -> str:
-    return await _default_payroll_goal.get_salary_credit_date()
+    return await cast(Any, _default_payroll_goal).get_salary_credit_date()
 
-async def get_basic_salary_info(employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_payroll_goal.get_basic_salary_info(context=context, employee_id=employee_id)
+async def get_basic_salary_info(employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any, _default_payroll_goal).get_basic_salary_info(context=context, employee_id=employee_id)
 
 async def get_salary_deductions_info(
     month_year: str = "",
     employee_id: str = "",
-    context: RunContext = None,
+    context: RunContext | None = None,
     month: str = "",
 ) -> str:
-    return await _default_payroll_goal.get_salary_deductions_info(
+    return await cast(Any, _default_payroll_goal).get_salary_deductions_info(
         context=context,
         employee_id=employee_id,
         month_year=month_year,
@@ -138,10 +139,10 @@ async def get_salary_deductions_info(
 async def check_payslip_status(
     month_year: str = "",
     employee_id: str = "",
-    context: RunContext = None,
+    context: RunContext | None = None,
     month: str = "",
 ) -> str:
-    return await _default_payroll_goal.check_payslip_status(
+    return await cast(Any, _default_payroll_goal).check_payslip_status(
         context=context,
         employee_id=employee_id,
         month=month,

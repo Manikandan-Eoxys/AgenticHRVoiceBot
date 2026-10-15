@@ -10,6 +10,7 @@ Layer flow:
   Agent / LLM -> Goal 10 (g10_reminders) -> ReminderService (services layer) -> DB
 """
 
+from typing import Any, cast
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
@@ -49,7 +50,7 @@ class RemindersService(GoalService):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.reminder_service = ReminderService()
+        self.reminder_service: ReminderService = ReminderService()
 
     @function_tool
     async def schedule_employee_reminder(
@@ -123,12 +124,12 @@ async def schedule_employee_reminder(
     reminder_topic: str = "",
     scheduled_time: str = "",
     employee_id: str = "",
-    context: RunContext = None,
+    context: RunContext | None = None,
     reminder_type: str = "",
     scheduled_date: str = "",
     reminder_notes: str = "",
 ) -> str:
-    return await _default_reminders_goal.schedule_employee_reminder(
+    return await cast(Any,_default_reminders_goal).schedule_employee_reminder(
         reminder_type=reminder_type,
         scheduled_date=scheduled_date,
         reminder_notes=reminder_notes,
@@ -137,18 +138,17 @@ async def schedule_employee_reminder(
         reminder_topic=reminder_topic,
         scheduled_time=scheduled_time,
     )
-
-async def check_my_scheduled_reminders(employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_reminders_goal.check_my_scheduled_reminders(context=context, employee_id=employee_id)
+async def check_my_scheduled_reminders(employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any,_default_reminders_goal).check_my_scheduled_reminders(context=context, employee_id=employee_id)
 
 async def acknowledge_scheduled_reminder(
     reminder_topic_or_id: str = "",
     response_text: str = "",
     employee_id: str = "",
-    context: RunContext = None,
+    context: RunContext | None = None,
     reminder_id: int = 0,
 ) -> str:
-    return await _default_reminders_goal.acknowledge_scheduled_reminder(
+    return await cast(Any,_default_reminders_goal).acknowledge_scheduled_reminder(
         context=context,
         reminder_id=reminder_id,
         employee_id=employee_id,

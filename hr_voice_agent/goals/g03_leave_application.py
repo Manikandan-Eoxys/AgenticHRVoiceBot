@@ -10,6 +10,7 @@ Layer flow:
   Agent / LLM -> Goal 3 (g03_leave_application) -> LeaveService (services layer) -> DB
 """
 
+from typing import Any, cast
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
@@ -48,7 +49,7 @@ class LeaveApplicationService(GoalService):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.leave_service = LeaveService()
+        self.leave_service: LeaveService = LeaveService()
 
     @function_tool
     async def check_leave_availability(
@@ -123,19 +124,36 @@ async def check_leave_availability(
     leave_type: str,
     from_date: str = "",
     to_date: str = "",
-    context: RunContext = None,
+    context: RunContext | None = None,
     employee_id: str = "",
     start_date: str = "",
     end_date: str = "",
-    **kwargs
+    **kwargs: Any,
 ) -> str:
-    return await _default_leave_app_goal.check_leave_availability(
+    from goals.helpers import clean_id
+    is_emp_ctx = hasattr(employee_id, "session")
+    is_ctx_ctx = hasattr(context, "session")
+    if clean_id(leave_type) and (is_emp_ctx or not clean_id(employee_id if not is_emp_ctx else "")) and from_date and not any(ch.isdigit() for ch in from_date.replace("-", "")):
+        actual_emp = leave_type
+        actual_type = from_date
+        actual_from = to_date
+        actual_to = str(context) if isinstance(context, str) else ""
+        actual_ctx = employee_id if is_emp_ctx else (context if is_ctx_ctx else None)
+        return await cast(Any, _default_leave_app_goal).check_leave_availability(
+            leave_type=actual_type,
+            from_date=actual_from,
+            to_date=actual_to,
+            context=actual_ctx,
+            employee_id=actual_emp,
+            **kwargs,
+        )
+    return await cast(Any, _default_leave_app_goal).check_leave_availability(
         leave_type=leave_type,
         from_date=from_date or start_date,
         to_date=to_date or end_date,
         context=context,
         employee_id=employee_id,
-        **kwargs
+        **kwargs,
     )
 
 async def confirm_leave_request(
@@ -143,24 +161,32 @@ async def confirm_leave_request(
     from_date: str = "",
     to_date: str = "",
     reason: str = "",
-    context: RunContext = None,
+    context: RunContext | None = None,
     employee_id: str = "",
     start_date: str = "",
     end_date: str = "",
-    **kwargs
+    **kwargs: Any,
 ) -> str:
-    return await _default_leave_app_goal.confirm_leave_request(
+    return await cast(Any, _default_leave_app_goal).confirm_leave_request(
         leave_type=leave_type,
         from_date=from_date or start_date,
         to_date=to_date or end_date,
         reason=reason,
         context=context,
         employee_id=employee_id,
-        **kwargs
+        **kwargs,
     )
 
-async def cancel_leave_request(employee_id: str = "", request_id: int = 0, context: RunContext = None) -> str:
-    return await _default_leave_app_goal.cancel_leave_request(context=context, request_id=request_id, employee_id=employee_id)
+async def cancel_leave_request(
+    employee_id: str = "",
+    request_id: int = 0,
+    context: RunContext | None = None,
+) -> str:
+    return await cast(Any, _default_leave_app_goal).cancel_leave_request(
+        context=context,
+        request_id=request_id,
+        employee_id=employee_id,
+    )
 
 execute_check_leave_availability = check_leave_availability
 execute_confirm_leave_request = confirm_leave_request

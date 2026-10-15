@@ -73,7 +73,7 @@ class VoiceController:
         self,
         ollama_model: str = OLLAMA_MODEL,
         ollama_base_url: str = OLLAMA_BASE_URL,
-        deepgram_api_key: str = DEEPGRAM_API_KEY,
+        deepgram_api_key: str | None = DEEPGRAM_API_KEY,
         system_prompt: str = SYSTEM_PROMPT,
         goal_classes: list[type[GoalService]] | None = None,
         call_type: str = "inbound",
@@ -81,7 +81,7 @@ class VoiceController:
         collector: Any = None,
         call_metadata: dict | None = None,
     ):
-        self.ollama_model = ollama_model
+        self.ollama_model = (ollama_model or "qwen3:8b").strip()
         self.ollama_base_url = ollama_base_url
         self.deepgram_api_key = deepgram_api_key
         self.system_prompt = system_prompt
@@ -237,7 +237,7 @@ class VoiceController:
         on_blocked: Callable[[], None] | None = None,
         on_caller_disconnect: Callable[[], None] | None = None,
         on_coordinator_left: Callable[[], None] | None = None,
-        is_call_blocked_fn: Callable[[Any], tuple[bool, str]] | None = None,
+        is_call_blocked_fn: Callable[[Any], tuple[bool, str | None]] | None = None,
     ) -> None:
         """
         Attaches the active LiveKit AgentSession and Assistant to this VoiceController.
@@ -548,12 +548,23 @@ class VoiceController:
     # DUAL-FSM EVENT OBSERVERS (LiveKit AgentServer Integration)
     # -----------------------
     def on_worker_start(self) -> None:
-        """Called at worker startup to prewarm Ollama & DB."""
-        self._set_state(ControllerState.INITIALIZING)
-        self._set_state(ControllerState.PREWARMING)
-        self._prime_ollama_model()  # Warm up Ollama model (guarded by marker file)
-        self._set_state(ControllerState.READY)
-        logger.info(f"✅ [VoiceController] Worker startup complete — READY for call jobs.")
+        """Drives the 12-state FSM through UNINITIALIZED → INITIALIZING → PREWARMING → READY.
+
+        This is always called synchronously from module-level (run_worker_startup_once) in
+        the job subprocess — there is NEVER a running event loop at that point, so we must
+        use asyncio.run() to create a temporary loop, run all startup states to completion,
+        and return. Never call ensure_future/create_task here.
+        """
+        async def _run_startup_fsm():
+            # Step 1: UNINITIALIZED -> INITIALIZING (logs "🚀 Voice Controller 12-State FSM Started")
+            await self.run_state_machine()
+            # Step 2: INITIALIZING -> PREWARMING (runs _build_engines())
+            await self.run_state_machine()
+            # Step 3: PREWARMING -> READY (starts scheduler & primes Ollama)
+            await self.run_state_machine()
+
+        asyncio.run(_run_startup_fsm())
+        logger.info("✅ [VoiceController] Worker startup complete — READY for call jobs.")
 
     def run_worker_startup_once(self, extra_checks: Callable[[], None] | None = None) -> None:
         """Prewarm Ollama and run optional extra checks (e.g. DB health) at most once
@@ -697,41 +708,54 @@ class VoiceController:
         self._set_state(ControllerState.ERROR)  # Resets watchdog timer; logs the transition
         logger.error(f"❌ [VoiceController] Error: {error}")
 
+    # def _build_engines(self) -> None:
+    #     """Verify engine configuration during controller startup.
+    #     Actual session engines (STT, LLM, TTS) are constructed per-session
+    #     in agent.py (_my_agent_impl).
+    #     """
+    #     # Read USE_CLOUD_LLM from .env; True only if it is "true" or "1" (case-insensitive), otherwise False
+    #     use_cloud = os.getenv("USE_CLOUD_LLM", "false").lower() in ("true", "1")
+    #     llm_model = os.getenv("LIVEKIT_LLM_MODEL", "google/gemma-4-31b-it")
+    #     if use_cloud:
+    #         logger.info(
+    #             "[FSM] Engine configuration verified: Hybrid LLM (Primary: %s -> Fallback: Ollama %s).",
+    #             llm_model,
+    #             self.ollama_model,
+    #         )
+    #     else:
+    #         logger.info(
+    #             "[FSM] Engine configuration verified: Local Ollama (%s).",
+    #             self.ollama_model,
+    #         )
     def _build_engines(self) -> None:
-        from livekit.plugins.deepgram import STT, TTS as DeepgramTTS
-        from livekit.agents import inference
-        from ollama_llm import OllamaLLM, FallbackLLM
+        """Log the configured LLM setup at worker startup.
 
-        local_llm = OllamaLLM(
-            model=self.ollama_model,
-            base_url=self.ollama_base_url,
-            think=False,
-            timeout=60.0,
-        )
+        Nothing is built here. The real STT, LLM and TTS engines are created
+        per call in agent.py (_my_agent_impl). This method only prints which
+        LLM mode will be used, so you can check it in the terminal.
+        """
 
-        use_cloud = os.getenv("USE_CLOUD_LLM", "true").lower() in ("true", "1")
+        # Read USE_CLOUD_LLM from .env; True only if it is "true" or "1"
+        # (case-insensitive), otherwise False.
+        use_cloud = os.getenv("USE_CLOUD_LLM", "false").lower() in ("true", "1")
+
+        # Cloud model name from .env, with a default if the variable is not set.
+        llm_model = os.getenv("LIVEKIT_LLM_MODEL", "google/gemma-4-31b-it")
+
         if use_cloud:
-            try:
-                cloud_llm = inference.LLM(model="openai/gpt-4o-mini")
-                self.llm = FallbackLLM(primary_llm=cloud_llm, fallback_llm=local_llm)
-                logger.info("[FSM] Hybrid LLM configured: Primary (LiveKit Cloud gpt-4o-mini) → Fallback (Local Ollama %s).", self.ollama_model)
-            except Exception as exc:
-                logger.warning("[FSM] LiveKit Cloud LLM setup failed (%s). Falling back to local Ollama.", exc)
-                self.llm = local_llm
+            # Cloud mode: the cloud LLM is tried first, Ollama is the backup.
+            # %s placeholders are filled by the logger with the values after the string.
+            logger.info(
+                "[FSM] Engine configuration verified: Hybrid LLM (Primary: %s -> Fallback: Ollama %s).",
+                llm_model,          # first %s  -> cloud model name
+                self.ollama_model,  # second %s -> local Ollama model name
+            )
         else:
-            self.llm = local_llm
-            logger.info("[FSM] Local OllamaLLM (%s) constructed.", self.ollama_model)
-
-        self.stt = STT(
-            api_key=self.deepgram_api_key,
-            model="nova-3",
-        )
-        logger.info("[FSM] STT (Deepgram Nova-3 Direct) constructed.")
-
-        self.tts = DeepgramTTS(
-            api_key=self.deepgram_api_key,
-        )
-        logger.info("[FSM] TTS (DeepgramTTS Direct) constructed.")
+            # Local-only mode: no cloud LLM, only Ollama is used.
+            logger.info(
+                "[FSM] Engine configuration verified: Local Ollama (%s).",
+                self.ollama_model,
+            )
 
     def _prime_ollama_model(self) -> None:
         """Synchronous warm-up request so the first real turn isn't slow.
@@ -744,12 +768,13 @@ class VoiceController:
 
             payload = json.dumps({
                 "model": self.ollama_model,
-                "prompt": self.system_prompt,  # Warm up with system prompt
+                "prompt": "Hello",  # Warm up model into memory quickly
                 "stream": False,  # Non-streaming single response
                 "keep_alive": -1,  # Keep model loaded indefinitely in GPU/RAM
+                "think": False,  # Top-level parameter in Ollama to suppress chain-of-thought
                 "options": {
                     "num_predict": 1,  # Generate only 1 token for warm-up
-                    "think": False,  # Disable chain-of-thought for speed
+                    "num_thread": 8,  # Leverage CPU cores
                 },
             }).encode()
 
@@ -804,12 +829,6 @@ class VoiceController:
             # -----------------------------------------------------------------
             case ControllerState.PREWARMING:
                 try:
-                    # Cache engines in LiveKit process userdata for session reuse
-                    if self._pending_proc is not None:
-                        self._pending_proc.userdata["llm"] = self.llm
-                        self._pending_proc.userdata["stt"] = self.stt
-                        self._pending_proc.userdata["tts"] = self.tts
-
                     # Start background sync jobs for IFS Cloud and SQL Server (once only)
                     if not self._scheduler_started:
                         start_scheduler()  # Start APScheduler periodic jobs

@@ -11,6 +11,7 @@ Layer flow:
   Agent / LLM -> Goal 5 (g05_attendance) -> AttendanceService (services layer) -> DB
 """
 
+from typing import Any, cast
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
@@ -50,7 +51,7 @@ class AttendanceService(GoalService):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.attendance_service = AttendanceBackendService()
+        self.attendance_service: AttendanceBackendService = AttendanceBackendService()
 
     @function_tool
     async def check_attendance_status(
@@ -126,11 +127,11 @@ class AttendanceService(GoalService):
 # ── Standalone tool execution helpers & aliases ───────────────────────────────
 _default_attendance_goal = AttendanceService()
 
-async def check_attendance_status(date_str: str = "today", employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_attendance_goal.check_attendance_status(context=context, date_str=date_str, employee_id=employee_id)
+async def check_attendance_status(date_str: str = "today", employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any, _default_attendance_goal).check_attendance_status(context=context, date_str=date_str, employee_id=employee_id)
 
-async def get_late_marks(employee_id: str = "", context: RunContext = None, month: int = 0) -> str:
-    return await _default_attendance_goal.get_late_marks(context=context, month=month, employee_id=employee_id)
+async def get_late_marks(employee_id: str = "", context: RunContext | None = None, month: int = 0) -> str:
+    return await cast(Any, _default_attendance_goal).get_late_marks(context=context, month=month, employee_id=employee_id)
 
 async def submit_attendance_regularization(
     punch_date: str = "",
@@ -138,10 +139,10 @@ async def submit_attendance_regularization(
     actual_time: str = "",
     reason: str = "",
     employee_id: str = "",
-    context: RunContext = None,
+    context: RunContext | None = None,
     date_str: str = "",
 ) -> str:
-    return await _default_attendance_goal.submit_attendance_regularization(
+    return await cast(Any, _default_attendance_goal).submit_attendance_regularization(
         punch_date=punch_date,
         punch_type=punch_type,
         actual_time=actual_time,
@@ -151,8 +152,8 @@ async def submit_attendance_regularization(
         date_str=date_str,
     )
 
-async def get_regularization_status(employee_id: str = "", context: RunContext = None, regularization_id: int = 0) -> str:
-    return await _default_attendance_goal.get_regularization_status(context=context, employee_id=employee_id, regularization_id=regularization_id)
+async def get_regularization_status(employee_id: str = "", context: RunContext | None = None, regularization_id: int = 0) -> str:
+    return await cast(Any, _default_attendance_goal).get_regularization_status(context=context, employee_id=employee_id, regularization_id=regularization_id)
 
 execute_check_attendance_status = check_attendance_status
 execute_get_late_marks = get_late_marks

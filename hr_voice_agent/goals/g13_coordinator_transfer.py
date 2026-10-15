@@ -111,7 +111,7 @@ class CoordinatorTransferService(GoalService):
 
         logger.info(f"✅ [Transfer] Coordinator answered: {coord_num} joined room {room.name}")
         if hasattr(context, "session") and context.session:
-            context.session.coordinator_connected = True
+            setattr(context.session, "coordinator_connected", True)
             try:
                 handle = context.session.say(
                     "Connecting you to the coordinator now.",

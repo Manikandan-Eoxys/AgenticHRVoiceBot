@@ -93,7 +93,7 @@ The backend and agent core are fully developed and functioning. Here is what exi
 
 ### 1. Python Agent Core (`hr_voice_agent/agent.py`)
 - **Speech-to-Text (STT)**: Deepgram streaming STT (Nova-2 model) with interim transcript updates.
-- **LLM Reasoning**: Supports local Ollama models (`qwen2.5:3b`, `qwen2.5:1.5b`) and OpenAI-compatible endpoints (`google/gemma-4-31b-it`).
+- **LLM Reasoning**: Supports local Ollama models (`qwen2.5:3b `, `qwen2.5:1.5b`) and OpenAI-compatible endpoints (`google/gemma-4-31b-it`).
 - **Text-to-Speech (TTS)**: Cartesia Sonic / Deepgram TTS streaming synthesized audio back into WebRTC.
 - **DTMF Keypad Engine**: In-band audio frequency detection (Goertzel algorithm) + WebRTC Data Channel packet consumer for employee ID input.
 - **Audio Call Recorder**: Records room audio to local storage and S3 via LiveKit Egress.
@@ -212,7 +212,7 @@ This is the control center for HR managers, supervisors, and developers.
    - Form interfaced with `GET/PUT /api/pages/config`.
    - Allows changing:
      - System prompt & personality instructions.
-     - LLM Model selection (`qwen2.5:3b`, `llama3.2`, `gemma`).
+     - LLM Model selection (`qwen2.5:3b `, `llama3.2`, `gemma`).
      - Voice provider & Voice ID (Cartesia Sonic, Deepgram Aura).
      - Temperature & response token limits.
      - Goal toggle switches (enable/disable specific HR capabilities with one click).

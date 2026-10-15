@@ -15,6 +15,7 @@ Layer flow:
   Agent / LLM -> Goal 8 (g08_hr_policy) -> PolicyService / GrievanceService / TicketService / ReminderService -> DB
 """
 
+from typing import Any, cast
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
@@ -68,10 +69,10 @@ class HRPolicyService(GoalService):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.policy_service = PolicyService()
-        self.grievance_service = GrievanceService()
-        self.reminder_service = ReminderService()
-        self.ticket_service = TicketService()
+        self.policy_service: PolicyService = PolicyService()
+        self.grievance_service: GrievanceService = GrievanceService()
+        self.reminder_service: ReminderService = ReminderService()
+        self.ticket_service: TicketService = TicketService()
 
     @function_tool
     async def get_leave_policy(self, leave_type: str) -> str:
@@ -188,19 +189,19 @@ class HRPolicyService(GoalService):
 _default_hr_policy_goal = HRPolicyService()
 
 async def get_leave_policy(leave_type: str) -> str:
-    return await _default_hr_policy_goal.get_leave_policy(leave_type)
+    return await cast(Any, _default_hr_policy_goal).get_leave_policy(leave_type)
 
 async def get_hr_policy(policy_name: str = "", topic: str = "") -> str:
-    return await _default_hr_policy_goal.get_hr_policy(topic=topic or policy_name)
+    return await cast(Any, _default_hr_policy_goal).get_hr_policy(topic=topic or policy_name)
 
 async def get_code_of_conduct_policy(topic: str = "") -> str:
-    return await _default_hr_policy_goal.get_code_of_conduct_policy(topic)
+    return await cast(Any, _default_hr_policy_goal).get_code_of_conduct_policy(topic)
 
-async def check_pending_policy_acknowledgements(employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_hr_policy_goal.check_pending_policy_acknowledgements(context=context, employee_id=employee_id)
+async def check_pending_policy_acknowledgements(employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any, _default_hr_policy_goal).check_pending_policy_acknowledgements(context=context, employee_id=employee_id)
 
-async def acknowledge_hr_policy(policy_name: str = "", employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_hr_policy_goal.acknowledge_hr_policy(policy_name=policy_name, context=context, employee_id=employee_id)
+async def acknowledge_hr_policy(policy_name: str = "", employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any, _default_hr_policy_goal).acknowledge_hr_policy(policy_name=policy_name, context=context, employee_id=employee_id)
 
 async def raise_hr_ticket(
     category: str = "",
@@ -208,9 +209,9 @@ async def raise_hr_ticket(
     description: str = "",
     priority: str = "Normal",
     employee_id: str = "",
-    context: RunContext = None,
+    context: RunContext | None = None,
 ) -> str:
-    return await _default_hr_policy_goal.raise_hr_ticket(
+    return await cast(Any, _default_hr_policy_goal).raise_hr_ticket(
         category=category,
         ticket_type=ticket_type,
         description=description,
@@ -219,16 +220,16 @@ async def raise_hr_ticket(
         employee_id=employee_id,
     )
 
-async def check_my_hr_tickets(employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_hr_policy_goal.check_my_hr_tickets(context=context, employee_id=employee_id)
+async def check_my_hr_tickets(employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any, _default_hr_policy_goal).check_my_hr_tickets(context=context, employee_id=employee_id)
 
 async def report_confidential_grievance(
     complaint_details: str = "",
     issue_type: str = "",
     employee_id: str = "",
-    context: RunContext = None,
+    context: RunContext | None = None,
 ) -> str:
-    return await _default_hr_policy_goal.report_confidential_grievance(
+    return await cast(Any, _default_hr_policy_goal).report_confidential_grievance(
         complaint_details=complaint_details,
         issue_type=issue_type,
         context=context,

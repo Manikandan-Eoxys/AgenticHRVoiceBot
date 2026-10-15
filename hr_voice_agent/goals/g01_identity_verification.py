@@ -9,7 +9,7 @@ Layer flow:
 """
 
 import logging
-from typing import Any
+from typing import Any, cast
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
@@ -49,7 +49,7 @@ class IdentityVerificationService(GoalService):
     def __init__(self, collector: Any = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.collector = collector
-        self.employee_service = EmployeeService()
+        self.employee_service: EmployeeService = EmployeeService()
 
     @function_tool
     async def confirm_employee_identity(self, employee_id: str, context: RunContext) -> str:
@@ -57,7 +57,7 @@ class IdentityVerificationService(GoalService):
         self.log_action("confirm_employee_identity", employee_id=employee_id)
         emp_id = clean_id(employee_id)
         if context and hasattr(context, "session"):
-            context.session.verified_employee_id = emp_id
+            setattr(context.session, "verified_employee_id", emp_id)
         return f"Identity locked to employee {emp_id} for this call."
 
     @function_tool
@@ -99,14 +99,14 @@ class IdentityVerificationService(GoalService):
 # ── Standalone tool execution helpers & aliases ───────────────────────────────
 _default_identity_goal = IdentityVerificationService()
 
-async def confirm_employee_identity(employee_id: str, context: RunContext) -> str:
-    return await _default_identity_goal.confirm_employee_identity(employee_id, context)
+async def confirm_employee_identity(employee_id: str, context: RunContext | None = None) -> str:
+    return await cast(Any, _default_identity_goal).confirm_employee_identity(employee_id, context)
 
 async def get_employee_by_id(employee_id: str) -> str:
-    return await _default_identity_goal.get_employee_by_id(employee_id)
+    return await cast(Any, _default_identity_goal).get_employee_by_id(employee_id)
 
 async def list_department_employees(department_name: str) -> str:
-    return await _default_identity_goal.list_department_employees(department_name)
+    return await cast(Any, _default_identity_goal).list_department_employees(department_name)
 
 execute_confirm_employee_identity = confirm_employee_identity
 execute_get_employee_by_id = get_employee_by_id

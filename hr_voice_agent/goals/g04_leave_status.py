@@ -9,6 +9,7 @@ Layer flow:
   Agent / LLM -> Goal 4 (g04_leave_status) -> LeaveService (services layer) -> DB
 """
 
+from typing import Any, cast
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
@@ -46,7 +47,7 @@ class LeaveStatusService(GoalService):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.leave_service = LeaveService()
+        self.leave_service: LeaveService = LeaveService()
 
     @function_tool
     async def get_leave_request_status(
@@ -86,11 +87,11 @@ class LeaveStatusService(GoalService):
 # ── Standalone tool execution helpers & aliases ───────────────────────────────
 _default_leave_status_goal = LeaveStatusService()
 
-async def get_leave_request_status(employee_id: str = "", request_id: int = 0, context: RunContext = None) -> str:
-    return await _default_leave_status_goal.get_leave_request_status(context=context, request_id=request_id, employee_id=employee_id)
+async def get_leave_request_status(employee_id: str = "", request_id: int = 0, context: RunContext | None = None) -> str:
+    return await cast(Any, _default_leave_status_goal).get_leave_request_status(context=context, request_id=request_id, employee_id=employee_id)
 
-async def send_manager_leave_reminder(employee_id: str = "", request_id: int = 0, context: RunContext = None) -> str:
-    return await _default_leave_status_goal.send_manager_leave_reminder(context=context, request_id=request_id, employee_id=employee_id)
+async def send_manager_leave_reminder(employee_id: str = "", request_id: int = 0, context: RunContext | None = None) -> str:
+    return await cast(Any, _default_leave_status_goal).send_manager_leave_reminder(context=context, request_id=request_id, employee_id=employee_id)
 
 execute_get_leave_request_status = get_leave_request_status
 execute_send_manager_leave_reminder = send_manager_leave_reminder

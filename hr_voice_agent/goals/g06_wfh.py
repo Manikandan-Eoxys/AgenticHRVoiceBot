@@ -11,6 +11,7 @@ Layer flow:
   Agent / LLM -> Goal 6 (g06_wfh) -> WFHService (services layer) -> DB
 """
 
+from typing import Any, cast
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
@@ -50,7 +51,7 @@ class WorkFromHomeService(GoalService):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.wfh_service = WFHService()
+        self.wfh_service: WFHService = WFHService()
 
     @function_tool
     async def check_wfh_eligibility(
@@ -124,22 +125,22 @@ class WorkFromHomeService(GoalService):
 # ── Standalone tool execution helpers & aliases ───────────────────────────────
 _default_wfh_goal = WorkFromHomeService()
 
-async def check_wfh_eligibility(employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_wfh_goal.check_wfh_eligibility(context=context, employee_id=employee_id)
+async def check_wfh_eligibility(employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any, _default_wfh_goal).check_wfh_eligibility(context=context, employee_id=employee_id)
 
-async def get_wfh_quota_balance(employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_wfh_goal.get_wfh_quota_balance(context=context, employee_id=employee_id)
+async def get_wfh_quota_balance(employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any, _default_wfh_goal).get_wfh_quota_balance(context=context, employee_id=employee_id)
 
 async def apply_wfh_request(
     start_date: str = "",
     end_date: str = "",
     reason: str = "",
     employee_id: str = "",
-    context: RunContext = None,
+    context: RunContext | None = None,
     from_date: str = "",
     to_date: str = "",
 ) -> str:
-    return await _default_wfh_goal.apply_wfh_request(
+    return await cast(Any, _default_wfh_goal).apply_wfh_request(
         from_date=from_date or start_date,
         to_date=to_date or end_date,
         reason=reason,
@@ -147,8 +148,8 @@ async def apply_wfh_request(
         employee_id=employee_id,
     )
 
-async def get_wfh_request_status(employee_id: str = "", context: RunContext = None, request_id: int = 0) -> str:
-    return await _default_wfh_goal.get_wfh_request_status(context=context, employee_id=employee_id, request_id=request_id)
+async def get_wfh_request_status(employee_id: str = "", context: RunContext | None = None, request_id: int = 0) -> str:
+    return await cast(Any, _default_wfh_goal).get_wfh_request_status(context=context, employee_id=employee_id, request_id=request_id)
 
 execute_check_wfh_eligibility = check_wfh_eligibility
 execute_get_wfh_quota_balance = get_wfh_quota_balance

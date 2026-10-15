@@ -12,6 +12,7 @@ Layer flow:
   Agent / LLM -> Goal 12 (g12_leave_verification_outbound) -> LeaveService (services layer) -> DB
 """
 
+from typing import Any, cast
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
@@ -41,7 +42,7 @@ class LeaveVerificationOutboundService(GoalService):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.leave_service = LeaveService()
+        self.leave_service: LeaveService = LeaveService()
 
     @function_tool
     async def get_pending_leave_request(
@@ -74,11 +75,11 @@ class LeaveVerificationOutboundService(GoalService):
 # ── Standalone tool execution helpers & aliases ───────────────────────────────
 _default_outbound_goal = LeaveVerificationOutboundService()
 
-async def get_pending_leave_request(employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_outbound_goal.get_pending_leave_request(context=context, employee_id=employee_id)
+async def get_pending_leave_request(employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any,_default_outbound_goal).get_pending_leave_request(context=context, employee_id=employee_id)
 
-async def record_leave_verification_reason(request_id: int, reason: str, context: RunContext = None) -> str:
-    return await _default_outbound_goal.record_leave_verification_reason(request_id=request_id, reason=reason, context=context)
+async def record_leave_verification_reason(request_id: int, reason: str, context: RunContext | None = None) -> str:
+    return await cast(Any,_default_outbound_goal).record_leave_verification_reason(request_id=request_id, reason=reason, context=context)
 
 execute_get_pending_leave_request = get_pending_leave_request
 execute_record_leave_verification_reason = record_leave_verification_reason

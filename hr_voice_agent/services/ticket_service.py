@@ -49,6 +49,7 @@ Supported 6 Categories & Ticket Types:
 import logging
 import random
 import time
+from typing import Any, cast
 from database.db import get_db_connection
 
 logger = logging.getLogger("ticket-service")
@@ -105,12 +106,12 @@ VALID_TICKET_CATEGORIES = {
 
 class TicketService:
 
-    def _query(self, sql: str, params: tuple = ()) -> list[dict]:
+    def _query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         conn = get_db_connection()
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(sql, params)
-            rows = cursor.fetchall()
+            rows = cast(list[dict[str, Any]], cursor.fetchall())
             cursor.close()
             return rows
         finally:

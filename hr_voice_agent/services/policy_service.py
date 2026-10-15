@@ -13,6 +13,7 @@ Supported Policies:
 
 import logging
 from datetime import date, datetime
+from typing import Any, cast
 from database.db import get_db_connection
 from services.leave_service import resolve_leave_code
 
@@ -48,12 +49,12 @@ POLICY_ALIASES = {
 
 class PolicyService:
 
-    def _query(self, sql: str, params: tuple = ()) -> list[dict]:
+    def _query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         conn = get_db_connection()
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(sql, params)
-            rows = cursor.fetchall()
+            rows = cast(list[dict[str, Any]], cursor.fetchall())
             cursor.close()
             return rows
         finally:

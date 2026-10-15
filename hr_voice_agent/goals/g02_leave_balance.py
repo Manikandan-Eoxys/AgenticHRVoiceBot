@@ -10,6 +10,7 @@ Layer flow:
   Agent / LLM -> Goal 2 (g02_leave_balance) -> LeaveService (services layer) -> DB
 """
 
+from typing import Any, cast
 from livekit.agents import function_tool, RunContext
 
 from goals.base import GoalService, GoalMeta
@@ -44,7 +45,7 @@ class LeaveBalanceService(GoalService):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.leave_service = LeaveService()
+        self.leave_service: LeaveService = LeaveService()
 
     @function_tool
     async def get_leave_balance(self, leave_type: str, context: RunContext, employee_id: str = "") -> str:
@@ -79,14 +80,14 @@ class LeaveBalanceService(GoalService):
 # ── Standalone tool execution helpers & aliases ───────────────────────────────
 _default_leave_balance_goal = LeaveBalanceService()
 
-async def get_leave_balance(leave_type: str, employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_leave_balance_goal.get_leave_balance(leave_type=leave_type, context=context, employee_id=employee_id)
+async def get_leave_balance(leave_type: str, employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any, _default_leave_balance_goal).get_leave_balance(leave_type=leave_type, context=context, employee_id=employee_id)
 
-async def get_all_leave_balances(employee_id: str = "", context: RunContext = None) -> str:
-    return await _default_leave_balance_goal.get_all_leave_balances(context=context, employee_id=employee_id)
+async def get_all_leave_balances(employee_id: str = "", context: RunContext | None = None) -> str:
+    return await cast(Any, _default_leave_balance_goal).get_all_leave_balances(context=context, employee_id=employee_id)
 
 async def list_leave_types() -> str:
-    return await _default_leave_balance_goal.list_leave_types()
+    return await cast(Any, _default_leave_balance_goal).list_leave_types()
 
 execute_get_leave_balance = get_leave_balance
 execute_get_all_leave_balances = get_all_leave_balances

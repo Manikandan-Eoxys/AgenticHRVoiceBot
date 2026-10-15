@@ -180,11 +180,9 @@ class DtmfCollector:
                         f"🔢 [Keypad] Full ID '{cand}' entered during greeting — "
                         "triggering auto-verification."
                     )
-                    asyncio.create_task(
-                        self.session.generate_reply(
-                            user_input=(
-                                f"The caller entered employee ID {cand} on their phone keypad."
-                            )
+                    self.session.generate_reply(
+                        user_input=(
+                            f"The caller entered employee ID {cand} on their phone keypad."
                         )
                     )
 

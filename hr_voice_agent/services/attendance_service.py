@@ -10,6 +10,7 @@ Business logic for Attendance & Regularization:
 
 import logging
 from datetime import date, datetime
+from typing import Any, cast
 from database.db import get_db_connection
 
 logger = logging.getLogger("attendance-service")
@@ -17,12 +18,12 @@ logger = logging.getLogger("attendance-service")
 
 class AttendanceService:
 
-    def _query(self, sql: str, params: tuple = ()) -> list[dict]:
+    def _query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         conn = get_db_connection()
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(sql, params)
-            rows = cursor.fetchall()
+            rows = cast(list[dict[str, Any]], cursor.fetchall())
             cursor.close()
             return rows
         finally:
@@ -46,7 +47,7 @@ class AttendanceService:
     def get_attendance_status(self, employee_id: str, date_str: str = "yesterday") -> dict:
         """Looks up attendance status for a specific date or 'yesterday'."""
         today = date.today()
-        d_str = str(date_str or "").strip().lower()
+        d_str = (date_str or "").strip().lower()
 
         if d_str in ("yesterday", ""):
             target_date = today.fromordinal(today.toordinal() - 1)
@@ -65,7 +66,7 @@ class AttendanceService:
             """SELECT record_date, check_in, check_out, total_hours, status, late_minutes, remarks
                FROM attendance_records
                WHERE employee_id = %s AND record_date = %s""",
-            (str(employee_id), target_date.isoformat())
+            (employee_id, target_date.isoformat())
         )
 
         if not rows:
@@ -105,7 +106,7 @@ class AttendanceService:
             "message": msg
         }
 
-    def get_late_marks_count(self, employee_id: str, month: int = None, year: int = None) -> dict:
+    def get_late_marks_count(self, employee_id: str, month: int | None = None, year: int | None = None) -> dict:
         """Returns the number of late marks for the given or current month."""
         today = date.today()
         m = month or today.month
@@ -119,7 +120,7 @@ class AttendanceService:
                  AND MONTH(record_date) = %s 
                  AND YEAR(record_date) = %s
                ORDER BY record_date ASC""",
-            (str(employee_id), m, y)
+            (employee_id, m, y)
         )
         count = len(rows)
         month_name = datetime(y, m, 1).strftime("%B %Y")
@@ -146,7 +147,7 @@ class AttendanceService:
         employee_id: str,
         attendance_date: str,
         request_type: str,
-        actual_time: str = None,
+        actual_time: str | None = None,
         reason: str = ""
     ) -> dict:
         """Submits an attendance regularization request."""
@@ -175,7 +176,7 @@ class AttendanceService:
         reg_id = self._execute(
             """INSERT INTO attendance_regularizations (employee_id, attendance_date, request_type, actual_time, reason, status)
                VALUES (%s, %s, %s, %s, %s, 'pending')""",
-            (str(employee_id), att_date.isoformat(), req_type, actual_time or "09:00:00", reason or "Biometric punch missed")
+            (employee_id, att_date.isoformat(), req_type, actual_time or "09:00:00", reason or "Biometric punch missed")
         )
 
         friendly_type = req_type.replace("_", " ").title()
@@ -195,7 +196,7 @@ class AttendanceService:
                FROM attendance_regularizations
                WHERE employee_id = %s
                ORDER BY regularization_id DESC LIMIT 1""",
-            (str(employee_id),)
+            (employee_id,)
         )
         if not rows:
             return {"success": False, "message": "No attendance regularization requests found."}

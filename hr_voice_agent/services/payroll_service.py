@@ -10,6 +10,7 @@ Business logic for Payroll & Salary:
 
 import logging
 from datetime import date
+from typing import Any, cast
 from database.db import get_db_connection
 
 logger = logging.getLogger("payroll-service")
@@ -17,12 +18,12 @@ logger = logging.getLogger("payroll-service")
 
 class PayrollService:
 
-    def _query(self, sql: str, params: tuple = ()) -> list[dict]:
+    def _query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         conn = get_db_connection()
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(sql, params)
-            rows = cursor.fetchall()
+            rows = cast(list[dict[str, Any]], cursor.fetchall())
             cursor.close()
             return rows
         finally:
@@ -42,7 +43,7 @@ class PayrollService:
                FROM payroll_records
                WHERE employee_id = %s
                ORDER BY payroll_id DESC LIMIT 1""",
-            (str(employee_id),)
+            (employee_id,)
         )
         if not rows:
             return {"success": False, "message": f"No payroll record found for employee {employee_id}."}
@@ -60,14 +61,14 @@ class PayrollService:
             "message": f"Your basic salary is ₹{p['basic_salary']:,.2f} per month, with HRA of ₹{p['hra']:,.2f} and allowances of ₹{p['allowances']:,.2f}, totaling a gross salary of ₹{p['gross_salary']:,.2f}."
         }
 
-    def get_salary_deductions_breakdown(self, employee_id: str, month_year: str = None) -> dict:
+    def get_salary_deductions_breakdown(self, employee_id: str, month_year: str | None = None) -> dict:
         """Explains the deductions for a given month (PF, PT, TDS, etc.)."""
         if month_year:
             rows = self._query(
                 """SELECT month_year, gross_salary, deductions_pf, deductions_pt, deductions_tax, deductions_other, net_salary
                    FROM payroll_records
                    WHERE employee_id = %s AND LOWER(month_year) LIKE %s LIMIT 1""",
-                (str(employee_id), f"%{month_year.lower()}%")
+                (employee_id, f"%{month_year.lower()}%")
             )
         else:
             rows = self._query(
@@ -75,7 +76,7 @@ class PayrollService:
                    FROM payroll_records
                    WHERE employee_id = %s
                    ORDER BY payroll_id DESC LIMIT 1""",
-                (str(employee_id),)
+                (employee_id,)
             )
 
         if not rows:
@@ -105,14 +106,14 @@ class PayrollService:
             "message": f"For {p['month_year']}, your total deductions were ₹{total_deductions:,.2f}, including {breakdown_str}. Your net take-home salary was ₹{p['net_salary']:,.2f}."
         }
 
-    def check_payslip_status(self, employee_id: str, month_year: str = None) -> dict:
+    def check_payslip_status(self, employee_id: str, month_year: str | None = None) -> dict:
         """Checks if the payslip for a given month is available."""
         if month_year:
             rows = self._query(
                 """SELECT month_year, payslip_available, payment_status, payment_date
                    FROM payroll_records
                    WHERE employee_id = %s AND LOWER(month_year) LIKE %s LIMIT 1""",
-                (str(employee_id), f"%{month_year.lower()}%")
+                (employee_id, f"%{month_year.lower()}%")
             )
         else:
             rows = self._query(
@@ -120,7 +121,7 @@ class PayrollService:
                    FROM payroll_records
                    WHERE employee_id = %s
                    ORDER BY payroll_id DESC LIMIT 1""",
-                (str(employee_id),)
+                (employee_id,)
             )
 
         if not rows:

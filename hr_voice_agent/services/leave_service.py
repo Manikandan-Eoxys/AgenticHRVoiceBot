@@ -15,6 +15,7 @@ import os
 import re
 from datetime import date, datetime
 from email.mime.text import MIMEText
+from typing import Any, cast
 import smtplib
 from database.db import get_db_connection
 
@@ -51,12 +52,12 @@ class LeaveService:
         self.hr_email = os.environ.get("HR_NOTIFY_EMAIL") or os.environ.get("HR_EMAIL") or "manikandan.eoxys@gmail.com"
         self.md_email = os.environ.get("MD_NOTIFY_EMAIL", "").strip()
 
-    def _query(self, sql: str, params: tuple = ()) -> list[dict]:
+    def _query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         conn = get_db_connection()
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(sql, params)
-            rows = cursor.fetchall()
+            rows = cast(list[dict[str, Any]], cursor.fetchall())
             cursor.close()
             return rows
         finally:
@@ -77,7 +78,7 @@ class LeaveService:
         finally:
             conn.close()
 
-    def _send_notification_email(self, subject: str, body: str, to_email: str = None) -> bool:
+    def _send_notification_email(self, subject: str, body: str, to_email: str | None = None) -> bool:
         to_addr = to_email or self.hr_email
         smtp_user = os.environ.get("SMTP_USER", "")
         smtp_pass = os.environ.get("SMTP_PASSWORD") or os.environ.get("SMTP_PASS", "")
@@ -120,7 +121,7 @@ class LeaveService:
                FROM leave_balances b
                JOIN leave_policy p ON b.leave_code = p.leave_code
                WHERE b.employee_id = %s AND b.leave_code = %s""",
-            (str(employee_id), code)
+            (employee_id, code)
         )
         if not rows:
             return {"success": False, "message": f"Employee {employee_id} is not eligible for or does not have a balance record for {leave_type}."}
@@ -145,7 +146,7 @@ class LeaveService:
                JOIN leave_policy p ON b.leave_code = p.leave_code
                WHERE b.employee_id = %s
                ORDER BY FIELD(b.leave_code, 'CL','SL','MATERNITY','PATERNITY','COMP_OFF','BEREAVEMENT','SHORT_LEAVE','LWP')""",
-            (str(employee_id),)
+            (employee_id,)
         )
         if not rows:
             return {"success": False, "message": f"No leave balances found for employee {employee_id}."}
@@ -225,7 +226,7 @@ class LeaveService:
         req_id = self._execute(
             """INSERT INTO leave_requests (employee_id, leave_code, start_date, end_date, days_requested, reason, status, notified_email)
                VALUES (%s, %s, %s, %s, %s, %s, 'submitted', %s)""",
-            (str(employee_id), code, start_date, end_date, days, reason or "VoiceBot leave request", self.hr_email)
+            (employee_id, code, start_date, end_date, days, reason or "VoiceBot leave request", self.hr_email)
         )
 
         # 2. Increment used_days in leave_balances
@@ -233,11 +234,11 @@ class LeaveService:
             """UPDATE leave_balances 
                SET used_days = used_days + %s 
                WHERE employee_id = %s AND leave_code = %s""",
-            (days, str(employee_id), code)
+            (days, employee_id, code)
         )
 
         # 3. Notify HR via email
-        emp_rows = self._query("SELECT full_name, email FROM employees WHERE employee_id = %s", (str(employee_id),))
+        emp_rows = self._query("SELECT full_name, email FROM employees WHERE employee_id = %s", (employee_id,))
         emp_name = emp_rows[0]["full_name"] if emp_rows else f"Employee {employee_id}"
 
         body = (
@@ -270,16 +271,16 @@ class LeaveService:
     # -------------------------------------------------------------------------
     # 4. Cancel Leave Request
     # -------------------------------------------------------------------------
-    def cancel_leave_request(self, employee_id: str, request_id: int = None) -> dict:
+    def cancel_leave_request(self, employee_id: str, request_id: int | None = None) -> dict:
         if request_id:
             rows = self._query(
                 "SELECT request_id, leave_code, days_requested, start_date, end_date, status FROM leave_requests WHERE request_id = %s AND employee_id = %s",
-                (request_id, str(employee_id))
+                (request_id, employee_id)
             )
         else:
             rows = self._query(
                 "SELECT request_id, leave_code, days_requested, start_date, end_date, status FROM leave_requests WHERE employee_id = %s AND status IN ('submitted', 'approved') ORDER BY request_id DESC LIMIT 1",
-                (str(employee_id),)
+                (employee_id,)
             )
 
         if not rows:
@@ -295,7 +296,7 @@ class LeaveService:
         # Restore used_days in leave_balances
         self._execute(
             "UPDATE leave_balances SET used_days = GREATEST(0, used_days - %s) WHERE employee_id = %s AND leave_code = %s",
-            (req["days_requested"], str(employee_id), req["leave_code"])
+            (req["days_requested"], employee_id, req["leave_code"])
         )
 
         return {
@@ -315,7 +316,7 @@ class LeaveService:
                JOIN leave_policy p ON r.leave_code = p.leave_code
                WHERE r.employee_id = %s
                ORDER BY r.request_id DESC LIMIT 1""",
-            (str(employee_id),)
+            (employee_id,)
         )
         if not rows:
             return {"success": False, "message": "You have no leave requests on file."}
@@ -352,7 +353,7 @@ class LeaveService:
     # -------------------------------------------------------------------------
     # 6. Send Manager Reminder
     # -------------------------------------------------------------------------
-    def send_manager_reminder(self, employee_id: str, request_id: int = None) -> dict:
+    def send_manager_reminder(self, employee_id: str, request_id: int | None = None) -> dict:
         if request_id:
             rows = self._query(
                 """SELECT r.request_id, r.leave_code, p.leave_name, r.start_date, r.end_date, r.status, e.manager_id, e.full_name
@@ -360,7 +361,7 @@ class LeaveService:
                    JOIN leave_policy p ON r.leave_code = p.leave_code
                    JOIN employees e ON r.employee_id = e.employee_id
                    WHERE r.request_id = %s AND r.employee_id = %s""",
-                (request_id, str(employee_id))
+                (request_id, employee_id)
             )
         else:
             rows = self._query(
@@ -370,7 +371,7 @@ class LeaveService:
                    JOIN employees e ON r.employee_id = e.employee_id
                    WHERE r.employee_id = %s AND r.status IN ('submitted', 'pending')
                    ORDER BY r.request_id DESC LIMIT 1""",
-                (str(employee_id),)
+                (employee_id,)
             )
 
         if not rows:
@@ -428,7 +429,7 @@ class LeaveService:
                    WHERE lr.employee_id = %s AND lr.status = 'submitted'
                    ORDER BY lr.requested_at DESC
                    LIMIT 1""",
-                (str(employee_id),),
+                (employee_id,),
             )
             if not rows:
                 return {"success": False, "message": "No leave request is currently pending approval for this employee."}

@@ -10,6 +10,7 @@ Business logic for:
 import logging
 import re
 from datetime import datetime, date, timedelta
+from typing import Any, cast
 from database.db import get_db_connection
 
 logger = logging.getLogger("reminder-service")
@@ -17,12 +18,12 @@ logger = logging.getLogger("reminder-service")
 
 class ReminderService:
 
-    def _query(self, sql: str, params: tuple = ()) -> list[dict]:
+    def _query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         conn = get_db_connection()
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(sql, params)
-            rows = cursor.fetchall()
+            rows = cast(list[dict[str, Any]], cursor.fetchall())
             cursor.close()
             return rows
         finally:
@@ -50,7 +51,7 @@ class ReminderService:
                FROM policy_acknowledgements
                WHERE employee_id = %s AND status = 'Pending'
                ORDER BY deadline_date ASC""",
-            (str(employee_id),)
+            (employee_id,)
         )
 
         if not rows:
@@ -60,7 +61,7 @@ class ReminderService:
                    FROM policy_acknowledgements
                    WHERE employee_id = %s AND status = 'Acknowledged'
                    ORDER BY acknowledged_at DESC LIMIT 1""",
-                (str(employee_id),)
+                (employee_id,)
             )
             if ack_rows:
                 p_name = ack_rows[0]["policy_name"]
@@ -110,7 +111,7 @@ class ReminderService:
                WHERE employee_id = %s AND (
                    LOWER(policy_name) LIKE %s OR LOWER(policy_code) LIKE %s OR %s = ''
                )""",
-            (str(employee_id), f"%{policy_name_or_code.lower()}%", f"%{policy_name_or_code.lower()}%", policy_name_or_code)
+            (employee_id, f"%{policy_name_or_code.lower()}%", f"%{policy_name_or_code.lower()}%", policy_name_or_code)
         )
 
         if rows:
@@ -136,7 +137,7 @@ class ReminderService:
                 """INSERT INTO policy_acknowledgements
                    (employee_id, policy_code, policy_name, announcement_text, deadline_date, status, acknowledged_at, acknowledgement_note)
                    VALUES (%s, %s, %s, %s, %s, 'Acknowledged', CURRENT_TIMESTAMP, %s)""",
-                (str(employee_id), policy_code, policy_name_or_code or "Work From Home Policy",
+                (employee_id, policy_code, policy_name_or_code or "Work From Home Policy",
                  "Policy acknowledgement", date.today() + timedelta(days=5), acknowledgement_note)
             )
             return {
@@ -230,7 +231,7 @@ class ReminderService:
             """INSERT INTO scheduled_reminders
                (employee_id, reminder_type, title, reminder_text, scheduled_time, status)
                VALUES (%s, %s, %s, %s, %s, 'Scheduled')""",
-            (str(employee_id), reminder_type, title, prompt_text, dt)
+            (employee_id, reminder_type, title, prompt_text, dt)
         )
 
         return {
@@ -242,7 +243,7 @@ class ReminderService:
             "message": f"Sure. I'll remind you {human_label}."
         }
 
-    def get_scheduled_reminders(self, employee_id: str, status: str = None) -> dict:
+    def get_scheduled_reminders(self, employee_id: str, status: str | None = None) -> dict:
         """Lists scheduled reminders for an employee."""
         if status:
             rows = self._query(
@@ -250,7 +251,7 @@ class ReminderService:
                    FROM scheduled_reminders
                    WHERE employee_id = %s AND status = %s
                    ORDER BY scheduled_time ASC""",
-                (str(employee_id), status)
+                (employee_id, status)
             )
         else:
             rows = self._query(
@@ -258,7 +259,7 @@ class ReminderService:
                    FROM scheduled_reminders
                    WHERE employee_id = %s
                    ORDER BY scheduled_time DESC LIMIT 5""",
-                (str(employee_id),)
+                (employee_id,)
             )
 
         if not rows:
@@ -303,16 +304,16 @@ class ReminderService:
             """SELECT reminder_id, title, status FROM scheduled_reminders
                WHERE employee_id = %s AND status IN ('Scheduled', 'Triggered')
                ORDER BY reminder_id DESC""",
-            (str(employee_id),)
+            (employee_id,)
         )
 
         target_row = None
         matching_ids = []
         if rows:
             if reminder_topic_or_id:
-                topic_low = str(reminder_topic_or_id).lower()
+                topic_low = reminder_topic_or_id.lower()
                 for r in rows:
-                    if (str(r["reminder_id"]) == str(reminder_topic_or_id)
+                    if (str(r["reminder_id"]) == reminder_topic_or_id
                         or topic_low in r["title"].lower()
                         or ("pf" in topic_low and "pf" in r["title"].lower())
                         or ("payslip" in topic_low and "salary" in r["title"].lower())
@@ -345,6 +346,8 @@ class ReminderService:
                 "status": "Acknowledged",
                 "message": "Thank you. Your acknowledgement has been recorded."
             }
+
+    acknowledge_reminder = record_reminder_acknowledgement
 
     def trigger_reminder(self, reminder_id: int) -> dict:
         """Marks a reminder as triggered and returns its delivery text."""

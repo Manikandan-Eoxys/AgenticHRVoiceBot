@@ -10,6 +10,7 @@ Business logic for Work From Home / Hybrid Work:
 
 import logging
 from datetime import date, datetime
+from typing import Any, cast
 from database.db import get_db_connection
 
 logger = logging.getLogger("wfh-service")
@@ -20,12 +21,12 @@ WEEKLY_WFH_CAP = 2
 
 class WFHService:
 
-    def _query(self, sql: str, params: tuple = ()) -> list[dict]:
+    def _query(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         conn = get_db_connection()
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute(sql, params)
-            rows = cursor.fetchall()
+            rows = cast(list[dict[str, Any]], cursor.fetchall())
             cursor.close()
             return rows
         finally:
@@ -50,7 +51,7 @@ class WFHService:
         """Checks if employee is eligible for hybrid work/WFH."""
         rows = self._query(
             "SELECT full_name, join_date, status FROM employees WHERE employee_id = %s",
-            (str(employee_id),)
+            (employee_id,)
         )
         if not rows:
             return {"success": False, "eligible": False, "message": "Employee not found."}
@@ -71,7 +72,7 @@ class WFHService:
             "message": f"{emp['full_name']} is eligible for hybrid work (up to 2 days per week or 8 days per month with manager approval)."
         }
 
-    def get_wfh_quota_balance(self, employee_id: str, month: int = None, year: int = None) -> dict:
+    def get_wfh_quota_balance(self, employee_id: str, month: int | None = None, year: int | None = None) -> dict:
         """Calculates WFH days availed this month vs remaining allowance."""
         today = date.today()
         m = month or today.month
@@ -84,7 +85,7 @@ class WFHService:
                  AND status IN ('approved', 'pending')
                  AND MONTH(start_date) = %s 
                  AND YEAR(start_date) = %s""",
-            (str(employee_id), m, y)
+            (employee_id, m, y)
         )
         used = int(rows[0]["used_days"] or 0) if rows else 0
         remaining = max(0, MONTHLY_WFH_CAP - used)
@@ -100,7 +101,7 @@ class WFHService:
             "message": f"For {month_name}, you have used {used} out of {MONTHLY_WFH_CAP} allowed WFH days. You have {remaining} WFH day(s) remaining."
         }
 
-    def submit_wfh_request(self, employee_id: str, start_date: str, end_date: str = None, reason: str = "") -> dict:
+    def submit_wfh_request(self, employee_id: str, start_date: str, end_date: str | None = None, reason: str = "") -> dict:
         """Submits a WFH request pending manager approval."""
         today = date.today()
         end_date = end_date or start_date
@@ -125,7 +126,7 @@ class WFHService:
         wfh_id = self._execute(
             """INSERT INTO wfh_requests (employee_id, start_date, end_date, days_count, reason, status)
                VALUES (%s, %s, %s, %s, %s, 'pending')""",
-            (str(employee_id), sd.isoformat(), ed.isoformat(), days_count, reason or "Remote work request")
+            (employee_id, sd.isoformat(), ed.isoformat(), days_count, reason or "Remote work request")
         )
 
         return {
@@ -145,7 +146,7 @@ class WFHService:
                FROM wfh_requests
                WHERE employee_id = %s
                ORDER BY wfh_id DESC LIMIT 1""",
-            (str(employee_id),)
+            (employee_id,)
         )
         if not rows:
             return {"success": False, "message": "No Work From Home requests on file."}

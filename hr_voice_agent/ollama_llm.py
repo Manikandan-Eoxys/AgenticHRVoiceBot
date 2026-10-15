@@ -9,7 +9,7 @@ Ollama's OpenAI-compat endpoint (/v1/chat/completions) ignores the `think`
 parameter at the computation level — it strips <think> tags from output but
 the model still runs the full reasoning chain internally.
 
-  Tested results for qwen3:8b on this machine:
+  Tested results for qwen2.5:3b  on this machine:
     /v1/chat/completions + think:false (top-level) → 36s  (tags stripped, slow)
     /v1/chat/completions + /no_think in system msg  → 63s  (no effect)
     /api/chat            + "think": false           → ~instant
@@ -25,7 +25,7 @@ USAGE (in main.py)
 ------------------
     from ollama_llm import OllamaLLM
     llm = OllamaLLM(
-        model="qwen3:8b",
+        model="qwen2.5:3b ",
         base_url="http://localhost:11434",  # NO /v1 suffix
         think=False,
     )
@@ -53,7 +53,7 @@ from livekit.agents.llm import (
     ToolContext,
 )
 from livekit.agents.llm.llm import APIConnectOptions
-from livekit.agents._exceptions import APIConnectionError, APITimeoutError
+from livekit.agents._exceptions import APIConnectionError, APITimeoutError, APIStatusError
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +213,9 @@ class OllamaLLMStream(LLMStream):
             "messages": messages,
             "stream": True,
             "think": self._think,
+            "options": {
+                "num_thread": 8,
+            },
         }
 
         # Include tool definitions if available
@@ -222,7 +225,17 @@ class OllamaLLMStream(LLMStream):
                 if tool_schemas:
                     payload["tools"] = tool_schemas
             except Exception as e:
-                logger.warning("[OllamaLLM] Failed to parse tool schemas: %s", e)
+                logger.warning("[OllamaLLM] Bulk tool parsing failed, falling back to per-tool: %s", e)
+                valid_schemas = []
+                for t in self._tools:
+                    try:
+                        s = ToolContext([t]).parse_function_tools("openai")
+                        if s:
+                            valid_schemas.extend(s)
+                    except Exception:
+                        pass
+                if valid_schemas:
+                    payload["tools"] = valid_schemas
 
         url = f"{self._base_url}/api/chat"
         # Ensure timeout total is at least 60s for local Ollama prompt eval
@@ -233,10 +246,11 @@ class OllamaLLMStream(LLMStream):
         )
         request_id = str(uuid.uuid4())
 
+        tools_list: list[object] = payload.get("tools") if isinstance(payload.get("tools"), list) else []  # type: ignore[assignment]
         start = time.monotonic()
         logger.info(
             "[OllamaLLM] request %s starting — %d messages, %d tool schemas, timeout=%.0fs",
-            request_id, len(messages), len(payload.get("tools", [])), req_timeout,
+            request_id, len(messages), len(tools_list), req_timeout,
         )
 
         try:
@@ -345,7 +359,7 @@ class OllamaLLM(LLM):
     Parameters
     ----------
     model : str
-        Ollama model name, e.g. "qwen3:8b".
+        Ollama model name, e.g. "qwen2.5:3b ".
     base_url : str
         Ollama server base URL. Do NOT include /v1 — this uses the native
         API. If /v1 is present it will be stripped automatically.
@@ -371,12 +385,12 @@ class OllamaLLM(LLM):
         self._base_url = base_url.rstrip("/")
         if self._base_url.endswith("/v1"):
             self._base_url = self._base_url[:-3]
-        self._model = model
+        self._model = (model or "qwen3:8b").strip()
         self._think = think
         self._timeout = timeout
         logger.info(
             "[OllamaLLM] Initialized: model=%s base_url=%s think=%s timeout=%ss",
-            model, self._base_url, think, timeout,
+            self._model, self._base_url, think, timeout,
         )
 
     @property
@@ -395,7 +409,7 @@ class OllamaLLM(LLM):
         conn_options: APIConnectOptions = APIConnectOptions(
             max_retry=2,
             retry_interval=1.0,
-            timeout=60.0,   # override default 10s — qwen3:8b needs up to 60s cold
+            timeout=60.0,   # override default 10s — qwen2.5:3b  needs up to 60s cold
         ),
         **kwargs,
     ) -> OllamaLLMStream:
@@ -413,10 +427,22 @@ class OllamaLLM(LLM):
 # ============================================================================
 # HYBRID / FALLBACK LLM WRAPPER
 # ============================================================================
+
+# Transient errors that justify falling back to local Ollama.
+# Bad-request / auth / validation errors should NOT trigger fallback —
+# they indicate a bug, not a temporary outage.
+_TRANSIENT_EXCEPTIONS = (APIConnectionError, APITimeoutError, ConnectionError, OSError)
+
+
 class FallbackLLMStream(LLMStream):
     """
-    Stream wrapper that attempts primary LLM (e.g. LiveKit Cloud / OpenAI) and
-    automatically falls back to local OllamaLLM if primary LLM raises 429/quota/error.
+    Stream wrapper that attempts the primary LLM (e.g. LiveKit Cloud / OpenAI)
+    and automatically falls back to local OllamaLLM on *transient* errors only.
+
+    Mid-stream safety: if the primary has already emitted at least one content
+    chunk, we do NOT silently fall back (which would cause the user to hear a
+    partial sentence followed by a full duplicate).  Instead the error is
+    re-raised so the session can surface it normally.
     """
 
     def __init__(
@@ -431,39 +457,86 @@ class FallbackLLMStream(LLMStream):
         super().__init__(fallback_obj, chat_ctx=chat_ctx, tools=tools or [], conn_options=conn_options)
         self._fallback_obj = fallback_obj
         self._chat_ctx = chat_ctx
-        self._tools = tools
+        self._tools = tools or []
+        self._conn_options = conn_options
         self._kwargs = kwargs
+
+    @staticmethod
+    def _is_transient(exc: Exception) -> bool:
+        """Return True if the exception looks like a transient outage
+        (timeout, connection failure, 429 rate-limit) rather than a
+        permanent error (bad request, auth, malformed schema)."""
+        if isinstance(exc, _TRANSIENT_EXCEPTIONS):
+            return True
+        # Check for HTTP-level 429 / 5xx from LiveKit's APIStatusError
+        if isinstance(exc, APIStatusError):
+            return exc.status_code == 429 or exc.status_code >= 500  # type: ignore[attr-defined]
+        # Catch wrapped 429 messages from various providers
+        msg = str(exc).lower()
+        if "429" in msg or "rate limit" in msg or "quota" in msg or "too many requests" in msg:
+            return True
+        return False
 
     async def _run(self) -> None:
         # Check if cooldown elapsed to retry primary LLM
         if self._fallback_obj._primary_degraded:
-            if time.monotonic() - self._fallback_obj._last_degraded_time > 60.0:
-                logger.info("[FallbackLLM] Cooldown passed. Retrying primary LLM...")
+            elapsed = time.monotonic() - self._fallback_obj._last_degraded_time
+            if elapsed > self._fallback_obj._cooldown_seconds:
+                logger.info(
+                    "[FallbackLLM] Cooldown (%.0fs) passed. Retrying primary LLM...",
+                    elapsed,
+                )
                 self._fallback_obj._primary_degraded = False
 
         if not self._fallback_obj._primary_degraded:
+            chunks_emitted = 0
             try:
                 primary_stream = self._fallback_obj.primary_llm.chat(
                     chat_ctx=self._chat_ctx,
                     tools=self._tools,
+                    conn_options=self._conn_options,
                     **self._kwargs,
                 )
                 async for chunk in primary_stream:
                     self._event_ch.send_nowait(chunk)
-                return
+                    chunks_emitted += 1
+                return  # ✅ Cloud succeeded
             except Exception as exc:
-                logger.warning(
-                    "[FallbackLLM] Primary LLM stream failed (%s). "
-                    "Automatically falling back to local OllamaLLM...",
-                    exc,
-                )
-                self._fallback_obj._primary_degraded = True
-                self._fallback_obj._last_degraded_time = time.monotonic()
+                if chunks_emitted > 0:
+                    # Mid-stream failure: tokens already sent to TTS.
+                    # Falling back now would duplicate output, so re-raise.
+                    logger.error(
+                        "[FallbackLLM] Primary LLM failed MID-STREAM after %d chunks. "
+                        "Cannot safely fall back — re-raising. Error: %s",
+                        chunks_emitted, exc,
+                    )
+                    raise
+
+                if not self._is_transient(exc):
+                    # Non-transient error (bad request, auth, etc.)
+                    # Don't mark the primary as degraded.
+                    logger.error(
+                        "[FallbackLLM] Primary LLM hit a NON-TRANSIENT error (%s: %s). "
+                        "Falling back for this request only (not marking degraded).",
+                        type(exc).__name__, exc,
+                    )
+                    # Fall through to Ollama below, but don't set _primary_degraded
+                else:
+                    # Transient error — mark degraded and start cooldown
+                    logger.warning(
+                        "[FallbackLLM] Primary LLM stream failed with transient error (%s: %s). "
+                        "Automatically falling back to local OllamaLLM for %.0fs...",
+                        type(exc).__name__, exc, self._fallback_obj._cooldown_seconds,
+                    )
+                    self._fallback_obj._primary_degraded = True
+                    self._fallback_obj._last_degraded_time = time.monotonic()
 
         # Fallback to local OllamaLLM
+        logger.info("[FallbackLLM] Using local Ollama fallback.")
         fallback_stream = self._fallback_obj.fallback_llm.chat(
             chat_ctx=self._chat_ctx,
             tools=self._tools,
+            conn_options=self._conn_options,
             **self._kwargs,
         )
         async for chunk in fallback_stream:
@@ -474,17 +547,29 @@ class FallbackLLM(LLM):
     """
     Hybrid / Automatic Fallback LLM.
     Tries primary_llm (e.g., LiveKit Cloud Hosted LLM / OpenAI).
-    If primary_llm fails due to 429 Too Many Requests / Quota Exceeded / connection error,
+    If primary_llm fails due to a *transient* error (429, timeout, connection),
     it seamlessly falls back to fallback_llm (local OllamaLLM).
-    Automatically retries primary_llm after a 60-second cooldown.
+    Automatically retries primary_llm after a configurable cooldown.
+
+    Non-transient errors (bad request, auth) fall back for the single request
+    but do NOT mark the primary as degraded.
+
+    Mid-stream failures (primary already emitted chunks) are NOT caught —
+    falling back mid-sentence would cause duplicate output.
     """
 
-    def __init__(self, primary_llm: LLM, fallback_llm: LLM) -> None:
+    def __init__(
+        self,
+        primary_llm: LLM,
+        fallback_llm: LLM,
+        cooldown_seconds: float = 60.0,
+    ) -> None:
         super().__init__()
         self.primary_llm = primary_llm
         self.fallback_llm = fallback_llm
         self._primary_degraded = False
         self._last_degraded_time = 0.0
+        self._cooldown_seconds = cooldown_seconds
 
     @property
     def model(self) -> str:

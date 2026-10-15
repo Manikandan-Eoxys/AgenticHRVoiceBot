@@ -10,10 +10,12 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
  
-load_dotenv()
- 
- 
 BASE_DIR = Path(__file__).resolve().parent
+_env_path = BASE_DIR / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path, override=True)
+else:
+    load_dotenv(override=True)
  
  
 class Config:
@@ -37,8 +39,8 @@ class Config:
  
     OLLAMA_MODEL = os.getenv(
         "OLLAMA_MODEL",
-        "qwen2.5:3b"
-    )
+        "qwen3:8b"
+    ).strip()
  
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", None)
     OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o-mini")

@@ -42,7 +42,7 @@ _DEFAULTS = {
     "TTS_VOICE": "ec1e269e-9ca0-402f-8a18-58e0e022355a",
     # Ollama fallback
     "OLLAMA_BASE_URL": "http://localhost:11434/v1",
-    "OLLAMA_MODEL": "qwen2.5:3b",
+    "OLLAMA_MODEL": "qwen3:8b",
     # Telephony
     "COORDINATOR_PHONE_NUMBER": "+918925355704",
     "LIVEKIT_OUTBOUND_TRUNK_ID": "ST_ZoFAnNLxoPce",
@@ -98,7 +98,7 @@ class AgentRuntimeConfig:
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434/v1"
-    ollama_model: str = "qwen2.5:3b"
+    ollama_model: str = "qwen3:8b"
 
     # Telephony
     coordinator_phone: str = "+918925355704"

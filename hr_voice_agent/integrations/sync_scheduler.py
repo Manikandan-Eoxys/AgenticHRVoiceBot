@@ -30,6 +30,61 @@ _scheduler = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Ensure sync columns exist (auto-migration)
+# ──────────────────────────────────────────────────────────────────────────────
+def _ensure_sync_columns():
+    """Add sync-related columns and tables if they don't already exist."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Add sync status columns to leave_requests if missing
+    for col, default in [
+        ("ifs_sync_status", "'pending'"),
+        ("ifs_cloud_ref", "NULL"),
+        ("sql_sync_status", "'pending'"),
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE leave_requests ADD COLUMN {col} VARCHAR(20) DEFAULT {default}")
+            logger.info("[SyncScheduler] Added column leave_requests.%s", col)
+        except Exception:
+            pass  # Column already exists
+
+    # Create ifs_sync_log if missing
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS ifs_sync_log (
+        log_id              INT AUTO_INCREMENT PRIMARY KEY,
+        leave_request_id    INT NOT NULL,
+        sync_status         VARCHAR(20) NOT NULL DEFAULT 'pending',
+        ifs_cloud_ref       VARCHAR(100),
+        attempt_count       INT NOT NULL DEFAULT 0,
+        last_attempt_at     TIMESTAMP NULL,
+        synced_at           TIMESTAMP NULL,
+        error_message       TEXT NULL,
+        UNIQUE KEY uq_ifs_leave (leave_request_id)
+    )
+    """)
+
+    # Create sql_server_sync_log if missing
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sql_server_sync_log (
+        log_id              INT AUTO_INCREMENT PRIMARY KEY,
+        leave_request_id    INT NOT NULL,
+        sync_status         VARCHAR(20) NOT NULL DEFAULT 'pending',
+        sql_record_id       VARCHAR(100),
+        attempt_count       INT NOT NULL DEFAULT 0,
+        last_attempt_at     TIMESTAMP NULL,
+        synced_at           TIMESTAMP NULL,
+        error_message       TEXT NULL,
+        UNIQUE KEY uq_sql_leave (leave_request_id)
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+    logger.info("[SyncScheduler] Sync schema verified / migrated.")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Sync Job: IFS Cloud
 # ──────────────────────────────────────────────────────────────────────────────
 def _sync_to_ifs():
@@ -40,12 +95,12 @@ def _sync_to_ifs():
     cursor  = conn.cursor(dictionary=True)
 
     cursor.execute("""
-    SELECT lr.*, e.name AS employee_name
+    SELECT lr.*, e.full_name AS employee_name
     FROM   leave_requests lr
     JOIN   employees e ON lr.employee_id = e.employee_id
     WHERE  lr.ifs_sync_status = 'pending'
-      AND  lr.status IN ('Approved', 'Pending')
-    ORDER  BY lr.submitted_at ASC
+      AND  lr.status IN ('approved', 'submitted')
+    ORDER  BY lr.requested_at ASC
     LIMIT  50
     """)
     pending = cursor.fetchall()
@@ -60,7 +115,7 @@ def _sync_to_ifs():
         row = dict(row)
         # Check attempt count from ifs_sync_log
         cursor.execute(
-            "SELECT attempt_count FROM ifs_sync_log WHERE leave_request_id=? ORDER BY log_id DESC LIMIT 1",
+            "SELECT attempt_count FROM ifs_sync_log WHERE leave_request_id=%s ORDER BY log_id DESC LIMIT 1",
             (row["request_id"],),
         )
         log_row = cursor.fetchone()
@@ -69,13 +124,13 @@ def _sync_to_ifs():
         if attempts >= MAX_ATTEMPTS:
             # Mark as permanently failed
             cursor.execute(
-                "UPDATE leave_requests SET ifs_sync_status='failed' WHERE request_id=?",
+                "UPDATE leave_requests SET ifs_sync_status='failed' WHERE request_id=%s",
                 (row["request_id"],),
             )
             cursor.execute("""
             UPDATE ifs_sync_log
-            SET sync_status='failed', last_attempt_at=datetime('now')
-            WHERE leave_request_id=?
+            SET sync_status='failed', last_attempt_at=NOW()
+            WHERE leave_request_id=%s
             """, (row["request_id"],))
             conn.commit()
             logger.warning("[SyncScheduler] IFS: request %d failed after %d attempts", row["request_id"], attempts)
@@ -83,9 +138,9 @@ def _sync_to_ifs():
 
         result = ifs_client.post_absence(
             employee_id  = row["employee_id"],
-            absence_type = row["absence_type"],
-            from_date    = row["from_date"],
-            to_date      = row["to_date"],
+            absence_type = row["leave_code"],
+            from_date    = row["start_date"],
+            to_date      = row["end_date"],
             reason       = row["reason"] or "",
             request_id   = row["request_id"],
         )
@@ -96,23 +151,31 @@ def _sync_to_ifs():
             ifs_ref = result.get("ifs_cloud_ref", "")
             cursor.execute("""
             UPDATE leave_requests
-            SET ifs_sync_status='synced', ifs_cloud_ref=?, updated_at=datetime('now')
-            WHERE request_id=?
+            SET ifs_sync_status='synced', ifs_cloud_ref=%s
+            WHERE request_id=%s
             """, (ifs_ref, row["request_id"]))
+
+            # Upsert into ifs_sync_log
             cursor.execute("""
-            UPDATE ifs_sync_log
-            SET sync_status='synced', ifs_cloud_ref=?, attempt_count=?, last_attempt_at=?, synced_at=?
-            WHERE leave_request_id=?
-            """, (ifs_ref, attempts + 1, now_str, now_str, row["request_id"]))
+            INSERT INTO ifs_sync_log (leave_request_id, sync_status, ifs_cloud_ref, attempt_count, last_attempt_at, synced_at)
+            VALUES (%s, 'synced', %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                sync_status='synced', ifs_cloud_ref=%s, attempt_count=%s, last_attempt_at=%s, synced_at=%s
+            """, (row["request_id"], ifs_ref, attempts + 1, now_str, now_str,
+                  ifs_ref, attempts + 1, now_str, now_str))
             logger.info("[SyncScheduler] IFS: synced request %d → ref=%s", row["request_id"], ifs_ref)
         else:
+            # Upsert failure into ifs_sync_log
+            error_msg = result.get("error", "Unknown error")
             cursor.execute("""
-            UPDATE ifs_sync_log
-            SET attempt_count=?, last_attempt_at=?, error_message=?
-            WHERE leave_request_id=?
-            """, (attempts + 1, now_str, result.get("error", "Unknown error"), row["request_id"]))
+            INSERT INTO ifs_sync_log (leave_request_id, attempt_count, last_attempt_at, error_message)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                attempt_count=%s, last_attempt_at=%s, error_message=%s
+            """, (row["request_id"], attempts + 1, now_str, error_msg,
+                  attempts + 1, now_str, error_msg))
             logger.warning("[SyncScheduler] IFS: request %d failed (attempt %d): %s",
-                           row["request_id"], attempts + 1, result.get("error"))
+                           row["request_id"], attempts + 1, error_msg)
 
         conn.commit()
 
@@ -133,8 +196,8 @@ def _sync_to_sql():
     SELECT lr.*
     FROM   leave_requests lr
     WHERE  lr.sql_sync_status = 'pending'
-      AND  lr.status IN ('Approved', 'Pending')
-    ORDER  BY lr.submitted_at ASC
+      AND  lr.status IN ('approved', 'submitted')
+    ORDER  BY lr.requested_at ASC
     LIMIT  50
     """)
     pending = cursor.fetchall()
@@ -148,7 +211,7 @@ def _sync_to_sql():
     for row in pending:
         row = dict(row)
         cursor.execute(
-            "SELECT attempt_count FROM sql_server_sync_log WHERE leave_request_id=? ORDER BY log_id DESC LIMIT 1",
+            "SELECT attempt_count FROM sql_server_sync_log WHERE leave_request_id=%s ORDER BY log_id DESC LIMIT 1",
             (row["request_id"],),
         )
         log_row  = cursor.fetchone()
@@ -156,13 +219,13 @@ def _sync_to_sql():
 
         if attempts >= MAX_ATTEMPTS:
             cursor.execute(
-                "UPDATE leave_requests SET sql_sync_status='failed' WHERE request_id=?",
+                "UPDATE leave_requests SET sql_sync_status='failed' WHERE request_id=%s",
                 (row["request_id"],),
             )
             cursor.execute("""
             UPDATE sql_server_sync_log
-            SET sync_status='failed', last_attempt_at=datetime('now')
-            WHERE leave_request_id=?
+            SET sync_status='failed', last_attempt_at=NOW()
+            WHERE leave_request_id=%s
             """, (row["request_id"],))
             conn.commit()
             logger.warning("[SyncScheduler] SQL: request %d permanently failed", row["request_id"])
@@ -175,21 +238,27 @@ def _sync_to_sql():
             sql_ref = result.get("sql_record_id", "")
             cursor.execute("""
             UPDATE leave_requests
-            SET sql_sync_status='synced', updated_at=datetime('now')
-            WHERE request_id=?
+            SET sql_sync_status='synced'
+            WHERE request_id=%s
             """, (row["request_id"],))
+
             cursor.execute("""
-            UPDATE sql_server_sync_log
-            SET sync_status='synced', sql_record_id=?, attempt_count=?, last_attempt_at=?, synced_at=?
-            WHERE leave_request_id=?
-            """, (sql_ref, attempts + 1, now_str, now_str, row["request_id"]))
+            INSERT INTO sql_server_sync_log (leave_request_id, sync_status, sql_record_id, attempt_count, last_attempt_at, synced_at)
+            VALUES (%s, 'synced', %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                sync_status='synced', sql_record_id=%s, attempt_count=%s, last_attempt_at=%s, synced_at=%s
+            """, (row["request_id"], sql_ref, attempts + 1, now_str, now_str,
+                  sql_ref, attempts + 1, now_str, now_str))
             logger.info("[SyncScheduler] SQL: synced request %d → ref=%s", row["request_id"], sql_ref)
         else:
+            error_msg = result.get("error", "Unknown")
             cursor.execute("""
-            UPDATE sql_server_sync_log
-            SET attempt_count=?, last_attempt_at=?, error_message=?
-            WHERE leave_request_id=?
-            """, (attempts + 1, now_str, result.get("error", "Unknown"), row["request_id"]))
+            INSERT INTO sql_server_sync_log (leave_request_id, attempt_count, last_attempt_at, error_message)
+            VALUES (%s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                attempt_count=%s, last_attempt_at=%s, error_message=%s
+            """, (row["request_id"], attempts + 1, now_str, error_msg,
+                  attempts + 1, now_str, error_msg))
 
         conn.commit()
 
@@ -207,6 +276,12 @@ def start_scheduler():
     except ImportError:
         logger.warning("[SyncScheduler] apscheduler not installed — sync scheduler disabled.")
         return
+
+    # Ensure sync columns & tables exist before starting jobs
+    try:
+        _ensure_sync_columns()
+    except Exception as e:
+        logger.error("[SyncScheduler] Failed to ensure sync schema: %s", e)
 
     _scheduler = BackgroundScheduler()
     _scheduler.add_job(
