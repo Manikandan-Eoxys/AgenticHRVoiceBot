@@ -478,7 +478,7 @@ class EmployeeService:
 
     def get_insurance_info(self, employee_id: str) -> str:
         """Check employee health insurance status."""
-        emp_id = re.sub(r"[^0-9]", "", str(employee_id or ""))
+        emp_id = re.sub(r"[^0-9]", "", (employee_id or ""))
         try:
             conn = self._connect()
             cur = conn.cursor(dictionary=True)
@@ -526,7 +526,7 @@ class EmployeeService:
     # -------------------------------------------------------
     def get_employee_schemes(self, employee_id: str) -> str:
         """List statutory schemes employee is enrolled in (ESI, EPF, etc.)."""
-        emp_id = re.sub(r"[^0-9]", "", str(employee_id or ""))
+        emp_id = re.sub(r"[^0-9]", "", (employee_id or ""))
         try:
             conn = self._connect()
             cur = conn.cursor(dictionary=True)

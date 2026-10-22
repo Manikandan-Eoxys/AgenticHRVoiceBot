@@ -41,37 +41,44 @@ class TestCallFlowFixes(unittest.TestCase):
         )
 
     def test_on_call_end_transitions_to_ready(self):
-        """Problem 2: Ensure on_call_end transitions directly through ENDING to READY and resets attributes."""
-        vc = VoiceController()
-        vc.current_state = ControllerState.SESSION_ACTIVE
-        vc._shutdown_requested = False
-        vc._active_participant_identity = "sip_12345"
-        vc.stt_status = "listening"
+        """Problem 2: Ensure on_call_end sets _shutdown_requested, and FSM ticks transition SESSION_ACTIVE -> ENDING -> READY."""
+        async def _test():
+            vc = VoiceController()
+            vc.current_state = ControllerState.SESSION_ACTIVE
+            vc._shutdown_requested = False
+            vc._active_participant_identity = "sip_12345"
+            vc.stt_status = "listening"
 
-        vc.on_call_end("test-room")
+            vc.on_call_end("test-room")
+            self.assertTrue(vc._shutdown_requested)
 
-        self.assertEqual(vc.current_state, ControllerState.READY)
-        self.assertEqual(vc._active_participant_identity, "")
-        self.assertEqual(vc.stt_status, "idle")
-        self.assertIsNone(vc._active_session)
+            # Tick 1: SESSION_ACTIVE -> ENDING
+            await vc.run_state_machine()
+            self.assertEqual(vc.current_state, ControllerState.ENDING)
 
-    def test_ensure_fsm_running_creates_both_tasks(self):
-        """Problem 1: Ensure ensure_fsm_running launches both GlobalMonitorFSM and VoiceControllerFSM."""
+            # Tick 2: ENDING -> READY
+            await vc.run_state_machine()
+            self.assertEqual(vc.current_state, ControllerState.READY)
+            self.assertEqual(vc._active_participant_identity, "")
+            self.assertEqual(vc.stt_status, "idle")
+            self.assertIsNone(vc._active_session)
+
+        asyncio.run(_test())
+
+    def test_ensure_fsm_running_creates_voice_controller_task(self):
+        """Ensure ensure_fsm_running launches VoiceControllerFSM execution task."""
         async def _test():
             vc = VoiceController()
             vc.current_state = ControllerState.READY
             vc.ensure_fsm_running()
 
-            self.assertIsNotNone(vc._global_fsm_task)
-            self.assertFalse(vc._global_fsm_task.done())
             self.assertIsNotNone(vc._fsm_task)
             self.assertFalse(vc._fsm_task.done())
 
-            # Stop the task
-            vc.stop_fsm()
+            # Cancel task for cleanup
+            vc._fsm_task.cancel()
             await asyncio.sleep(0.05)
-            self.assertTrue(vc._fsm_task.done() or vc._stopped)
-            vc._global_fsm_task.cancel()
+            self.assertTrue(vc._fsm_task.done())
 
         asyncio.run(_test())
 
@@ -98,7 +105,7 @@ class TestCallFlowFixes(unittest.TestCase):
 
     def test_watchdog_latches_fire_once_and_reset_on_transition(self):
         """Fix 5: Watchdog warnings latch into 'slow' / 'stalled' and do not reset on every tick.
-        State transition via _set_state() resets latches to 'idle'."""
+        State transition in run_state_machine() resets latches to 'idle'."""
         async def _test():
             vc = VoiceController()
             vc.current_state = ControllerState.THINKING
@@ -124,7 +131,9 @@ class TestCallFlowFixes(unittest.TestCase):
                 mock_warn.assert_not_called()
 
             # State transition to SPEAKING resets all engine statuses to 'idle'
-            vc._set_state(ControllerState.SPEAKING)
+            vc._agent_substate = "SPEAKING"
+            await vc.run_state_machine()
+            self.assertEqual(vc.current_state, ControllerState.SPEAKING)
             self.assertEqual(vc.llm_status, "idle")
             self.assertEqual(vc.tts_status, "idle")
             self.assertEqual(vc.stt_status, "idle")
@@ -164,37 +173,27 @@ class TestCallFlowFixes(unittest.TestCase):
         self.assertTrue(blocked)
         self.assertEqual(matched, "+919360827096")
 
-    def test_ollama_priming_marker_guard(self):
-        """Problem 5 (updated): run_worker_startup_once skips prewarm when marker holds our ppid.
-        The inner /tmp/hrbot_ollama_primed marker was removed; the outer PID marker gates it now."""
-        import controllers.agentVoiceController as vc_module
+    def test_ollama_priming_parent_process_guard(self):
+        """Problem 5: prewarm_resources_once skips prewarm when running in spawned job process."""
         vc = VoiceController()
+        calls = []
+        original_prime = vc._prime_ollama_model
+        vc._prime_ollama_model = lambda: calls.append("called")
 
-        # Write the marker with our own process's PID so child-process logic sees it.
-        # run_worker_startup_once reads: recent = (marker_pid == os.getppid())
-        # When the test process IS the parent, write its own PID and check getppid() in the mock.
-        marker = vc_module._STARTUP_MARKER
-        parent_pid = os.getpid()  # In test we pretend we are the child; parent_pid is "our" parent
+        # Case 1: proc.name != "MainProcess"
+        mock_proc = MagicMock()
+        mock_proc.name = "JobProcess-1"
+        with patch("multiprocessing.current_process", return_value=mock_proc):
+            vc.prewarm_resources_once()
+        self.assertEqual(calls, [], "_prime_ollama_model should NOT be called when proc.name != 'MainProcess'")
 
-        try:
-            with open(marker, "w") as f:
-                f.write(str(parent_pid))
+        # Case 2: parent_process() is not None
+        mock_parent = MagicMock()
+        with patch("multiprocessing.parent_process", return_value=mock_parent):
+            vc.prewarm_resources_once()
+        self.assertEqual(calls, [], "_prime_ollama_model should NOT be called when parent_process is not None")
 
-            calls = []
-            original_on_worker_start = vc.on_worker_start
-            vc.on_worker_start = lambda: calls.append("called")
-
-            with patch("os.getppid", return_value=parent_pid):
-                # Should detect marker matches getppid() and skip on_worker_start
-                vc.run_worker_startup_once()
-
-            self.assertEqual(calls, [], "on_worker_start should NOT be called when marker matches parent PID")
-            self.assertEqual(vc.current_state, ControllerState.READY)
-
-            vc.on_worker_start = original_on_worker_start
-        finally:
-            if os.path.exists(marker):
-                os.remove(marker)
+        vc._prime_ollama_model = original_prime
 
 
 if __name__ == "__main__":

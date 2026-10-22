@@ -65,6 +65,16 @@ DATABASE_NAME = os.environ.get("MYSQL_DATABASE", "hr_voicebot")
 SCHEMA_PATH = Path(__file__).resolve().parent / "hr-voicebot-schema-mysql.sql"
  
  
+from contextlib import contextmanager
+from typing import Any, Generator
+
+
+class DatabaseContext:
+    def __init__(self, conn: Any, cursor: Any) -> None:
+        self.conn = conn
+        self.cursor = cursor
+
+
 def get_db_connection():
     """Returns an active MySQL database connection."""
     config = {
@@ -74,6 +84,22 @@ def get_db_connection():
         "database": DATABASE_NAME,
     }
     return mysql.connector.connect(**config)
+
+
+@contextmanager
+def get_db(dictionary: bool = True) -> Generator[DatabaseContext, None, None]:
+    """
+    Context manager for database operations.
+    Yields an object with .conn and .cursor attributes,
+    and automatically closes cursor and connection on exit.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=dictionary)
+    try:
+        yield DatabaseContext(conn, cursor)
+    finally:
+        cursor.close()
+        conn.close()
  
  
 def _split_statements(sql_text: str) -> list[str]:
@@ -156,7 +182,7 @@ def create_database(schema_path: Path = SCHEMA_PATH) -> None:
         for i, stmt in enumerate(statements, start=1):
             try:
                 cursor.execute(stmt)
-                if cursor.with_rows:
+                if cursor.description:
                     cursor.fetchall()
                 conn.commit()
             except mysql.connector.Error as e:

@@ -22,7 +22,7 @@ import asyncio
 import logging
 import os
 import time
-from datetime import timedelta
+from google.protobuf.duration_pb2 import Duration
 from typing import Optional
 
 from livekit import api, rtc
@@ -184,7 +184,7 @@ class AgentTelephonyController:
                         participant_identity=identity,
                         participant_name="Coordinator",
                         wait_until_answered=True,
-                        ringing_timeout=timedelta(seconds=self.dial_timeout),
+                        ringing_timeout=Duration(seconds=self.dial_timeout),
                     )
                 )
         except Exception as e:
@@ -240,7 +240,7 @@ class AgentTelephonyController:
                         participant_identity=identity,
                         participant_name=participant_name,
                         wait_until_answered=True,
-                        ringing_timeout=timedelta(seconds=timeout_seconds),
+                        ringing_timeout=Duration(seconds=timeout_seconds),
                     )
                 )
             logger.info(

@@ -117,10 +117,15 @@ class EmailApprovalService:
             for mid in msg_ids:
                 try:
                     res, data = mail.fetch(mid, "(RFC822)")
-                    if res != "OK" or not data:
+                    if res != "OK" or not data or not data[0]:
                         continue
 
-                    raw_email = data[0][1]
+                    raw_item = data[0]
+                    if not isinstance(raw_item, tuple) or len(raw_item) < 2:
+                        continue
+                    raw_email = raw_item[1]
+                    if not isinstance(raw_email, (bytes, bytearray)):
+                        continue
                     msg = email.message_from_bytes(raw_email)
 
                     # Extract Subject
@@ -139,12 +144,16 @@ class EmailApprovalService:
                             content_type = part.get_content_type()
                             if content_type == "text/plain":
                                 payload = part.get_payload(decode=True)
-                                if payload:
+                                if isinstance(payload, (bytes, bytearray)):
                                     body_text += payload.decode("utf-8", errors="ignore")
+                                elif isinstance(payload, str):
+                                    body_text += payload
                     else:
                         payload = msg.get_payload(decode=True)
-                        if payload:
+                        if isinstance(payload, (bytes, bytearray)):
                             body_text = payload.decode("utf-8", errors="ignore")
+                        elif isinstance(payload, str):
+                            body_text += payload
 
                     # Look for [REQ-xxx] in Subject or Body
                     req_match = re.search(r"REQ[-_](\d+)", subject_text, re.IGNORECASE)
@@ -197,24 +206,28 @@ class EmailApprovalService:
                     )
                     req_row = cur.fetchone()
 
-                    if not req_row:
+                    if not req_row or not isinstance(req_row, dict):
                         logger.warning(f"Request #{req_id} not found in database.")
                         cur.close()
                         conn.close()
                         continue
 
-                    if req_row["status"] != "submitted":
-                        logger.info(f"Request #{req_id} is already '{req_row['status']}' — skipping.")
+                    status_str = str(req_row.get("status") or "")
+                    if status_str != "submitted":
+                        logger.info(f"Request #{req_id} is already '{status_str}' — skipping.")
                         mail.store(mid, "+FLAGS", "\\Seen")
                         cur.close()
                         conn.close()
                         continue
 
-                    emp_name = req_row["full_name"]
-                    emp_email = req_row["email"]
-                    leave_name = req_row["leave_name"] or req_row["leave_code"]
-                    s_date = str(req_row["start_date"])
-                    e_date = str(req_row["end_date"])
+                    emp_name = str(req_row.get("full_name") or "")
+                    emp_email = str(req_row.get("email") or "")
+                    leave_name = str(req_row.get("leave_name") or req_row.get("leave_code") or "")
+                    s_date = str(req_row.get("start_date") or "")
+                    e_date = str(req_row.get("end_date") or "")
+                    days_requested = int(str(req_row.get("days_requested") or 0))
+                    employee_id = int(str(req_row.get("employee_id") or 0))
+                    leave_code = str(req_row.get("leave_code") or "")
 
                     if is_approved:
                         cur.execute(
@@ -228,7 +241,7 @@ class EmailApprovalService:
                         notify_body = (
                             f"Hi {emp_name},\n\n"
                             f"Great news! Your manager has approved your leave request for {leave_name} "
-                            f"from {s_date} to {e_date} ({req_row['days_requested']} day(s)).\n\n"
+                            f"from {s_date} to {e_date} ({days_requested} day(s)).\n\n"
                             f"Status: Approved\n"
                             f"Request ID: REQ-{req_id}\n\n"
                             f"Best regards,\n"
@@ -238,7 +251,7 @@ class EmailApprovalService:
 
                         processed.append({
                             "request_id": req_id,
-                            "employee_id": req_row["employee_id"],
+                            "employee_id": employee_id,
                             "status": "approved",
                         })
 
@@ -251,7 +264,7 @@ class EmailApprovalService:
                             """UPDATE leave_balances 
                                SET used_days = GREATEST(0, used_days - %s) 
                                WHERE employee_id = %s AND leave_code = %s""",
-                            (req_row["days_requested"], req_row["employee_id"], req_row["leave_code"])
+                            (days_requested, employee_id, leave_code)
                         )
                         conn.commit()
                         logger.info(f"❌ [EmailApproval] Request #{req_id} for {emp_name} updated to REJECTED in MySQL.")
@@ -269,7 +282,7 @@ class EmailApprovalService:
 
                         processed.append({
                             "request_id": req_id,
-                            "employee_id": req_row["employee_id"],
+                            "employee_id": employee_id,
                             "status": "rejected",
                         })
 

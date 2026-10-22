@@ -13,8 +13,9 @@ import time
 import urllib.request
 import atexit
 import asyncio
+import multiprocessing
 from enum import Enum, auto
-from typing import Dict, Any, Optional, Tuple, Callable, TYPE_CHECKING
+from typing import Any, Optional, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from goals.base import GoalService
@@ -23,7 +24,6 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     JobProcess,
-    inference,
 )
 
 from config import (
@@ -33,15 +33,10 @@ from config import (
     SYSTEM_PROMPT,
 )
 from integrations.sync_scheduler import start_scheduler, stop_scheduler
-from controllers.global_monitor_fsm import GlobalMonitorFSM
+from controllers.global_monitor_fsm import report_agent_event
 from controllers.agentToolsController import AgentToolsController
 
 logger = logging.getLogger(__name__)
-
-# Marker file that prevents re-running worker startup (Ollama priming, DB check) on each
-# LiveKit job process fork/spawn. Refreshed every _STARTUP_TTL_S seconds (default: 1 hour).
-_STARTUP_MARKER = "/tmp/hrbot_worker_startup_done"
-_STARTUP_TTL_S = 3600
 
 
 # -----------------------
@@ -60,6 +55,77 @@ class ControllerState(Enum):
     SPEAKING      = auto()  # 10. TTS synthesizing / playing voice
     ENDING        = auto()  # 11. Disconnecting / tearing down
     ERROR         = auto()  # 12. Exception / error
+
+
+_SUBSTATE_TARGET = {
+    "LISTENING": ControllerState.LISTENING,
+    "THINKING":  ControllerState.THINKING,
+    "SPEAKING":  ControllerState.SPEAKING,
+}
+
+# States where an active call is in progress (used by the FSM guard and shutdown)
+_IN_CALL = (
+    ControllerState.CONNECTING,
+    ControllerState.SESSION_ACTIVE,
+    ControllerState.LISTENING,
+    ControllerState.THINKING,
+    ControllerState.SPEAKING,
+)
+
+_scheduler_started = False
+
+
+def _prime_ollama_model(base_url: str = OLLAMA_BASE_URL, model: str = OLLAMA_MODEL) -> None:
+    """Synchronous warm-up request so the first real turn isn't slow."""
+    try:
+        ollama_host = base_url.rstrip("/")
+        if ollama_host.endswith("/v1"):
+            ollama_host = ollama_host[:-3]
+
+        payload = json.dumps({
+            "model": (model or "qwen3:8b").strip(),
+            "prompt": "Hello",  # Warm up model into memory quickly
+            "stream": False,  # Non-streaming single response
+            "keep_alive": -1,  # Keep model loaded indefinitely in GPU/RAM
+            "think": False,  # Top-level parameter in Ollama to suppress chain-of-thought
+            "options": {
+                "num_predict": 1,  # Generate only 1 token for warm-up
+                "num_thread": 8,  # Leverage CPU cores
+            },
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{ollama_host}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        logger.info(f"[FSM] Priming Ollama model '{model}'...")
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            resp.read()
+        logger.info("[FSM] Ollama model loaded and system prompt primed.")
+    except Exception as exc:
+        logger.warning(f"[FSM] Ollama warm-up skipped (non-fatal): {exc}")
+
+
+def prewarm_worker_resources(startup_checks: Callable[[], None] | None = None) -> None:
+    """Scheduler + Ollama priming + DB check. Main worker process only."""
+    global _scheduler_started
+    proc = multiprocessing.current_process()
+    if proc.name != "MainProcess" or multiprocessing.parent_process() is not None:
+        logger.info("⚡ Job process: worker prewarm is owned by the main process; skipping.")
+        return
+    if _scheduler_started:
+        return
+
+    start_scheduler()
+    atexit.register(stop_scheduler)
+    _scheduler_started = True
+    logger.info("⏳ Background sync scheduler started.")
+    _prime_ollama_model(OLLAMA_BASE_URL, OLLAMA_MODEL)
+    if startup_checks:
+        startup_checks()
 
 
 class VoiceController:
@@ -105,13 +171,21 @@ class VoiceController:
         self._active_participant_identity: str = ""
         self._shutdown_requested: bool = False
 
+        # Facts written by event handlers, read (and consumed) by run_state_machine()
+        self._call_requested: bool = False
+        self._agent_substate: str = ""          # last LiveKit agent_state: listening/thinking/speaking/...
+        self._error_requested: bool = False
+
         self._pid = os.getpid()
-        self._room_name: str = ""
-        self._agent_id: str = str(self._pid)
+        self._room_name: str = (
+            job_ctx.room.name if (job_ctx and getattr(job_ctx, "room", None)) else ""
+        )
+        self._agent_id = str(self._pid)
+        self._last_beat = 0.0
         self._fsm_task: Optional[asyncio.Task] = None
-        self._global_fsm_task: Optional[asyncio.Task] = None
         self._idle_watchdog_task: Optional[asyncio.Task] = None  # Cancelled on call end
-        self._stopped: bool = False
+        self._ready_event = asyncio.Event()      # set the first time READY is reached
+        self._startup_checks: Optional[Callable[[], None]] = None
         self._call_start_times: dict[str, float] = {}
 
         # Watchdog timeouts & engine status
@@ -140,65 +214,163 @@ class VoiceController:
 
         logger.info(f"[FSM] Controller initialized [pid={self._pid}] in state: {self.current_state.name}")
         # Register this agent with the global monitor
-        GlobalMonitorFSM.instance().on_agent_event(
-            agent_id=self._agent_id,
-            state=self.current_state,
+        report_agent_event(
+            self._agent_id,
+            self.current_state,
+            room=self._room_name,
+            pid=self._pid,
         )
 
     def _stuck_for(self, seconds: float) -> bool:
         """Returns True if the current state has been active longer than `seconds`."""
         return (time.time() - self._state_updated_at) > seconds
 
-    def _set_state(self, new_state: ControllerState) -> None:
-        """Single canonical place for event-driven state transitions.
-        Logs the change, resets the watchdog timer, and reports to GlobalMonitorFSM.
-        No-ops if the state is unchanged (idempotent)."""
-        if self.current_state == new_state:
-            return
-        old = self.current_state
-        self.current_state = new_state
-        self.next_state = new_state
-        self._previous_state = old
-        self._state_updated_at = time.time()  # Reset watchdog timer for new state
-        self.stt_status = self.llm_status = self.tts_status = "idle"
-        tag = f"pid={self._pid}" + (f" | room='{self._room_name}'" if self._room_name else "")
-        logger.info(f"➡️ VC Transition [{tag}]: {old.name} → {new_state.name}")
-        self._report_to_global_fsm()
-
 
     def ensure_fsm_running(self) -> None:
-        """Lazily starts GlobalMonitorFSM task and VoiceController 12-state FSM loop."""
-        if self._global_fsm_task is None or self._global_fsm_task.done():
-            self._global_fsm_task = asyncio.create_task(
-                GlobalMonitorFSM.instance().run_loop(),
-                name="GlobalMonitorFSM",
-            )
-            logger.info("🌐 [VoiceController] GlobalMonitorFSM task started.")
+        """Starts VoiceControllerFSM loop task if not already running."""
         if self._fsm_task is None or self._fsm_task.done():
-            self._stopped = False
-            self._fsm_task = asyncio.create_task(
-                self.run_loop(),
-                name="VoiceControllerFSM",
-            )
-            logger.info("🤖 [VoiceController] VoiceControllerFSM task started.")
+            self._fsm_task = asyncio.create_task(self.run_loop(), name="VoiceControllerFSM")
 
     async def run_loop(self) -> None:
-        """Continuously runs the 12-state FSM state machine loop until stopped."""
-        logger.info(f"🔄 [VoiceController] FSM run loop started [pid={self._pid}].")
-        while not self._stopped:
-            try:
-                await self.run_state_machine()
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                logger.exception(f"Unhandled error in VoiceController FSM loop: {exc}")
-                await asyncio.sleep(0.1)
+        """Embedded-style super-loop. The ONLY place the FSM executes. Never exits."""
+        logger.info(f"🚀 Voice Controller 12-State FSM Started [pid={self._pid}]")
 
-    def stop_fsm(self) -> None:
-        """Stops the FSM loop."""
-        self._stopped = True
-        if self._fsm_task and not self._fsm_task.done():
-            self._fsm_task.cancel()
+        while True:
+            try:
+                # ── 1. Evaluate state logic based on CURRENT state ────────────────
+                match self.current_state:
+
+                    case ControllerState.UNINITIALIZED:
+                        self.next_state = ControllerState.INITIALIZING
+
+                    case ControllerState.INITIALIZING:
+                        self._build_engines()
+                        self.next_state = ControllerState.PREWARMING
+
+                    case ControllerState.PREWARMING:
+                        await asyncio.to_thread(self.prewarm_resources_once)
+                        self.next_state = ControllerState.READY
+
+                    case ControllerState.READY:
+                        self._shutdown_requested = False          # drop stale flags
+                        self._error_requested = False
+                        if self._call_requested:
+                            self.next_state = ControllerState.JOB_ACCEPTED
+
+                    case ControllerState.JOB_ACCEPTED:
+                        self._call_requested = False
+                        self.next_state = ControllerState.CONNECTING
+
+                    case (ControllerState.CONNECTING | ControllerState.SESSION_ACTIVE
+                        | ControllerState.LISTENING | ControllerState.THINKING
+                        | ControllerState.SPEAKING):
+
+                        # Faults and hangups take priority over everything else
+                        if self._error_requested:
+                            self._error_requested = False
+                            self.next_state = ControllerState.ERROR
+
+                        elif self._shutdown_requested:
+                            self.next_state = ControllerState.ENDING
+
+                        elif self.current_state is ControllerState.CONNECTING:
+                            if self._active_participant_identity:
+                                self.next_state = ControllerState.SESSION_ACTIVE
+                            elif self._stuck_for(self.caller_connect_timeout):
+                                logger.warning(f"⏱️ Timed out waiting for caller after {self.caller_connect_timeout}s.")
+                                self._error_message = "Caller participant did not join in time"
+                                self.next_state = ControllerState.ERROR
+
+                        else:
+                            # SESSION_ACTIVE / LISTENING / THINKING / SPEAKING:
+                            # sub-state follows what LiveKit last reported
+                            self.next_state = _SUBSTATE_TARGET.get(
+                                self._agent_substate.upper(), ControllerState.SESSION_ACTIVE)
+
+                            # Per-state stall watchdogs (log once per stuck period)
+                            if self.current_state is ControllerState.LISTENING:
+                                if self.stt_status == "idle":
+                                    self.stt_status = "listening"
+                                elif self.stt_status == "listening" and self._stuck_for(self.stt_timeout):
+                                    self.stt_status = "stalled"
+                                    logger.debug(f"[STT Watchdog] LISTENING stalled >{self.stt_timeout}s")
+                            elif self.current_state is ControllerState.THINKING:
+                                if self.llm_status == "idle":
+                                    self.llm_status = "generating"
+                                elif self.llm_status == "generating" and self._stuck_for(self.llm_timeout):
+                                    self.llm_status = "slow"
+                                    logger.warning(f"⚠️ [LLM Watchdog] THINKING stalled >{self.llm_timeout}s")
+                            elif self.current_state is ControllerState.SPEAKING:
+                                if self.tts_status == "idle":
+                                    self.tts_status = "synthesizing"
+                                elif self.tts_status == "synthesizing" and self._stuck_for(self.tts_timeout):
+                                    self.tts_status = "stalled"
+                                    logger.warning(f"⚠️ [TTS Watchdog] SPEAKING stalled >{self.tts_timeout}s")
+
+                    case ControllerState.ENDING:
+                        self._shutdown_requested = False
+                        if self._active_session is not None:
+                            try:
+                                await asyncio.wait_for(self._active_session.aclose(), timeout=10.0)
+                            except Exception as exc:
+                                logger.debug(f"Session aclose exception (non-fatal): {exc}")
+                            self._active_session = None
+                        self._active_ctx = None
+                        self._active_agent = None
+                        self._active_participant_identity = ""
+                        self._agent_substate = ""
+                        # _call_requested is intentionally NOT cleared: a call that arrived
+                        # during teardown is picked up by READY → JOB_ACCEPTED.
+                        logger.info("🧹 Reset state for next call job")
+                        self.next_state = ControllerState.READY
+
+                    case ControllerState.ERROR:
+                        logger.error(f"🛑 ControllerState.ERROR: {self._error_message}")
+                        self.next_state = ControllerState.ENDING      # recover via teardown
+
+                    case _:
+                        # Defensive fallback trap
+                        self._error_message = f"Unknown state: {self.current_state}"
+                        self.next_state = ControllerState.ERROR
+
+            except asyncio.CancelledError:
+                raise                                  # process / event loop shutdown only
+            except Exception as exc:
+                logger.exception(f"Unhandled error in state {self.current_state.name}: {exc}")
+                self._error_message = str(exc)
+                # A fault inside ERROR/ENDING must not trap the loop there forever
+                self.next_state = (
+                    ControllerState.READY
+                    if self.current_state in (ControllerState.ERROR, ControllerState.ENDING)
+                    else ControllerState.ERROR
+                )
+
+            # ── 2. Synchronize states at the very end of the iteration ────────────
+            if self.next_state is not self.current_state:
+                old = self.current_state
+                self._previous_state = old
+                self._state_updated_at = time.time()
+                self.stt_status = self.llm_status = self.tts_status = "idle"
+                tag = f"pid={self._pid}" + (f" | room='{self._room_name}'" if self._room_name else "")
+                logger.info(f"➡️ VC Transition [{tag}]: {old.name} → {self.next_state.name}")
+                self.current_state = self.next_state            # currentState = nextState
+                if self.current_state is ControllerState.READY:
+                    self._ready_event.set()
+                else:
+                    self._ready_event.clear()
+                self._report_to_global_fsm()
+
+            # ── 2b. Heartbeat: proves this process's loop is alive ────────────────
+            _now = time.time()
+            if _now - self._last_beat >= 3.0:
+                self._last_beat = _now
+                self._report_to_global_fsm()
+
+            # ── 3. System cadence delay (also yields to the asyncio event loop) ───
+            await asyncio.sleep(0.05)
+
+    async def wait_until_ready(self, timeout: float = 150.0) -> None:
+        await asyncio.wait_for(self._ready_event.wait(), timeout=timeout)
 
     def setup_call(
         self,
@@ -262,7 +434,8 @@ class VoiceController:
             self._active_ctx = ctx
             if ctx.room:
                 self._room_name = ctx.room.name
-                self._agent_id = f"{self._pid}:{ctx.room.name}"
+                # Note: _agent_id is NOT changed here — the pid-keyed registry
+                # entry stays consistent; room is reported separately via _report_to_global_fsm.
 
             # ── Shutdown hook: job cancellation → clean ENDING → READY ────────────
             ctx.add_shutdown_callback(self._on_job_shutdown)
@@ -276,27 +449,7 @@ class VoiceController:
         # ── Agent sub-state changes (LISTENING / THINKING / SPEAKING) ────────────
         @session.on("agent_state_changed")
         def _on_agent_state_changed(ev):
-            # Ignore events after the call has ended
-            if (
-                self._active_session is None
-                or self.current_state in (ControllerState.ENDING, ControllerState.ERROR)
-            ):
-                return
-
-            substate = getattr(ev, "new_state", str(ev))
-            sub_upper = str(substate).upper()
-
-            target_map = {
-                "LISTENING": ControllerState.LISTENING,       # STT phase
-                "THINKING": ControllerState.THINKING,         # LLM / tool execution phase
-                "SPEAKING": ControllerState.SPEAKING,         # TTS phase
-                "INITIALIZING": ControllerState.SESSION_ACTIVE,  # Session warmup
-            }
-
-            target = target_map.get(sub_upper, ControllerState.SESSION_ACTIVE)
-
-            # Update FSM state, reset watchdog timer, and log transition
-            self._set_state(target)
+            self._agent_substate = str(getattr(ev, "new_state", ev))
 
         # ── Session close / error ─────────────────────────────────────────────────
         @session.on("close")
@@ -407,10 +560,6 @@ class VoiceController:
                     return
 
         self._idle_watchdog_task = asyncio.create_task(_idle_watchdog(), name="IdleWatchdog")
-
-    @property
-    def global_fsm(self) -> GlobalMonitorFSM:
-        return GlobalMonitorFSM.instance()
 
     # ------------------------------------------------------------------
     # Goal & Service Introspection (Delegated to AgentToolsController)
@@ -547,165 +696,68 @@ class VoiceController:
     # -----------------------
     # DUAL-FSM EVENT OBSERVERS (LiveKit AgentServer Integration)
     # -----------------------
-    def on_worker_start(self) -> None:
-        """Drives the 12-state FSM through UNINITIALIZED → INITIALIZING → PREWARMING → READY.
+    def set_startup_checks(self, fn: Callable[[], None] | None) -> None:
+        self._startup_checks = fn
 
-        This is always called synchronously from module-level (run_worker_startup_once) in
-        the job subprocess — there is NEVER a running event loop at that point, so we must
-        use asyncio.run() to create a temporary loop, run all startup states to completion,
-        and return. Never call ensure_future/create_task here.
-        """
-        async def _run_startup_fsm():
-            # Step 1: UNINITIALIZED -> INITIALIZING (logs "🚀 Voice Controller 12-State FSM Started")
-            await self.run_state_machine()
-            # Step 2: INITIALIZING -> PREWARMING (runs _build_engines())
-            await self.run_state_machine()
-            # Step 3: PREWARMING -> READY (starts scheduler & primes Ollama)
-            await self.run_state_machine()
-
-        asyncio.run(_run_startup_fsm())
-        logger.info("✅ [VoiceController] Worker startup complete — READY for call jobs.")
-
-    def run_worker_startup_once(self, extra_checks: Callable[[], None] | None = None) -> None:
-        """Prewarm Ollama and run optional extra checks (e.g. DB health) at most once
-        per worker process tree. The marker file stores the worker's PID, so job
-        processes (children) skip warmup but a fresh restart (new PID) re-runs it fully."""
-        try:
-            with open(_STARTUP_MARKER) as f:
-                # Marker contains the parent/worker PID. Child processes share the same
-                # parent PID, so they skip startup; a new worker process has a different PID.
-                recent = int(f.read().strip()) == os.getppid()
-        except Exception:
-            recent = False  # No marker, or unreadable — run full startup
-
-        if recent:
-            logger.info("⚡ Worker startup already done by parent process; marking READY.")
-            self._set_state(ControllerState.READY)  # Skip prewarm — go straight to READY
-            return
-
-        self.on_worker_start()  # Full prewarm: INITIALIZING → PREWARMING → READY
-        if extra_checks:
-            extra_checks()  # e.g. hr_tools.run_startup_check()
-        try:
-            with open(_STARTUP_MARKER, "w") as f:
-                f.write(str(os.getpid()))  # Store this worker's PID so child processes skip warmup
-        except Exception:
-            pass
-
-    def on_job_accepted(self, room_name: str = "") -> None:
-        """Called when an incoming call job request is accepted."""
-        if room_name:
-            self._room_name = room_name
-            self._agent_id = f"{self._pid}:{room_name}"
-        self._set_state(ControllerState.JOB_ACCEPTED)  # Resets watchdog timer via _set_state
-        self._report_to_global_fsm(room=room_name)
+    def prewarm_resources_once(self) -> None:
+        """Scheduler + Ollama priming + DB check. Delegates to module-level prewarm_worker_resources."""
+        prewarm_worker_resources(self._startup_checks)
 
     def on_call_start(self, room_name: str = "") -> None:
-        """Called when a call enters the room (READY → CONNECTING)."""
         if room_name:
             self._room_name = room_name
-            self._agent_id = f"{self._pid}:{room_name}"
-            self._call_start_times[room_name] = time.monotonic()  # Record call start time
-        self._set_state(ControllerState.CONNECTING)  # Resets watchdog timer via _set_state
-        self._report_to_global_fsm(room=room_name)
+            self._call_start_times[room_name] = time.monotonic()
+        self._call_requested = True                      # READY case picks this up
 
     def on_participant_joined(self, identity: str = "") -> None:
-        """Called when caller audio stream is active (CONNECTING → SESSION_ACTIVE).
-        Ignores coordinator participants and late events arriving after call teardown."""
-        # Coordinators joining mid-call must not overwrite the active caller identity
-        # or force SESSION_ACTIVE when we've already torn down.
-        if identity.startswith("coordinator-"):
+        if identity.startswith("coordinator-") or self._active_session is None:
             return
-        # Guard against stale participant_connected events arriving after on_call_end.
-        if self._active_session is None:
-            logger.debug(f"on_participant_joined: no active session; ignoring identity='{identity}'")
-            return
-        self._active_participant_identity = identity  # Track active caller identity
-        self._set_state(ControllerState.SESSION_ACTIVE)  # Resets watchdog timer via _set_state
-        self._report_to_global_fsm(participant=identity)
+        self._active_participant_identity = identity     # CONNECTING case picks this up
 
     def on_session_started(self) -> None:
-        """Call right after session.start(). For inbound SIP calls the caller is already
-        in the room before any participant_connected event fires — this catches that case."""
-        if self.current_state != ControllerState.CONNECTING:
-            return  # Only relevant when we are still waiting for a participant
         room = self._active_ctx.room if self._active_ctx else None
-        if not room:
+        if not room or self._active_participant_identity:
             return
         for p in room.remote_participants.values():
             if not p.identity.startswith("coordinator-"):
-                self.on_participant_joined(p.identity)  # Advance FSM: CONNECTING → SESSION_ACTIVE
+                self.on_participant_joined(p.identity)
                 break
 
-    # def on_agent_state(self, new_state: str) -> None:
-    #     """Alias for on_agent_substate_changed."""
-    #     self.on_agent_substate_changed(new_state)
-
-    # def on_agent_substate_changed(self, substate: str) -> None:
-    #     """Tracks active turn sub-states: LISTENING, THINKING, SPEAKING.
-    #     Uses _set_state() so the watchdog timer resets on every LLM/STT/TTS transition.
-    #     Ignores events that arrive after the call has ended (no active session)."""
-    #     # Guard: trailing agent_state_changed("idle") arrives after on_call_end and
-    #     # would push the FSM back to SESSION_ACTIVE with no active call.
-    #     if self._active_session is None or self.current_state in (ControllerState.ENDING, ControllerState.ERROR):
-    #         return
-    #     sub_upper = str(substate).upper()
-    #     target_map = {
-    #         "LISTENING": ControllerState.LISTENING,   # STT phase — user is speaking
-    #         "THINKING": ControllerState.THINKING,     # LLM phase — generating reply or calling tools
-    #         "SPEAKING": ControllerState.SPEAKING,     # TTS phase — audio is being synthesized/played
-    #         "INITIALIZING": ControllerState.SESSION_ACTIVE,  # Session warmup before first turn
-    #     }
-    #     target = target_map.get(sub_upper, ControllerState.SESSION_ACTIVE)
-    #     self._set_state(target)  # Resets watchdog timer; logs the transition
-
     def on_call_end(self, room_name: str = "") -> None:
-        """Called when call ends or participant disconnects.
-        Idempotent — safe to call multiple times (caller disconnect + job shutdown)."""
-        # Guard: already back to READY with no active context → nothing to do
-        if self.current_state == ControllerState.READY and not self._active_ctx:
+        if self.current_state is ControllerState.READY:
+            # The call was cancelled before the FSM picked up _call_requested.
+            # Clear the flag and the leaked start-time so READY stays idle.
+            self._call_requested = False
+            self._call_start_times.pop(room_name or self._room_name, None)
             return
-
-        elapsed = 0.0
+        if self.current_state is ControllerState.ENDING:
+            return
         target_room = room_name or self._room_name
-        if target_room and target_room in self._call_start_times:
+        elapsed = 0.0
+        if target_room in self._call_start_times:
             elapsed = time.monotonic() - self._call_start_times.pop(target_room)
-        logger.info(
-            f"📴 [VoiceController] Call ended"
-            + (f" (room='{target_room}', duration={elapsed:.1f}s)." if target_room else ".")
-        )
-
-        # Cancel idle watchdog task now that call is over
+        logger.info(f"📴 [VoiceController] Call ended (room='{target_room}', duration={elapsed:.1f}s).")
         if self._idle_watchdog_task and not self._idle_watchdog_task.done():
             self._idle_watchdog_task.cancel()
             self._idle_watchdog_task = None
-
-        self._shutdown_requested = False
-        # Directly transition through ENDING and land at READY
-        self.current_state = ControllerState.ENDING
-        self.next_state = ControllerState.READY
-        self._active_ctx = None          # Release JobContext reference
-        self._active_agent = None        # Release assistant agent reference
-        self._active_session = None      # Release voice session reference
-        self._active_participant_identity = ""  # Clear caller identity
-        self.stt_status = "idle"         # Reset STT engine status
-        self.llm_status = "idle"         # Reset LLM engine status
-        self.tts_status = "idle"         # Reset TTS engine status
-        logger.info(f"➡️ VC Transition [pid={self._pid}]: ENDING → READY")
-        self.current_state = ControllerState.READY
-        self._state_updated_at = time.time()  # Reset watchdog timer to avoid stale READY stuck detection
-        self._report_to_global_fsm(room=target_room)
+        self._shutdown_requested = True                  # state machine goes → ENDING
 
     async def _on_job_shutdown(self, *_args) -> None:
         """Async shutdown callback registered with JobContext.add_shutdown_callback.
         Fires when LiveKit terminates the job (timeout, server restart, etc.).
-        Ensures FSM reaches READY even if caller disconnect event was missed."""
+        Ensures FSM reaches READY (and aclose runs) even if the process is about
+        to exit before the loop ticks into ENDING on its own."""
         self.on_call_end(self._room_name)  # Idempotent — safe if already READY
+        # Wait up to ~5 s for the FSM to finish tearing down so aclose() and
+        # cleanup in the ENDING case run before the process exits.
+        for _ in range(100):
+            if self.current_state is ControllerState.READY:
+                break
+            await asyncio.sleep(0.05)
 
     def on_error(self, error: Exception) -> None:
-        """Called when an unhandled error occurs. Logs and transitions to ERROR state."""
         self._error_message = str(error)
-        self._set_state(ControllerState.ERROR)  # Resets watchdog timer; logs the transition
+        self._error_requested = True                     # state machine goes → ERROR
         logger.error(f"❌ [VoiceController] Error: {error}")
 
     # def _build_engines(self) -> None:
@@ -759,7 +811,7 @@ class VoiceController:
 
     def _prime_ollama_model(self) -> None:
         """Synchronous warm-up request so the first real turn isn't slow.
-        The outer run_worker_startup_once marker already gates this to run once per
+        The outer prewarm_resources_once marker already gates this to run once per
         worker process tree, so no secondary /tmp marker is needed here."""
         try:
             ollama_host = self.ollama_base_url.rstrip("/")
@@ -795,200 +847,27 @@ class VoiceController:
             # Non-fatal warning — model warmup skipped if Ollama is unreachable
             logger.warning(f"[FSM] Ollama warm-up skipped (non-fatal): {exc}")
 
-    # =========================================================================
-    # 12-STATE FSM DISPATCHER
-    # Executes one tick of the state machine loop, transitioning states cleanly.
-    # =========================================================================
-    async def run_state_machine(self):
-        # Default next_state to current_state to preserve event-driven transitions
-        self.next_state = self.current_state  # Prevents stale next_state overwriting current_state
-
-        match self.current_state:
-
-            # -----------------------------------------------------------------
-            # STATE 1: UNINITIALIZED - Initial controller boot state
-            # -----------------------------------------------------------------
-            case ControllerState.UNINITIALIZED:
-                logger.info("🚀 Voice Controller 12-State FSM Started")
-                self.next_state = ControllerState.INITIALIZING  # Advance to building engines
-
-            # -----------------------------------------------------------------
-            # STATE 2: INITIALIZING - Construct STT, LLM, and TTS engine instances
-            # -----------------------------------------------------------------
-            case ControllerState.INITIALIZING:
-                try:
-                    self._build_engines()  # Instantiate STT, LLM, and TTS models
-                    self.next_state = ControllerState.PREWARMING  # Proceed to prewarm phase
-                except Exception as exc:
-                    logger.error(f"❌ Engine construction failed: {exc}")
-                    self._error_message = str(exc)  # Capture failure reason
-                    self.next_state = ControllerState.ERROR  # Route to error handler
-
-            # -----------------------------------------------------------------
-            # STATE 3: PREWARMING - Preload LLM models, DB, and sync scheduler
-            # -----------------------------------------------------------------
-            case ControllerState.PREWARMING:
-                try:
-                    # Start background sync jobs for IFS Cloud and SQL Server (once only)
-                    if not self._scheduler_started:
-                        start_scheduler()  # Start APScheduler periodic jobs
-                        atexit.register(stop_scheduler)  # Stop scheduler cleanly on process exit
-                        self._scheduler_started = True  # Flag scheduler as running
-                        logger.info("⏳ Background sync scheduler started.")
-
-                    # Prime the Ollama LLM in threadpool so the async event loop never freezes
-                    await asyncio.to_thread(self._prime_ollama_model)
-                    self.next_state = ControllerState.READY  # System is warm and ready for calls
-                except Exception as exc:
-                    logger.error(f"❌ Prewarm failed: {exc}")
-                    self._error_message = str(exc)  # Save error details
-                    self.next_state = ControllerState.ERROR  # Route to error handler
-
-            # -----------------------------------------------------------------
-            # STATE 4: READY - Idle and waiting for an incoming call job request
-            # -----------------------------------------------------------------
-            case ControllerState.READY:
-                # READY is a stable idle state — the FSM sleeps briefly between ticks.
-                # State transitions out of READY are purely event-driven via _set_state()
-                # (on_call_start, run_worker_startup_once). No job-queue polling needed.
-                pass
-
-            # -----------------------------------------------------------------
-            # STATE 5: JOB_ACCEPTED - Job acknowledged (event-driven, passes through)
-            # -----------------------------------------------------------------
-            case ControllerState.JOB_ACCEPTED:
-                # on_call_start() is always called immediately after in my_agent,
-                # so this state is transient. Pass through; event will drive CONNECTING.
-                pass
-
-            # -----------------------------------------------------------------
-            # STATE 6: CONNECTING - Waiting for caller participant to join the room
-            # -----------------------------------------------------------------
-            case ControllerState.CONNECTING:
-                # Session and participant arrive via attach_session() / on_session_started() / participant_connected.
-                # Advance only when a participant is present so that on_session_started() can detect
-                # pre-existing callers and the 45s connect timeout can fire if nobody joins.
-                if self._active_participant_identity:
-                    self.next_state = ControllerState.SESSION_ACTIVE
-                elif self._shutdown_requested:
-                    self.next_state = ControllerState.ENDING
-                elif self._stuck_for(self.caller_connect_timeout):
-                    logger.warning(f"⏱️ Timed out waiting for caller participant after {self.caller_connect_timeout}s.")
-                    self._error_message = f"Caller participant did not join within {self.caller_connect_timeout}s"
-                    self.next_state = ControllerState.ERROR
-
-            # -----------------------------------------------------------------
-            # STATE 7: SESSION_ACTIVE - Call is connected and active
-            # -----------------------------------------------------------------
-            case ControllerState.SESSION_ACTIVE:
-                if self._shutdown_requested:
-                    self.next_state = ControllerState.ENDING  # Disconnect requested, tear down call
-
-            # -----------------------------------------------------------------
-            # STATE 8: LISTENING - STT is active, listening to caller speech
-            # -----------------------------------------------------------------
-            case ControllerState.LISTENING:  # STT phase
-                if self.stt_status == "idle":
-                    self.stt_status = "listening"  # Mark STT engine active once
-                if self._shutdown_requested:
-                    self.next_state = ControllerState.ENDING  # Transition to ending if call hung up
-                elif self._stuck_for(self.stt_timeout) and self.stt_status == "listening":
-                    # One-shot warning: LISTENING can be long when caller is just quiet —
-                    # the idle watchdog at 60 s handles the hangup. Log at debug only.
-                    self.stt_status = "stalled"  # Latch flag so this only fires once per stuck period
-                    logger.debug(f"[STT Watchdog] LISTENING stalled for >{self.stt_timeout}s (no transcript)")
-
-            # -----------------------------------------------------------------
-            # STATE 9: THINKING - LLM generating reply or executing tool calls
-            # -----------------------------------------------------------------
-            case ControllerState.THINKING:  # LLM + tools phase
-                if self.llm_status == "idle":
-                    self.llm_status = "generating"  # Mark LLM engine active once
-                if self._shutdown_requested:
-                    self.next_state = ControllerState.ENDING  # Transition to ending if call hung up
-                elif self._stuck_for(self.llm_timeout) and self.llm_status == "generating":
-                    # One-shot warning: log only once per stuck LLM period (FallbackLLM may recover)
-                    self.llm_status = "slow"  # Latch flag so this only fires once
-                    logger.warning(f"⚠️ [LLM Watchdog] THINKING stalled >{self.llm_timeout}s (LLM slow; FallbackLLM should take over).")
-
-            # -----------------------------------------------------------------
-            # STATE 10: SPEAKING - TTS is synthesizing and streaming audio output
-            # -----------------------------------------------------------------
-            case ControllerState.SPEAKING:  # TTS playback phase
-                if self.tts_status == "idle":
-                    self.tts_status = "synthesizing"  # Mark TTS engine active once
-                if self._shutdown_requested:
-                    self.next_state = ControllerState.ENDING  # Transition to ending if call hung up
-                elif self._stuck_for(self.tts_timeout) and self.tts_status == "synthesizing":
-                    # One-shot warning: log only once per stuck TTS period
-                    self.tts_status = "stalled"  # Latch flag so this only fires once
-                    logger.warning(f"⚠️ [TTS Watchdog] SPEAKING stalled >{self.tts_timeout}s.")
-
-            # -----------------------------------------------------------------
-            # STATE 11: ENDING - Disconnecting call and releasing session resources
-            # -----------------------------------------------------------------
-            case ControllerState.ENDING:
-                self._shutdown_requested = False  # Reset shutdown flag
-                # Gracefully close active LiveKit voice session
-                if self._active_session is not None:
-                    try:
-                        await self._active_session.aclose()  # Close async session tracks
-                        logger.info("🛑 Active voice session closed.")
-                    except Exception as exc:
-                        logger.debug(f"Session aclose exception (non-fatal): {exc}")
-                    self._active_session = None  # Clear session reference
-
-                # Reset all session-scoped variables and engine status
-                self._active_ctx = None  # Release job context
-                self._active_agent = None  # Release agent instance
-                self._active_participant_identity = ""  # Reset caller identity
-                self.stt_status = "idle"  # Reset STT engine status
-                self.llm_status = "idle"  # Reset LLM engine status
-                self.tts_status = "idle"  # Reset TTS engine status
-                logger.info("🧹 Reset state for next call job")
-                self.next_state = ControllerState.READY  # Ready for the next phone call
-
-            # -----------------------------------------------------------------
-            # STATE 12: ERROR - Handle errors and recover cleanly to READY
-            # -----------------------------------------------------------------
-            case ControllerState.ERROR:
-                logger.error(f"🛑 ControllerState.ERROR: {self._error_message}")
-                # Recovery path: route through ENDING to clean up resources, then return to READY
-                self.next_state = ControllerState.ENDING
-
-        # Log state transition if state has changed
-        if self.current_state != self.next_state:
-            tag = f"pid={self._pid}" + (f" | room='{self._room_name}'" if self._room_name else "")
-            logger.info(f"➡️ VC Transition [{tag}]: {self.current_state.name} → {self.next_state.name}")
-            self._previous_state = self.current_state  # Store previous state
-            self._state_updated_at = time.time()  # Reset watchdog timer for new state
-            self.current_state = self.next_state  # Advance current state to next state
-            self._report_to_global_fsm()  # Notify global monitoring FSM of state change
-        await asyncio.sleep(0.05)  # Yield control to event loop for 50ms
-
     # ── Global FSM reporting helper ───────────────────────────────────────
     def _report_to_global_fsm(
         self,
         room: str = "",
         participant: str = "",
     ) -> None:
-        """
-        Reports the current state of this VoiceController to the
-        process-level GlobalMonitorFSM.  Called after every state
-        transition.  Non-blocking (dict write under a lock).
-        """
-        try:
-            GlobalMonitorFSM.instance().on_agent_event(
-                agent_id=getattr(self, "_agent_id", str(self._pid)),
-                state=self.current_state,
-                room=room or getattr(self, "_room_name", "") or "",
-                participant=participant or getattr(self, "_active_participant_identity", ""),
-            )
-        except Exception as exc:
-            # Global FSM reporting must never crash the voice agent
-            logger.debug(f"[GlobalFSM] report skipped: {exc}")
+        report_agent_event(
+            self._agent_id,
+            self.current_state,
+            room=room or self._room_name or "",
+            participant=participant or self._active_participant_identity,
+            pid=self._pid,
+        )
 
 
 # Alias for convenience and backwards compatibility
 AgentVoiceController = VoiceController
-__all__ = ["VoiceController", "AgentVoiceController", "ControllerState"]
+__all__ = [
+    "VoiceController",
+    "AgentVoiceController",
+    "ControllerState",
+    "prewarm_worker_resources",
+    "_prime_ollama_model",
+]

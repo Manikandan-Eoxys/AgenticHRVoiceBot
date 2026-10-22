@@ -80,3 +80,56 @@ async def health_check() -> JSONResponse:
             "global_state": global_state,
         },
     )
+
+
+@router.get("/active-assistants")
+async def get_active_assistants_endpoint() -> JSONResponse:
+    """
+    Returns only the list of currently active call assistants:
+    PID, agent_id, state, room, participant, state_duration, call_duration.
+    """
+    gfsm = GlobalMonitorFSM.instance()
+    active_list = gfsm.get_active_assistants()
+    return JSONResponse(content={
+        "status": "ok",
+        "active_count": len(active_list),
+        "assistants": active_list,
+    })
+
+
+@router.get("/kpis")
+async def get_kpis_endpoint() -> JSONResponse:
+    """
+    Extracts real-time operational KPIs:
+    - Concurrency (active calls, peak concurrent calls, utilization)
+    - Reliability (health status, error rate, hung/stale count)
+    - Performance (average call duration, max active duration)
+    - State distribution breakdown
+    """
+    gfsm = GlobalMonitorFSM.instance()
+    kpis = gfsm.get_kpis()
+    return JSONResponse(content={"status": "ok", "kpis": kpis})
+
+
+@router.post("/assistants/{pid}/close")
+async def close_assistant_endpoint(pid: int, force: bool = False) -> JSONResponse:
+    """
+    Closes / terminates an assistant worker process using its PID.
+    Pass ?force=true to send SIGKILL instead of SIGTERM.
+    """
+    gfsm = GlobalMonitorFSM.instance()
+    result = gfsm.close_assistant_by_pid(pid, force=force)
+    status_code = 200 if result.get("success") else 400
+    return JSONResponse(status_code=status_code, content=result)
+
+
+@router.post("/assistants/close-all")
+async def close_all_assistants_endpoint(force: bool = False) -> JSONResponse:
+    """
+    Closes / terminates all currently active assistant worker processes.
+    Pass ?force=true to send SIGKILL instead of SIGTERM.
+    """
+    gfsm = GlobalMonitorFSM.instance()
+    result = gfsm.close_all_active_assistants(force=force)
+    status_code = 200 if result.get("success") else 500
+    return JSONResponse(status_code=status_code, content=result)

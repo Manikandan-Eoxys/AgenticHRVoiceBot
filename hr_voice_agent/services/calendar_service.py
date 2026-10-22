@@ -12,6 +12,7 @@ Architecture:
 """
 
 from datetime import datetime
+from typing import Any
 from database.db import get_db_connection
 from services.employee_service import EmployeeService
 
@@ -58,9 +59,9 @@ class CalendarService:
             "message": "Meeting Scheduled."
         }
 
-    def _db_list_meetings(self, employee_id):
+    def _db_list_meetings(self, employee_id) -> dict[str, Any]:
         conn = self._connect()
-        cursor = conn.cursor(dictionary=True)
+        cursor: Any = conn.cursor(dictionary=True)
 
         cursor.execute("""
             SELECT event_id, title, event_date, event_time, duration, location, attendees, status
@@ -131,9 +132,9 @@ class CalendarService:
             "message": "Meeting Updated."
         }
 
-    def _db_get_meeting(self, event_id):
+    def _db_get_meeting(self, event_id) -> dict[str, Any]:
         conn = self._connect()
-        cursor = conn.cursor(dictionary=True)
+        cursor: Any = conn.cursor(dictionary=True)
 
         cursor.execute("""
             SELECT event_id, title, event_date, event_time, duration, location, attendees, status
@@ -239,7 +240,7 @@ class CalendarService:
     # -------------------------------------------------------
     # List Meetings
     # -------------------------------------------------------
-    def list_meetings(self, employee_id: int):
+    def list_meetings(self, employee_id: int) -> dict[str, Any]:
         employee = self.employee_service.get_employee(employee_id)
         if not employee["success"]:
             return {
@@ -251,18 +252,22 @@ class CalendarService:
     # -------------------------------------------------------
     # Upcoming Meetings
     # -------------------------------------------------------
-    def upcoming_meetings(self, employee_id: int):
+    def upcoming_meetings(self, employee_id: int) -> dict[str, Any]:
         meetings = self.list_meetings(employee_id)
-        if not meetings["success"]:
+        if not meetings.get("success"):
             return meetings
 
         today = datetime.today().date()
         upcoming = []
+        raw_meetings = meetings.get("meetings", [])
+        meeting_list: list[dict[str, Any]] = raw_meetings if isinstance(raw_meetings, list) else []
 
-        for meeting in meetings["meetings"]:
+        for meeting in meeting_list:
+            if not isinstance(meeting, dict):
+                continue
             try:
                 meeting_date = datetime.strptime(
-                    meeting["event_date"],
+                    str(meeting.get("event_date", "")),
                     "%Y-%m-%d"
                 ).date()
                 if meeting_date >= today:
@@ -283,12 +288,17 @@ class CalendarService:
         employee_id: int,
         event_date: str,
         event_time: str
-    ):
+    ) -> dict[str, Any]:
         meetings = self.list_meetings(employee_id)
-        if not meetings["success"]:
+        if not meetings.get("success"):
             return {"conflict": False}
 
-        for meeting in meetings["meetings"]:
+        raw_meetings = meetings.get("meetings", [])
+        meeting_list: list[dict[str, Any]] = raw_meetings if isinstance(raw_meetings, list) else []
+
+        for meeting in meeting_list:
+            if not isinstance(meeting, dict):
+                continue
             if (
                 meeting.get("event_date") == event_date
                 and meeting.get("event_time") == event_time
@@ -309,27 +319,31 @@ class CalendarService:
         event_id: int,
         new_date: str,
         new_time: str
-    ):
+    ) -> dict[str, Any]:
         return self._db_update_meeting(event_id, new_date, new_time)
 
     # -------------------------------------------------------
     # Meeting Details
     # -------------------------------------------------------
-    def get_meeting(self, event_id: int):
+    def get_meeting(self, event_id: int) -> dict[str, Any]:
         return self._db_get_meeting(event_id)
 
     # -------------------------------------------------------
     # Today's Meetings
     # -------------------------------------------------------
-    def todays_meetings(self, employee_id: int):
+    def todays_meetings(self, employee_id: int) -> dict[str, Any]:
         meetings = self.list_meetings(employee_id)
-        if not meetings["success"]:
+        if not meetings.get("success"):
             return meetings
 
         today = datetime.today().strftime("%Y-%m-%d")
         today_list = []
+        raw_meetings = meetings.get("meetings", [])
+        meeting_list: list[dict[str, Any]] = raw_meetings if isinstance(raw_meetings, list) else []
 
-        for meeting in meetings["meetings"]:
+        for meeting in meeting_list:
+            if not isinstance(meeting, dict):
+                continue
             if meeting.get("event_date") == today:
                 today_list.append(meeting)
 
@@ -345,7 +359,7 @@ class CalendarService:
         self,
         employee_id: int,
         event_date: str
-    ):
+    ) -> dict[str, Any]:
         all_slots = [
             "09:00",
             "10:00",
@@ -360,8 +374,12 @@ class CalendarService:
         meetings = self.list_meetings(employee_id)
         booked = []
 
-        if meetings["success"]:
-            for meeting in meetings["meetings"]:
+        if meetings.get("success"):
+            raw_meetings = meetings.get("meetings", [])
+            meeting_list: list[dict[str, Any]] = raw_meetings if isinstance(raw_meetings, list) else []
+            for meeting in meeting_list:
+                if not isinstance(meeting, dict):
+                    continue
                 if meeting.get("event_date") == event_date:
                     booked.append(meeting.get("event_time"))
 

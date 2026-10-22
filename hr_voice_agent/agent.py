@@ -49,7 +49,16 @@ from config import (
 )
 from services.session_recorder import SessionRecorder
 from services.monitoring_handler import install_monitoring_handler
-from controllers.agentVoiceController import VoiceController
+from controllers.agentVoiceController import (
+    VoiceController,
+    ControllerState,
+    prewarm_worker_resources,
+)
+from controllers.global_monitor_fsm import (
+    start_global_monitor,
+    global_monitor_running,
+    report_agent_event,
+)
 from ollama_llm import OllamaLLM, FallbackLLM
 from livekit.plugins.deepgram import STT, TTS as DeepgramTTS
 
@@ -64,9 +73,9 @@ if not _env_path.exists():
     _env_path = Path(__file__).resolve().parent / ".env.local"
 load_dotenv(_env_path)
 
-# Ensure prewarm logs (INITIALIZING → PREWARMING → READY) are visible in the terminal.
+# Ensure prewarm logs (INITIALIZING → PREWARMING → READY) are visible in the terminal during startup.
 # MonitoringHandler (installed above) ships logs to HTTP only — not to the terminal.
-# Explicitly add a stderr StreamHandler so startup logs appear in the console.
+# A temporary stderr StreamHandler is added here for startup and removed once LiveKit's CLI takes over.
 
 import sys as _sys
 _root = logging.getLogger()
@@ -75,11 +84,12 @@ _has_stream = any(
     isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) in (_sys.stderr, _sys.stdout)
     for h in _root.handlers
 )
+_startup_sh: logging.StreamHandler | None = None
 if not _has_stream:
-    _sh = logging.StreamHandler(_sys.stderr)
-    _sh.setLevel(logging.DEBUG)
-    _sh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s %(name)s - %(message)s"))
-    _root.addHandler(_sh)
+    _startup_sh = logging.StreamHandler(_sys.stderr)
+    _startup_sh.setLevel(logging.DEBUG)
+    _startup_sh.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s %(name)s - %(message)s"))
+    _root.addHandler(_startup_sh)
 
 logger = logging.getLogger("agent")
 
@@ -694,7 +704,7 @@ Today's actual date is {today_str}. Use this as ground truth for every relative 
 - Sensitive Complaints: Treat grievances and harassment reports with maximum empathy and confidentiality; log a confidential ticket immediately.
 - Unresolved Issues: If an issue cannot be resolved by policy rules, create an HR ticket and read the reference number to the caller.
 - Coordinator Transfer: If caller asks for a live human coordinator, ask them to confirm "yes, proceed" before transferring.
-- Ending the Call: Say a polite closing goodbye, then immediately invoke the end call tool to hang up.
+- Ending the Call: When the caller says "no thank you", "goodbye", "that's all", or indicates they are done: say your brief polite goodbye (e.g. "You're welcome! Have a great day. Goodbye.") and you MUST call the tool end_call() in that same turn to disconnect the call cleanly.
 """
 
 
@@ -727,7 +737,7 @@ Today's actual date is {today_str}.
 📞 3. COORDINATOR TRANSFER & ENDING
 ════════════════════════════════════════════════════════════════
 - If they ask for a live coordinator: ask for confirmation ("yes, proceed") before transferring.
-- Ending the Call: Say a polite closing goodbye, then immediately invoke the end call tool to hang up.
+- Ending the Call: Say your brief polite goodbye and you MUST call the tool end_call() to hang up the phone line.
 """
 
 
@@ -761,7 +771,7 @@ Reason for call:
 📞 3. COORDINATOR & ENDING
 ════════════════════════════════════════════════════════════════
 - If they request a human coordinator: ask for confirmation ("yes, proceed") before transferring.
-- Ending the Call: When acknowledgement is recorded and the employee has no further questions, say a brief polite goodbye and invoke the end call tool.
+- Ending the Call: When acknowledgement is recorded and the employee has no further questions, say a brief polite goodbye and you MUST call the tool end_call() to hang up the phone line.
 """
 
 
@@ -794,16 +804,15 @@ class Assistant(Agent):
         else:
             instructions = INBOUND_INSTRUCTIONS.format(today_str=today_str)
 
-        # Configure shared VoiceController instance for this call_type (avoids redundant instances)
-        voice_controller.setup_call(
-            call_type=call_type,
+        # Fresh VoiceController instance per call session
+        self.voice_controller = VoiceController(
+            call_type=call_type or "inbound",
             job_ctx=job_ctx,
             collector=collector,
             call_metadata=call_metadata,
         )
-        self.voice_controller = voice_controller
-        self.tools_controller = voice_controller.tools_controller
-        active_tools = voice_controller.session_all_tools()
+        self.tools_controller = self.voice_controller.tools_controller
+        active_tools = self.voice_controller.session_all_tools()
 
         super().__init__(
             instructions=instructions,
@@ -834,26 +843,26 @@ class Assistant(Agent):
 
 server = AgentServer()
 
-# Single global voice_controller instance — shared across all calls in this worker process.
-voice_controller = VoiceController()
+# Main process only: starts THE ONE monitor thread. No-op in job processes and
+# when a monitor is already running.
+start_global_monitor()
 
-# Prewarm Ollama and run DB health check once per worker process tree.
-# Subsequent fork/spawn processes see the /tmp marker and skip to READY immediately.
-voice_controller.run_worker_startup_once(extra_checks=run_startup_check)
+try:
+    prewarm_worker_resources(run_startup_check)
+except Exception:
+    logger.exception("Worker prewarm failed (continuing).")
+finally:
+    # Remove temporary startup handler so LiveKit's CLI can manage console logging exclusively.
+    if _startup_sh is not None and _startup_sh in _root.handlers:
+        _root.removeHandler(_startup_sh)
 
 agent_worker_name = WORKER_AGENT_NAME
 
-def _ensure_global_fsm_running() -> None:
-    """Lazily starts GlobalMonitorFSM and VoiceController 12-state FSM tasks."""
-    voice_controller.ensure_fsm_running()
-
 def _worker_setup(proc: agents.JobProcess) -> None:
-    """Prewarm hook called by LiveKit on worker process spawn (synchronous only).
-    setup_fnc is called before the async event loop exists — never call
-    asyncio.create_task() / ensure_future() here.
-    FSM tasks are started later inside _my_agent_impl() which runs in async context.
-    """
-    voice_controller.request_prewarm(proc)
+    for h in list(logging.getLogger().handlers):          # existing handler cleanup
+        if isinstance(h, logging.StreamHandler):
+            logging.getLogger().removeHandler(h)
+    report_agent_event(str(os.getpid()), "READY")          # "process started"
 
 server.setup_fnc = _worker_setup
 
@@ -873,14 +882,12 @@ async def on_job_request(job_req: agents.JobRequest) -> None:
 
 
 async def _my_agent_impl(ctx: agents.JobContext):
+    
+    if not await asyncio.to_thread(global_monitor_running):
+        logger.warning("[GlobalFSM] Monitor not reachable — this call will not be monitored.")
+
     # Recorder reference initialized up-front to prevent UnboundLocalError in disconnect closures
     recorder: SessionRecorder | None = None
-
-    # Start global FSM loop and VoiceController FSM loop (idempotent — only creates tasks once)
-    _ensure_global_fsm_running()
-
-    # Trigger VoiceController FSM: READY → CONNECTING
-    voice_controller.on_call_start(ctx.room.name)
 
     # ------------------------------------------------------------------
     # 1. Immediate Call Blocklist Check upon Room Entry
@@ -901,8 +908,28 @@ async def _my_agent_impl(ctx: agents.JobContext):
     stt_lang = os.environ.get("DEEPGRAM_LANGUAGE", "en")
 
     # Engines: Direct Deepgram STT + FallbackLLM (Cloud -> Ollama) + Configurable TTS (Cartesia via LiveKit Inference)
-    stt_engine = STT(api_key=DEEPGRAM_API_KEY or "", model="nova-3", language=stt_lang)
-    local_ollama = OllamaLLM(model=OLLAMA_MODEL.strip(), base_url=OLLAMA_BASE_URL, think=False)
+    # stt_engine = STT(api_key=DEEPGRAM_API_KEY or "", model="nova-3", language=stt_lang)
+    # local_ollama = OllamaLLM(model=OLLAMA_MODEL.strip(), base_url=OLLAMA_BASE_URL, think=False)
+    
+    # ── Build the speech and language engines for this call ──────────────────────
+    # STT (speech -> text): Deepgram Nova-3, called directly with our own API key.
+    # TTS (text -> speech) and the final LLM choice are set up in the lines below.
+
+    # Speech-to-text engine.
+    stt_engine = STT(
+        api_key=DEEPGRAM_API_KEY or "",  # key from config.py; "" if missing (avoids passing None)
+        model="nova-3",                  # Deepgram's Nova-3 recognition model
+        language=stt_lang,               # language code from .env (DEEPGRAM_LANGUAGE), default "en"
+    )
+
+    # Local LLM served by Ollama on this machine.
+    # Always created: it is the main LLM when USE_CLOUD_LLM is off,
+    # and the backup LLM when USE_CLOUD_LLM is on.
+    local_ollama = OllamaLLM(
+        model=OLLAMA_MODEL.strip(),  # model name from config.py, trailing spaces removed
+        base_url=OLLAMA_BASE_URL,    # Ollama server address (no /v1 suffix)
+        think=False,                 # skip the reasoning chain for fast replies
+    )
     # Read USE_CLOUD_LLM from .env; True only if it is "true" or "1"
     # (case-insensitive), otherwise False.
     use_cloud = os.getenv("USE_CLOUD_LLM", "false").lower() in ("true", "1")
@@ -1002,6 +1029,21 @@ async def _my_agent_impl(ctx: agents.JobContext):
     @session.on("conversation_item_added")
     def _on_item_added(ev):
         logger.debug("conversation item added")
+        item = getattr(ev, "item", None)
+        if item and getattr(item, "role", "") == "assistant":
+            text = getattr(item, "text", "") or getattr(item, "formatted_text", "") or ""
+            if not text and hasattr(item, "content"):
+                parts = getattr(item, "content", [])
+                text = " ".join(str(p) for p in parts) if isinstance(parts, list) else str(parts)
+            if re.search(r"\b(goodbye|have a (great|nice|good) day|bye now)\b", text, re.IGNORECASE):
+                logger.info(f"👋 [Agent] Goodbye detected in assistant response: '{text.strip()}'. Scheduling auto-hangup.")
+                async def _auto_hangup_after_goodbye():
+                    await asyncio.sleep(3.5)  # Wait for TTS audio to reach caller
+                    if assistant.voice_controller.current_state not in (ControllerState.ENDING, ControllerState.READY):
+                        logger.info("📴 [Agent] Executing auto-hangup following goodbye.")
+                        assistant.voice_controller.on_call_end(ctx.room.name)
+                        await _hangup(ctx)
+                asyncio.create_task(_auto_hangup_after_goodbye())
 
     async def _on_coordinator_left_cb():
         """Called by VoiceController when a coordinator participant leaves."""
@@ -1078,8 +1120,13 @@ async def _my_agent_impl(ctx: agents.JobContext):
         close_on_disconnect=False,
         audio_input=audio_input_opts if audio_input_opts else room_io.AudioInputOptions(),
     )
-    #2.Pass call_metadata into the Assistant
+    # 2. Pass call_metadata into the Assistant (instantiates fresh VoiceController per call)
     assistant = Assistant(ctx, call_metadata=call_metadata, collector=collector)
+
+    # Start this call's VoiceController FSM loop and wait until ready
+    assistant.voice_controller.ensure_fsm_running()
+    await assistant.voice_controller.wait_until_ready()
+    assistant.voice_controller.on_call_start(ctx.room.name)
 
     # Wire all session lifecycle events into the FSM via attach_session.
     # Participant events, agent state, idle watchdog, and shutdown hook are all
@@ -1089,7 +1136,7 @@ async def _my_agent_impl(ctx: agents.JobContext):
     def _handle_coordinator_left() -> None:
         asyncio.create_task(_on_coordinator_left_cb())
 
-    voice_controller.attach_session(
+    assistant.voice_controller.attach_session(
         session,
         assistant=assistant,
         ctx=ctx,
@@ -1108,7 +1155,7 @@ async def _my_agent_impl(ctx: agents.JobContext):
 
     # After session.start(): advance FSM to SESSION_ACTIVE if caller was already in room
     # (inbound SIP — no participant_connected event fires for pre-existing participants).
-    voice_controller.on_session_started()
+    assistant.voice_controller.on_session_started()
 
     # Publish DTMF dual-tone audio track into room
     await dtmf_player.start()
@@ -1137,7 +1184,7 @@ async def _my_agent_impl(ctx: agents.JobContext):
         )
     else:
         await session.say(
-            "Hello! Welcome to Eoxys HR voice assistant. Please state or enter your employee ID to get started.",
+            "Hello! Welcome to Eoxys HR voice assistant. Please say or enter your employee ID to get started.",
             allow_interruptions=False,
         )
 

@@ -28,13 +28,13 @@ logger = logging.getLogger("controllers.agent_config")
 # Defaults
 # ---------------------------------------------------------------------------
 
-_DEFAULTS = {
+_DEFAULTS: dict[str, str] = {
     # LiveKit
-    "LIVEKIT_URL": None,
-    "LIVEKIT_API_KEY": None,
-    "LIVEKIT_API_SECRET": None,
+    "LIVEKIT_URL": "",
+    "LIVEKIT_API_KEY": "",
+    "LIVEKIT_API_SECRET": "",
     # STT / LLM / TTS
-    "DEEPGRAM_API_KEY": None,
+    "DEEPGRAM_API_KEY": "",
     "DEEPGRAM_LANGUAGE": "en",
     "LIVEKIT_LLM_MODEL": "google/gemma-4-31b-it",
     "TTS_PROVIDER": "cartesia",
@@ -49,7 +49,7 @@ _DEFAULTS = {
     "SIP_CALLER_ID": "+918031451001",
     "COORDINATOR_DIAL_TIMEOUT_SECONDS": "30",
     # Recording
-    "RECORDINGS_LOCAL_DIR": None,          # computed from __file__ if absent
+    "RECORDINGS_LOCAL_DIR": "",          # computed from __file__ if absent
     "RECORDINGS_S3_BUCKET": "",
     "RECORDINGS_S3_REGION": "us-east-1",
     "RECORDINGS_S3_ENDPOINT": "",
@@ -182,7 +182,7 @@ class AgentConfigController:
             except ImportError:
                 logger.warning("python-dotenv not installed — skipping .env load.")
 
-        env = {k: os.environ.get(k, v) for k, v in _DEFAULTS.items()}
+        env: dict[str, str] = {k: os.environ.get(k, v) for k, v in _DEFAULTS.items()}
 
         missing = [k for k in _REQUIRED_KEYS if not env.get(k)]
         if missing:
@@ -197,34 +197,34 @@ class AgentConfigController:
         )
 
         config = AgentRuntimeConfig(
-            livekit_url=env["LIVEKIT_URL"] or "",
-            livekit_api_key=env["LIVEKIT_API_KEY"] or "",
-            livekit_api_secret=env["LIVEKIT_API_SECRET"] or "",
-            deepgram_api_key=env["DEEPGRAM_API_KEY"] or "",
-            deepgram_language=env["DEEPGRAM_LANGUAGE"],
-            llm_model=env["LIVEKIT_LLM_MODEL"],
-            tts_provider=env["TTS_PROVIDER"],
-            tts_model=env["TTS_MODEL"],
-            tts_voice=env["TTS_VOICE"],
-            ollama_base_url=env["OLLAMA_BASE_URL"],
-            ollama_model=env["OLLAMA_MODEL"],
-            coordinator_phone=env["COORDINATOR_PHONE_NUMBER"],
+            livekit_url=env["LIVEKIT_URL"],
+            livekit_api_key=env["LIVEKIT_API_KEY"],
+            livekit_api_secret=env["LIVEKIT_API_SECRET"],
+            deepgram_api_key=env["DEEPGRAM_API_KEY"],
+            deepgram_language=env["DEEPGRAM_LANGUAGE"] or "en",
+            llm_model=env["LIVEKIT_LLM_MODEL"] or "google/gemma-4-31b-it",
+            tts_provider=env["TTS_PROVIDER"] or "cartesia",
+            tts_model=env["TTS_MODEL"] or "cartesia/sonic-3",
+            tts_voice=env["TTS_VOICE"] or "ec1e269e-9ca0-402f-8a18-58e0e022355a",
+            ollama_base_url=env["OLLAMA_BASE_URL"] or "http://localhost:11434/v1",
+            ollama_model=env["OLLAMA_MODEL"] or "qwen3:8b",
+            coordinator_phone=env["COORDINATOR_PHONE_NUMBER"] or "+918925355704",
             outbound_trunk_id=env["LIVEKIT_OUTBOUND_TRUNK_ID"],
             sip_caller_id=env["SIP_CALLER_ID"],
-            coordinator_dial_timeout=int(env["COORDINATOR_DIAL_TIMEOUT_SECONDS"]),
+            coordinator_dial_timeout=int(env["COORDINATOR_DIAL_TIMEOUT_SECONDS"] or 30),
             recordings_local_dir=recordings_dir,
             recordings_s3_bucket=env["RECORDINGS_S3_BUCKET"],
-            recordings_s3_region=env["RECORDINGS_S3_REGION"],
+            recordings_s3_region=env["RECORDINGS_S3_REGION"] or "us-east-1",
             recordings_s3_endpoint=env["RECORDINGS_S3_ENDPOINT"],
             recordings_s3_access_key=env["RECORDINGS_S3_ACCESS_KEY"],
             recordings_s3_secret_key=env["RECORDINGS_S3_SECRET_KEY"],
-            recording_coordinator_mode=env["RECORDING_COORDINATOR_MODE"],
-            idle_hangup_seconds=float(env["IDLE_HANGUP_SECONDS"]),
-            worker_agent_name=env["WORKER_AGENT_NAME"],
-            mysql_host=env["MYSQL_HOST"],
-            mysql_user=env["MYSQL_USER"],
+            recording_coordinator_mode=env["RECORDING_COORDINATOR_MODE"] or "record_all",
+            idle_hangup_seconds=float(env["IDLE_HANGUP_SECONDS"] or 60.0),
+            worker_agent_name=env["WORKER_AGENT_NAME"] or "hr-voice-agent",
+            mysql_host=env["MYSQL_HOST"] or "localhost",
+            mysql_user=env["MYSQL_USER"] or "hrbot",
             mysql_password=env["MYSQL_PASSWORD"],
-            mysql_database=env["MYSQL_DATABASE"],
+            mysql_database=env["MYSQL_DATABASE"] or "hr_voicebot",
             is_valid=len(missing) == 0,
             missing_required=missing,
         )

@@ -29,4 +29,8 @@ def _start_email_approval_daemon():
 
 if __name__ == "__main__":
     _start_email_approval_daemon()
+    # Strip any lingering StreamHandlers so LiveKit CLI has exclusive console logger control
+    for h in list(logging.getLogger().handlers):
+        if isinstance(h, logging.StreamHandler):
+            logging.getLogger().removeHandler(h)
     agents.cli.run_app(server)
