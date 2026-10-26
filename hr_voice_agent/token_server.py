@@ -30,6 +30,7 @@ from config import (
 )
 from security.call_blocklist import is_number_blocked
 from controllers.monitor_router import router as monitor_router
+from controllers.rag_router import router as rag_router
 
 app = FastAPI()
 
@@ -43,6 +44,7 @@ app.add_middleware(
 
 # Mount routers
 app.include_router(monitor_router)
+app.include_router(rag_router)
 
 
 @app.get("/getToken")

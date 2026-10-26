@@ -279,10 +279,14 @@ class SessionRecorder:
             role = getattr(ev.item, "role", "") if hasattr(ev, "item") else ""
             text = getattr(ev.item, "text", "") if hasattr(ev, "item") else ""
             if not text and hasattr(ev, "item") and hasattr(ev.item, "content"):
-                text = str(ev.item.content)
+                parts = getattr(ev.item, "content", [])
+                if isinstance(parts, list):
+                    text = " ".join(str(p).strip() for p in parts if str(p).strip())
+                else:
+                    text = str(parts)
 
             clean_text = text.strip()
-            if not clean_text:
+            if not clean_text or clean_text.startswith("[GROUNDING CONTEXT]"):
                 return
 
             now_str = datetime.now().strftime("%H:%M:%S")

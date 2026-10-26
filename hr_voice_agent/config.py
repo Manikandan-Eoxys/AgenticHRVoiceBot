@@ -153,6 +153,19 @@ class Config:
     ARI_USER     = os.getenv("ARI_USER", "asterisk")
     ARI_PASSWORD = os.getenv("ARI_PASSWORD", "asterisk")
     ARI_APP_NAME = os.getenv("ARI_APP_NAME", "hr_voicebot")
+
+    # ------------------------------------------------------------------
+    # RAG Retrieval Pipeline
+    # ------------------------------------------------------------------
+    RAG_TIMEOUT            = float(os.getenv("RAG_TIMEOUT", "2.0"))
+    RAG_FILLER_DELAY       = float(os.getenv("RAG_FILLER_DELAY", "0.45"))
+    RAG_FILLER_MODE        = os.getenv("RAG_FILLER_MODE", "text")
+    RAG_MAX_CONTEXT_CHARS  = int(os.getenv("RAG_MAX_CONTEXT_CHARS", "1500"))
+    RAG_ALLOWED_HOSTS      = os.getenv("RAG_ALLOWED_HOSTS", "")
+    RAG_ALLOW_INSECURE_DEV = os.getenv("RAG_ALLOW_INSECURE_DEV", "false")
+    RAG_ALLOW_METADATA_CONFIG = os.getenv("RAG_ALLOW_METADATA_CONFIG", "false")
+    RAG_SECRET_KEY         = os.getenv("RAG_SECRET_KEY", None)
+
  
  
 # ---------------------------------------------------------
@@ -214,3 +227,13 @@ ARI_WS_URL   = Config.ARI_WS_URL
 ARI_USER     = Config.ARI_USER
 ARI_PASSWORD = Config.ARI_PASSWORD
 ARI_APP_NAME = Config.ARI_APP_NAME
+
+# RAG Retrieval Pipeline
+RAG_TIMEOUT            = Config.RAG_TIMEOUT
+RAG_FILLER_DELAY       = Config.RAG_FILLER_DELAY
+RAG_FILLER_MODE        = Config.RAG_FILLER_MODE
+RAG_MAX_CONTEXT_CHARS  = Config.RAG_MAX_CONTEXT_CHARS
+RAG_ALLOWED_HOSTS      = Config.RAG_ALLOWED_HOSTS
+RAG_ALLOW_INSECURE_DEV = Config.RAG_ALLOW_INSECURE_DEV
+RAG_ALLOW_METADATA_CONFIG = Config.RAG_ALLOW_METADATA_CONFIG
+RAG_SECRET_KEY         = Config.RAG_SECRET_KEY

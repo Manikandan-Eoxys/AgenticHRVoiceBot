@@ -583,4 +583,17 @@ CREATE TABLE IF NOT EXISTS agent_config (
     KEY idx_is_active (is_active)
 );
 
+-- ============================================================
+-- 20. AGENT RAG CONFIGURATION (Retrieval-Augmented Generation)
+-- Persists agent-specific RAG knowledgeBase configs and encrypted secrets.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS agent_rag_config (
+    config_id       INT AUTO_INCREMENT PRIMARY KEY,
+    agent_id        VARCHAR(64) NOT NULL UNIQUE,
+    config_json     LONGTEXT NOT NULL,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_agent_id (agent_id)
+);
+
 

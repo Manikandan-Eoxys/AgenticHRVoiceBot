@@ -20,7 +20,7 @@ import os
 import time
 from datetime import date
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Optional, cast
 
 import re
 import aiohttp
@@ -46,6 +46,18 @@ from security.call_blocklist import is_call_blocked
 from config import (
     DEEPGRAM_API_KEY, OLLAMA_MODEL, OLLAMA_BASE_URL,
     WORKER_AGENT_NAME,
+    RAG_FILLER_MODE, RAG_TIMEOUT, RAG_FILLER_DELAY, RAG_MAX_CONTEXT_CHARS,
+)
+from services.rag_retriever_service import (
+    RagConfig,
+    HttpRetriever,
+    validate_rag_url,
+    load_knowledge_base_config,
+    needs_rag,
+    clean_snippets,
+    build_context_message,
+    RagFiller,
+    load_clips,
 )
 from services.session_recorder import SessionRecorder
 from services.monitoring_handler import install_monitoring_handler
@@ -788,6 +800,22 @@ class Assistant(Agent):
         call_metadata = call_metadata or {}             #if call_metadata was passed as None (or empty), replace it with an empty dictionary {}.
         call_type = call_metadata.get("call_type")
 
+        # RAG Pipeline initialization (external endpoint only)
+        self._rag_config: RagConfig = RagConfig()
+        self._retriever: Optional[HttpRetriever] = None
+        self._rag_filler: Optional[RagFiller] = None
+        try:
+            self._rag_filler = RagFiller(RAG_FILLER_MODE, load_clips("rag_fillers"))
+            kb = load_knowledge_base_config(call_metadata)
+            self._rag_config = RagConfig.from_knowledge_base(kb)
+
+            if self._rag_config.enabled and self._rag_config.url:
+                validate_rag_url(self._rag_config.url)   # reject unsafe URLs up front
+                self._retriever = HttpRetriever(config=self._rag_config, timeout=RAG_TIMEOUT)
+        except Exception as exc:
+            logger.warning("Failed to initialize RAG pipeline: %s", type(exc).__name__)
+            self._retriever = None
+
         if call_type == "leave_verification":
             instructions = OUTBOUND_LEAVE_VERIFICATION_INSTRUCTIONS.format(
                 today_str=today_str,
@@ -838,6 +866,109 @@ class Assistant(Agent):
         if self.voice_controller.coordinator_service:
             return await self.voice_controller.coordinator_service.transfer_to_coordinator(context)
         return "Coordinator transfer unavailable."
+
+    # This method is automatically called by the framework immediately after the user finishes speaking (end of their turn).
+    # It serves as the primary hook to trigger the RAG pipeline.
+    async def on_user_turn_completed(
+        self, turn_ctx: Any, new_message: Any
+    ) -> None:
+        """
+        RAG retrieval hook triggered when user finishes speaking.
+
+        Inspects utterance via needs_rag. If RAG is required:
+          a. Returns if retriever is None or needs_rag(text) is False.
+          b. Sets voice_controller.rag_status = 'retrieving' (resets to 'idle' in finally).
+          c. Starts search as an asyncio task: search(text, top_k).
+          d. Waits with asyncio.wait for RAG_FILLER_DELAY. If not done, plays filler.
+          e. Awaits search up to remaining RAG_TIMEOUT. On error/timeout, cancels task and uses [].
+          f. Cleans snippets and builds grounding context message.
+          g. Adds message to turn_ctx if not None.
+          h. Logs latency, snippet count, filler status, and error type.
+        """
+        # Safely extracts the transcribed text string from LiveKit's message payload.
+        raw_text = getattr(new_message, "text_content", None)
+        if not raw_text:
+            content = getattr(new_message, "content", "")
+            raw_text = " ".join(content) if isinstance(content, list) else str(content or "")
+        text = (raw_text or "").strip()
+        
+        if self._retriever is None or not needs_rag(text):
+            return
+        
+        # Resets the filler state so one latency filler is allowed to play on this turn if retrieval takes too long.
+        if self._rag_filler is not None:
+            self._rag_filler.reset_turn()
+
+        self.voice_controller.rag_status = "retrieving"
+        start_time = time.monotonic()
+        filler_played = False
+        error_type: Optional[str] = None
+        snippets: list[str] = []
+        search_task: Optional[asyncio.Task] = None
+
+        try:
+            #  Launches HTTP retrieval asynchronously as an asyncio task in the background without blocking the voice loop.
+            search_task = asyncio.create_task(
+                self._retriever.search(text, self._rag_config.top_k)
+            )
+            # Waits up to RAG_FILLER_DELAY (default 0.7s). If retrieval doesn't return in time, plays a filler TTS clip.
+            done, _ = await asyncio.wait({search_task}, timeout=RAG_FILLER_DELAY)
+            if not done:
+                session = getattr(self, "session", None)
+                if self._rag_filler is not None and session is not None:
+                    self._rag_filler.play(session)
+                    filler_played = True
+
+            # Calculates how much time is left before reaching the hard cutoff RAG_TIMEOUT (e.g., 2.0s - 0.45s = 1.55s left).
+            elapsed = time.monotonic() - start_time
+            remaining_time = max(0.0, RAG_TIMEOUT - elapsed)
+
+            result: list[str] = []
+            try:
+                # If the task completed before the delay, retrieve result immediately; otherwise wait the remaining time.
+                if search_task.done():
+                    result = search_task.result()
+                else:
+                    result = await asyncio.wait_for(asyncio.shield(search_task), timeout=remaining_time)
+            
+            # Catches retrieval errors (network, timeout, parsing) and falls back to empty snippets.
+            except Exception as exc:
+                if search_task is not None and not search_task.done():
+                    search_task.cancel()
+                error_type = type(exc).__name__
+                logger.warning("RAG retrieval failed: %s", error_type)
+                result = []
+
+            # Ensures that the returned snippets do not exceed a character limit, and builds a context message in the required format.
+            snippets = clean_snippets(
+                result,
+                top_k=self._rag_config.top_k,
+                max_chars=RAG_MAX_CONTEXT_CHARS,
+            )
+
+            # Ensures that the returned snippets do not exceed a character limit, and builds a context message in the required format.
+            msg = build_context_message(
+                snippets,
+                mode=self._rag_config.grounding_mode,
+            )
+            # Injects the formatted grounding prompt directly into LiveKit's turn context before the LLM generates speech for this turn.
+            if msg is not None:
+                turn_ctx.add_message(role="assistant", content=msg)
+
+            latency_ms = round((time.monotonic() - start_time) * 1000, 2)
+            logger.info(
+                "RAG turn: gate=True, latency_ms=%.2f, snippet_count=%d, filler_played=%s, error_type=%s",
+                latency_ms,
+                len(snippets),
+                filler_played,
+                error_type,
+            )
+        except asyncio.CancelledError:
+            if search_task is not None and not search_task.done():
+                search_task.cancel()
+            raise
+        finally:
+            self.voice_controller.rag_status = "idle"
 
 
 
@@ -915,6 +1046,9 @@ async def _my_agent_impl(ctx: agents.JobContext):
     # STT (speech -> text): Deepgram Nova-3, called directly with our own API key.
     # TTS (text -> speech) and the final LLM choice are set up in the lines below.
 
+    endpointing_min = float(os.environ.get("ENDPOINTING_MIN_DELAY", "0.16"))
+    endpointing_max = float(os.environ.get("ENDPOINTING_MAX_DELAY", "0.45"))
+
     # Speech-to-text engine.
     stt_engine = STT(
         api_key=DEEPGRAM_API_KEY or "",  # key from config.py; "" if missing (avoids passing None)
@@ -964,6 +1098,7 @@ async def _my_agent_impl(ctx: agents.JobContext):
     # ── Keypad DTMF Player & Digits Collector ─────────────────────────────────
     dtmf_player = DtmfPlayer(ctx.room)
     collector = DtmfCollector(player=dtmf_player, session=session)
+    assistant: Optional[Assistant] = None
 
     def _on_sip_dtmf(ev: rtc.SipDTMF):
         digit = (ev.digit).strip()
@@ -1034,14 +1169,21 @@ async def _my_agent_impl(ctx: agents.JobContext):
             text = getattr(item, "text", "") or getattr(item, "formatted_text", "") or ""
             if not text and hasattr(item, "content"):
                 parts = getattr(item, "content", [])
-                text = " ".join(str(p) for p in parts) if isinstance(parts, list) else str(parts)
+                text = " ".join(str(p).strip() for p in parts if str(p).strip()) if isinstance(parts, list) else str(parts)
+            clean_text = text.strip()
+            if clean_text and not clean_text.startswith("[GROUNDING CONTEXT]"):
+                logger.info(f"🤖 [Agent Spoke]: \"{clean_text}\"")
+
             if re.search(r"\b(goodbye|have a (great|nice|good) day|bye now)\b", text, re.IGNORECASE):
                 logger.info(f"👋 [Agent] Goodbye detected in assistant response: '{text.strip()}'. Scheduling auto-hangup.")
                 async def _auto_hangup_after_goodbye():
                     await asyncio.sleep(3.5)  # Wait for TTS audio to reach caller
-                    if assistant.voice_controller.current_state not in (ControllerState.ENDING, ControllerState.READY):
-                        logger.info("📴 [Agent] Executing auto-hangup following goodbye.")
-                        assistant.voice_controller.on_call_end(ctx.room.name)
+                    if assistant is not None and assistant.voice_controller is not None:
+                        if assistant.voice_controller.current_state not in (ControllerState.ENDING, ControllerState.READY):
+                            logger.info("📴 [Agent] Executing auto-hangup following goodbye.")
+                            assistant.voice_controller.on_call_end(ctx.room.name)
+                            await _hangup(ctx)
+                    else:
                         await _hangup(ctx)
                 asyncio.create_task(_auto_hangup_after_goodbye())
 
@@ -1077,6 +1219,11 @@ async def _my_agent_impl(ctx: agents.JobContext):
             return
         _cleaned_up = True
         async def _cleanup():
+            if assistant is not None and getattr(assistant, "_retriever", None):
+                try:
+                    await assistant._retriever.aclose()
+                except Exception as err:
+                    logger.warning(f"Error closing RAG retriever: {err}")
             try:
                 await dtmf_player.close()
             except Exception:

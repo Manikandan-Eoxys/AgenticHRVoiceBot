@@ -58,6 +58,14 @@ __all__ = [
     "ARI_USER",
     "ARI_PASSWORD",
     "ARI_APP_NAME",
+    "RAG_TIMEOUT",
+    "RAG_FILLER_DELAY",
+    "RAG_FILLER_MODE",
+    "RAG_MAX_CONTEXT_CHARS",
+    "RAG_ALLOWED_HOSTS",
+    "RAG_ALLOW_INSECURE_DEV",
+    "RAG_ALLOW_METADATA_CONFIG",
+    "RAG_SECRET_KEY",
 ]
 
 if TYPE_CHECKING:
@@ -108,6 +116,14 @@ if TYPE_CHECKING:
         ARI_USER: str
         ARI_PASSWORD: str
         ARI_APP_NAME: str
+        RAG_TIMEOUT: float
+        RAG_FILLER_DELAY: float
+        RAG_FILLER_MODE: str
+        RAG_MAX_CONTEXT_CHARS: int
+        RAG_ALLOWED_HOSTS: str
+        RAG_ALLOW_INSECURE_DEV: str
+        RAG_ALLOW_METADATA_CONFIG: str
+        RAG_SECRET_KEY: Optional[str]
 
     BASE_DIR: Path
     PROMPT_FILE: Path
@@ -145,3 +161,12 @@ if TYPE_CHECKING:
     ARI_USER: str
     ARI_PASSWORD: str
     ARI_APP_NAME: str
+    RAG_TIMEOUT: float
+    RAG_FILLER_DELAY: float
+    RAG_FILLER_MODE: str
+    RAG_MAX_CONTEXT_CHARS: int
+    RAG_ALLOWED_HOSTS: str
+    RAG_ALLOW_INSECURE_DEV: str
+    RAG_ALLOW_METADATA_CONFIG: str
+    RAG_SECRET_KEY: Optional[str]
+

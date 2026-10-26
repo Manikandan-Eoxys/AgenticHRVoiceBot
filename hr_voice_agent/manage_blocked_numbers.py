@@ -51,7 +51,7 @@ def cmd_list(args):
         for i, num in enumerate(all_blocked, 1):
             sources = []
             if num in json_blocked:
-                sources.append("JSON (data/blocked_numbers.json)")
+                sources.append("JSON (config/blocked_numbers.json)")
             if num in incode_blocked:
                 sources.append("In-Code (call_blocklist.py)")
             if num in env_blocked:

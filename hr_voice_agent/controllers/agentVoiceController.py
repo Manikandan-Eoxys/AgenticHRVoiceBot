@@ -196,6 +196,7 @@ class VoiceController:
         self.stt_status: str = "idle"
         self.llm_status: str = "idle"
         self.tts_status: str = "idle"
+        self.rag_status: str = "idle"
         self._scheduler_started: bool = False
 
         self.call_type: str = call_type

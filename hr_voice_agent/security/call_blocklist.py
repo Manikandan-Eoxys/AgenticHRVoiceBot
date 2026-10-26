@@ -23,8 +23,7 @@ from typing import Any, Iterable
 logger = logging.getLogger("call_blocklist")
 
 # Path to the persistent JSON file
-_CONFIG_JSON_PATH = Path(__file__).resolve().parent.parent / "config" / "blocked_numbers.json"
-_DEFAULT_JSON_PATH = _CONFIG_JSON_PATH if _CONFIG_JSON_PATH.exists() else Path(__file__).resolve().parent.parent / "data" / "blocked_numbers.json"
+_DEFAULT_JSON_PATH = Path(__file__).resolve().parent.parent / "config" / "blocked_numbers.json"
 
 # ==============================================================================
 # IN-CODE BLOCKED NUMBERS LIST
