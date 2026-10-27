@@ -724,6 +724,10 @@ class VoiceController:
                 self.on_participant_joined(p.identity)
                 break
 
+    def on_agent_substate_changed(self, new_state: str) -> None:
+        """Updates agent substate (listening, thinking, speaking) for FSM evaluation."""
+        self._agent_substate = str(new_state)
+
     def on_call_end(self, room_name: str = "") -> None:
         if self.current_state is ControllerState.READY:
             # The call was cancelled before the FSM picked up _call_requested.
