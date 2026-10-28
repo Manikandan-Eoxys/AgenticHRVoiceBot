@@ -231,6 +231,17 @@ class AsteriskVoiceSession:
         )
         self.active_tools = self.voice_controller.session_all_tools()
 
+        # Call-specific isolated context
+        from hr_voice_agent.telephony.context import CallContext
+        self.call_context = CallContext(
+            call_id=self.call_uuid,
+            caller_number=self.caller_id,
+            channel_id=self.channel_id,
+            room_name=self.room_name,
+            session=self,
+            voice_controller=self.voice_controller,
+        )
+
         # Fallback LLM / Ollama configuration
         self._setup_llm()
 
@@ -550,8 +561,25 @@ class AsteriskVoiceSession:
         except Exception as e:
             logger.warning(f"RAG search error: {e}")
             return None
-        finally:
-            self.voice_controller.rag_status = "idle"
+    async def transfer_call(self, target: str) -> bool:
+        """Transfers the caller channel to destination endpoint via ARI redirect."""
+        endpoint = target if "/" in target else f"PJSIP/{target}"
+        logger.info(f"🔀 [Asterisk Session {self.call_uuid}] Transferring channel {self.channel_id} to {endpoint}...")
+        self.interrupt()
+        if not self.ari_http or not self.channel_id:
+            return False
+        try:
+            url = f"{ARI_URL}/channels/{self.channel_id}/redirect"
+            params = {"endpoint": endpoint}
+            async with self.ari_http.post(url, params=params) as resp:
+                if resp.status in (200, 204):
+                    logger.info(f"✅ [Asterisk Session {self.call_uuid}] Redirected channel {self.channel_id} to {endpoint}")
+                    return True
+                logger.warning(f"ARI redirect returned {resp.status} for endpoint {endpoint}")
+                return False
+        except Exception as e:
+            logger.error(f"Exception during ARI transfer: {e}")
+            return False
 
     async def hangup(self) -> None:
         """Ends the call cleanly across Asterisk ARI and AudioSocket."""

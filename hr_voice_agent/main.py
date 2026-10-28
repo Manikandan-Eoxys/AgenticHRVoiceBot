@@ -43,8 +43,8 @@ def main():
 
     if is_asterisk:
         logger.info("☎️ [Mode: ASTERISK] Starting Asterisk ARI + AudioSocket Telephony Daemon...")
-        from asterisk.server import run_asterisk_server
-        run_asterisk_server()
+        from asterisk_main import run
+        run()
     else:
         logger.info("🎙️ [Mode: LIVEKIT] Starting LiveKit Worker Agent...")
         from livekit import agents

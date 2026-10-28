@@ -86,28 +86,42 @@ class CoordinatorTransferService(GoalService):
         caller_id = os.environ.get("SIP_CALLER_ID", SIP_CALLER_ID)
         trunk_id = os.environ.get("SIP_OUTBOUND_TRUNK_ID", OUTBOUND_TRUNK_ID)
 
-        try:
-            async with api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) as lkapi:
-                await lkapi.sip.create_sip_participant(
-                    api.CreateSIPParticipantRequest(
-                        sip_trunk_id=trunk_id,
-                        sip_call_to=coord_num,
-                        sip_number=caller_id,
-                        room_name=room.name,
-                        participant_identity=identity,
-                        participant_name="Coordinator",
-                        wait_until_answered=True,
-                        ringing_timeout=timedelta(seconds=timeout_sec),
-                    )
+        # Check if underlying session is an Asterisk telephony session
+        telephony_session = getattr(context, "session", None)
+        if telephony_session and hasattr(telephony_session, "transfer_call"):
+            logger.info(f"🔀 [Transfer] Telephony session detected. Calling transfer_call({coord_num})...")
+            transfer_ok = await telephony_session.transfer_call(coord_num)
+            if not transfer_ok:
+                logger.warning(f"⚠️ [Transfer] Asterisk transfer to {coord_num} failed.")
+                return (
+                    f"The coordinator at {coord_num} could not be reached right now. "
+                    "Apologise to the caller and say: 'The HR coordinator is currently unavailable. "
+                    "I can raise an HR ticket for your query so they can call you back, or I can help you with anything else. "
+                    "Which would you prefer?'"
                 )
-        except Exception as e:
-            logger.warning(f"⚠️ [Transfer] Coordinator at {coord_num} did not answer or failed: {e}")
-            return (
-                f"The coordinator did not answer the call within {timeout_sec} seconds. "
-                "Apologise to the caller and say: 'The HR coordinator is currently unavailable. "
-                "I can raise an HR ticket for your query so they can call you back, or I can help you with anything else. "
-                "Which would you prefer?'"
-            )
+        else:
+            try:
+                async with api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) as lkapi:
+                    await lkapi.sip.create_sip_participant(
+                        api.CreateSIPParticipantRequest(
+                            sip_trunk_id=trunk_id,
+                            sip_call_to=coord_num,
+                            sip_number=caller_id,
+                            room_name=room.name,
+                            participant_identity=identity,
+                            participant_name="Coordinator",
+                            wait_until_answered=True,
+                            ringing_timeout=timedelta(seconds=timeout_sec),
+                        )
+                    )
+            except Exception as e:
+                logger.warning(f"⚠️ [Transfer] Coordinator at {coord_num} did not answer or failed: {e}")
+                return (
+                    f"The coordinator did not answer the call within {timeout_sec} seconds. "
+                    "Apologise to the caller and say: 'The HR coordinator is currently unavailable. "
+                    "I can raise an HR ticket for your query so they can call you back, or I can help you with anything else. "
+                    "Which would you prefer?'"
+                )
 
         logger.info(f"✅ [Transfer] Coordinator answered: {coord_num} joined room {room.name}")
         if hasattr(context, "session") and context.session:
