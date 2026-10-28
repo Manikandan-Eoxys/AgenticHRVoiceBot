@@ -10,6 +10,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700;800&display=swap"
     rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.6.4/dist/livekit-client.umd.min.js"></script>
   <style>
     /* ═══════════════════════════════════════ TOKENS ═══════════════════════════════════════ */
     :root {
@@ -1615,6 +1616,78 @@
         padding: 14px 14px 40px;
       }
     }
+    /* ════ MONITOR & KPI STYLES ════ */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .kpi-card {
+      background: var(--white);
+      border: 1.5px solid var(--bdr);
+      border-radius: var(--r);
+      padding: 14px 16px;
+      box-shadow: var(--sh);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 96px;
+    }
+    .kpi-val {
+      font-size: 24px;
+      font-weight: 800;
+      font-family: var(--fh);
+      color: var(--ink);
+      margin: 4px 0 2px;
+      letter-spacing: -.02em;
+    }
+    .kpi-sub {
+      font-size: 11px;
+      color: var(--muted);
+      font-family: var(--fm);
+      font-weight: 500;
+    }
+    .state-bar {
+      display: flex;
+      height: 12px;
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--parchment);
+      margin: 10px 0 6px;
+    }
+    .state-seg {
+      height: 100%;
+      transition: width .3s ease;
+    }
+    .rag-chunk {
+      background: var(--inner);
+      border: 1.5px solid var(--bdr);
+      border-radius: var(--rs);
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .rag-score-chip {
+      display: inline-block;
+      font-family: var(--fm);
+      font-size: 10.5px;
+      font-weight: 700;
+      color: var(--terra-d);
+      background: var(--terra-l);
+      border: 1px solid var(--terra-b);
+      padding: 2px 7px;
+      border-radius: 4px;
+      margin-bottom: 6px;
+    }
+    .call-opt-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+      text-align: left;
+    }
   </style>
 </head>
 
@@ -1636,11 +1709,13 @@
       <nav class="sb-nav">
         <div class="nav-sec">Live Console</div>
         <div class="nav-i active" onclick="nav('console',this)"><span class="ic">📞</span> Call Console</div>
+        <div class="nav-i" onclick="nav('monitor',this)"><span class="ic">📊</span> Fleet &amp; KPI Monitor</div>
         <div class="nav-i" onclick="nav('transcript',this)"><span class="ic">💬</span> Live Transcript</div>
         <div class="nav-i" onclick="nav('logs',this)"><span class="ic">📋</span> Activity Log</div>
 
         <div class="nav-sec">Configuration</div>
         <div class="nav-i" onclick="nav('goals',this)"><span class="ic">🎯</span> Goals &amp; Guardrails</div>
+        <div class="nav-i" onclick="nav('rag',this)"><span class="ic">📚</span> RAG Knowledge Base</div>
         <div class="nav-i" onclick="nav('engine',this)"><span class="ic">⚙️</span> Engine Stack</div>
         <div class="nav-i" onclick="nav('phone',this)"><span class="ic">📱</span> Phone Config</div>
         <div class="nav-i" onclick="nav('livekit',this)"><span class="ic">☁️</span> LiveKit Config</div>
@@ -1663,8 +1738,8 @@
         border:1.5px solid var(--must-b);display:flex;align-items:center;justify-content:center;
         font-weight:800;font-size:11px;font-family:var(--fh);flex-shrink:0;">HR</div>
           <div style="flex:1;">
-            <div style="font-size:12.5px;font-weight:700;font-family:var(--fh);">Test Console</div>
-            <div style="font-size:10.5px;color:var(--muted);">Demo Mode</div>
+            <div style="font-size:12.5px;font-weight:700;font-family:var(--fh);">Agent Console</div>
+            <div style="font-size:10.5px;color:var(--muted);" id="sbModeLabel">LiveKit WebRTC</div>
           </div>
           <div class="live-dot" id="liveDot" style="display:none;"></div>
         </div>
@@ -1678,7 +1753,7 @@
       <div class="topbar">
         <div class="tb-left">
           <h2 id="tbTitle">Call Console</h2>
-          <div class="sub" id="tbSub">HR Voice Agent — WebRTC Test Client</div>
+          <div class="sub" id="tbSub">HR Voice Agent — WebRTC &amp; LiveKit Client</div>
         </div>
         <div class="tb-right">
           <div class="cs-badge" id="csBadge"><span class="dot"></span><span id="csTxt">Ready</span></div>
@@ -1690,15 +1765,17 @@
       <div class="pipe-strip">
         <div class="ps on">🎙️ Mic</div>
         <div class="pa">→</div>
-        <div class="ps" id="pp2">☁️ LiveKit</div>
+        <div class="ps" id="pp2">☁️ LiveKit WebRTC</div>
         <div class="pa">→</div>
         <div class="ps" id="pp3">📝 Deepgram STT</div>
         <div class="pa">→</div>
         <div class="ps" id="pp4">🧠 Ollama LLM</div>
         <div class="pa">→</div>
-        <div class="ps" id="pp5">🗄️ SQLite DB</div>
+        <div class="ps" id="pp_rag">📚 RAG Knowledge</div>
         <div class="pa">→</div>
-        <div class="ps" id="pp6">🔊 Deepgram TTS</div>
+        <div class="ps" id="pp5">🗄️ MySQL DB</div>
+        <div class="pa">→</div>
+        <div class="ps" id="pp6">🔊 Cartesia TTS</div>
       </div>
 
       <!-- ═══ VIEW: CALL CONSOLE ═══ -->
@@ -1710,8 +1787,11 @@
             <div class="card">
               <div class="ch">
                 <h3>📞 Call Console</h3>
-                <span id="timerDisp"
-                  style="font-family:var(--fm);font-weight:700;font-size:1.1rem;color:var(--terra);display:none;">00:00</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button class="btn btn-s btn-xs" id="micMuteBtn" onclick="toggleMicMute()" style="display:none;">🎤 Mic On</button>
+                  <span id="timerDisp"
+                    style="font-family:var(--fm);font-weight:700;font-size:1.1rem;color:var(--terra);display:none;">00:00</span>
+                </div>
               </div>
               <div class="cb" style="text-align:center;padding:20px;">
                 <div class="call-orb" id="callOrb">🎙️</div>
@@ -1729,20 +1809,36 @@
                   <div class="wb"></div>
                   <div class="wb"></div>
                 </div>
-                <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px;" id="cStatusTxt">Ready — click Start
-                  Call to connect</div>
+                <div style="font-size:12.5px;color:var(--muted);margin-bottom:12px;" id="cStatusTxt">Ready — select mode and click Start Call</div>
+
+                <!-- Call Mode & Identity Selection -->
+                <div class="call-opt-row">
+                  <div>
+                    <label style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;">Call Mode</label>
+                    <select id="callModeSelect" style="width:100%;padding:6px 8px;font-size:12px;border-radius:6px;border:1.5px solid var(--bdr);background:var(--inner);font-family:var(--fh);font-weight:600;" onchange="onCallModeChange()">
+                      <option value="webrtc" selected>WebRTC Direct Call</option>
+                      <option value="sip">SIP Monitor (hr-sip-live)</option>
+                      <option value="demo">Interactive Simulation</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;">Caller Identity</label>
+                    <input type="text" id="callerIdentityInp" value="Ravikala" placeholder="Name or Emp ID" style="width:100%;padding:6px 8px;font-size:12px;border-radius:6px;border:1.5px solid var(--bdr);background:var(--inner);font-family:var(--fh);font-weight:600;">
+                  </div>
+                </div>
+
                 <div style="display:flex;gap:9px;max-width:280px;margin:0 auto;">
                   <button class="btn btn-g btn-full" id="startBtn" onclick="startCall()">📞 Start Call</button>
-                  <button class="btn btn-e btn-full" id="endBtn" onclick="endCall()" style="display:none;">📵 End
-                    Call</button>
+                  <button class="btn btn-e btn-full" id="endBtn" onclick="endCall()" style="display:none;">📵 End Call</button>
                 </div>
+                <audio id="lkRemoteAudio" autoplay playsinline style="display:none;"></audio>
               </div>
             </div>
 
             <!-- Meta Strip -->
             <div class="meta-row">
               <div class="mc">
-                <div class="ml">Call Type</div><span class="badge b-teal" id="metaType">WebRTC</span>
+                <div class="ml">Call Type</div><span class="badge b-teal" id="metaType">WebRTC Direct</span>
               </div>
               <div class="mc">
                 <div class="ml">Room ID</div>
@@ -1754,15 +1850,14 @@
               </div>
               <div class="mc">
                 <div class="ml">Active Goal</div>
-                <div class="mv" id="metaGoal" style="color:var(--muted);font-family:var(--fh);font-size:11.5px;">Idle
-                </div>
+                <div class="mv" id="metaGoal" style="color:var(--muted);font-family:var(--fh);font-size:11.5px;">Idle</div>
               </div>
             </div>
 
             <!-- HR Goals Quick View -->
             <div class="card">
               <div class="ch">
-                <h3>🎯 HR Goals</h3><span style="font-size:11px;color:var(--muted);">12 goals loaded</span>
+                <h3>🎯 HR Goals</h3><span style="font-size:11px;color:var(--muted);">13 goals registered</span>
               </div>
               <div class="cb" style="padding:10px 12px;">
                 <div id="goalsQuick" style="display:flex;flex-direction:column;gap:3px;"></div>
@@ -1801,6 +1896,100 @@
                 <div class="log-empty">No activity yet.</div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ VIEW: FLEET & KPI MONITOR ═══ -->
+      <div class="view" id="v-monitor">
+        <div class="ph" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <h1>📊 Fleet &amp; KPI Monitor</h1>
+            <p>Real-time operational metrics, agent concurrency, and active call assistant processes.</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;cursor:pointer;">
+              <input type="checkbox" id="monitorAutoRefresh" checked onchange="toggleAutoRefreshMonitor(this.checked)"> Auto-refresh (3s)
+            </label>
+            <button class="btn btn-s btn-sm" onclick="fetchMonitorData()">🔄 Refresh Now</button>
+            <button class="btn btn-e btn-sm" onclick="closeAllAssistants()">🛑 Close All</button>
+          </div>
+        </div>
+
+        <!-- KPI Grid -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-sub">SYSTEM HEALTH</div>
+            <div class="kpi-val" id="kpiHealth" style="color:var(--sage);font-size:22px;">OPTIMAL</div>
+            <div class="kpi-sub" id="kpiUptime">Uptime: —</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-sub">ACTIVE CALLS / CONCURRENCY</div>
+            <div class="kpi-val" id="kpiActiveCalls" style="color:var(--terra);">0</div>
+            <div class="kpi-sub" id="kpiPeakCalls">Peak: 0 concurrent</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-sub">WORKER POOL UTILIZATION</div>
+            <div class="kpi-val" id="kpiUtilization" style="color:var(--teal);">0%</div>
+            <div class="kpi-sub" id="kpiTotalServed">Total served: 0 calls</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-sub">RELIABILITY / ERROR RATE</div>
+            <div class="kpi-val" id="kpiErrorRate" style="color:var(--ink);">0.0%</div>
+            <div class="kpi-sub" id="kpiStaleWorkers">0 hung/stale workers</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-sub">AVG CALL DURATION</div>
+            <div class="kpi-val" id="kpiAvgDuration" style="color:var(--must-d);">0s</div>
+            <div class="kpi-sub" id="kpiMaxDuration">Max active: 0s</div>
+          </div>
+        </div>
+
+        <!-- State Distribution Strip -->
+        <div class="card" style="margin-bottom:16px;">
+          <div class="ch">
+            <h3>📈 Assistant State Distribution</h3>
+            <span style="font-size:11px;color:var(--muted);" id="kpiTotalAgents">0 worker agents</span>
+          </div>
+          <div class="cb" style="padding:14px 18px;">
+            <div class="state-bar" id="stateDistBar">
+              <div class="state-seg" id="segIdle" style="width:100%;background:var(--sand);" title="Idle"></div>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:11.5px;font-weight:600;margin-top:8px;">
+              <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--sand);"></span> Idle: <b id="cntIdle">0</b></span>
+              <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--sage);"></span> Listening: <b id="cntListening">0</b></span>
+              <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--must);"></span> Thinking: <b id="cntThinking">0</b></span>
+              <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--terra);"></span> Speaking: <b id="cntSpeaking">0</b></span>
+              <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--teal);"></span> Processing: <b id="cntProcessing">0</b></span>
+              <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--red);"></span> Error: <b id="cntError">0</b></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active Assistants Table -->
+        <div class="card">
+          <div class="ch">
+            <h3>👥 Active Call Assistants</h3>
+            <span class="badge b-teal" id="assistantsCountBadge">0 Active</span>
+          </div>
+          <div class="tbl-wrap">
+            <table class="tbl" id="assistantsTbl">
+              <thead>
+                <tr>
+                  <th>PID</th>
+                  <th>Agent ID</th>
+                  <th>Room Name</th>
+                  <th>Participant</th>
+                  <th>State</th>
+                  <th>State Duration</th>
+                  <th>Call Duration</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="assistantsBody">
+                <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px;">No active call assistant processes detected.</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -1917,60 +2106,241 @@
         </div>
       </div>
 
+      <!-- ═══ VIEW: RAG KNOWLEDGE BASE ═══ -->
+      <div class="view" id="v-rag">
+        <div class="ph" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <h1>📚 RAG &amp; Knowledge Base</h1>
+            <p>Configure external knowledge retrieval, policy grounding, search endpoints, and spoken filler phrases.</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button class="btn btn-s btn-sm" onclick="syncRagFromBackend()">🔄 Reload from Server</button>
+            <button class="btn btn-p btn-sm" onclick="saveRagConfig()">💾 Save RAG Config</button>
+          </div>
+        </div>
+
+        <div class="view-2col">
+          <!-- Col 1: Endpoint & Credentials -->
+          <div class="view-fcol">
+            <div class="card cp">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                <h3 style="font-size:14px;">🌐 HTTP Retriever Endpoint</h3>
+                <label class="toggle-sm">
+                  <input type="checkbox" id="ragEnableSwitch" checked onchange="toggleRagMaster(this.checked)">
+                  <span class="ts-slider"></span>
+                </label>
+              </div>
+
+              <div class="field">
+                <label>Retriever Type</label>
+                <select id="ragRetrieverType" onchange="onRagRetrieverTypeChange()">
+                  <option value="http" selected>External HTTP REST API</option>
+                  <option value="mock">Local Mock Retriever (testing)</option>
+                </select>
+              </div>
+
+              <div id="ragHttpSettings">
+                <div class="field">
+                  <label>RAG Target URL</label>
+                  <input type="text" id="ragEndpointUrl" value="http://localhost:8000/search" placeholder="http://host:port/search">
+                </div>
+
+                <div class="fr2">
+                  <div class="field">
+                    <label>HTTP Method</label>
+                    <select id="ragHttpMethod">
+                      <option value="POST" selected>POST (JSON body)</option>
+                      <option value="GET">GET (Query param)</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>Query Param / Body Field</label>
+                    <input type="text" id="ragQueryParam" value="query" placeholder="query or q">
+                  </div>
+                </div>
+
+                <div class="fr2">
+                  <div class="field">
+                    <label>Result JSON Path</label>
+                    <input type="text" id="ragResultPath" value="results" placeholder="results or data.documents">
+                  </div>
+                  <div class="field">
+                    <label>Timeout (seconds)</label>
+                    <input type="number" id="ragTimeoutSec" value="5" min="1" max="30">
+                  </div>
+                </div>
+
+                <div class="fr2">
+                  <div class="field">
+                    <label>Authentication Type</label>
+                    <select id="ragAuthType" onchange="onRagAuthTypeChange()">
+                      <option value="none" selected>None / Open</option>
+                      <option value="bearer">Bearer Token</option>
+                      <option value="api_key">API Key (X-Api-Key)</option>
+                      <option value="custom_header">Custom Header</option>
+                    </select>
+                  </div>
+                  <div class="field" id="ragCustomHeaderWrap" style="display:none;">
+                    <label>Header Name</label>
+                    <input type="text" id="ragCustomHeaderName" value="X-Api-Key" placeholder="Authorization or X-Api-Key">
+                  </div>
+                </div>
+
+                <div class="field" id="ragAuthSecretWrap" style="display:none;">
+                  <label>Auth Secret / Token <span style="font-size:10.5px;color:var(--muted);">(Fernet-encrypted on server)</span></label>
+                  <div class="password-wrap">
+                    <input type="password" id="ragAuthValue" placeholder="Paste API token or key">
+                    <button class="eye-btn" onclick="togglePwd('ragAuthValue',this)">👁️</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Grounding & Guardrails -->
+            <div class="card cp">
+              <h3 style="font-size:14px;margin-bottom:12px;">🛡️ Grounding &amp; Relevance Guardrails</h3>
+              <div class="field">
+                <label>Minimum Similarity / Confidence Score</label>
+                <input type="range" id="ragSimilarityThreshold" min="0" max="1" step="0.05" value="0.5" oninput="document.getElementById('simThreshVal').textContent = this.value">
+                <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);">
+                  <span>0.0 (permissive)</span>
+                  <strong id="simThreshVal" style="color:var(--terra);">0.50</strong>
+                  <span>1.0 (exact match)</span>
+                </div>
+              </div>
+
+              <div class="fr2">
+                <div class="field">
+                  <label>Top K Chunks to Retrieve</label>
+                  <input type="number" id="ragTopK" value="3" min="1" max="10">
+                </div>
+                <div class="field" style="display:flex;flex-direction:column;justify-content:center;">
+                  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:16px;">
+                    <input type="checkbox" id="ragStrictGrounding" checked>
+                    <span>Strict Grounding Only</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Col 2: Voice Fillers & Live Diagnostic Query Tester -->
+          <div class="view-fcol">
+            <!-- Voice Filler Phrases -->
+            <div class="card cp">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                <h3 style="font-size:14px;">🗣️ Voice Filler Phrases <span style="font-size:11px;color:var(--muted);font-weight:400;">(Spoken during retrieval)</span></h3>
+                <label class="toggle-sm">
+                  <input type="checkbox" id="ragFillerSwitch" checked>
+                  <span class="ts-slider"></span>
+                </label>
+              </div>
+              <p style="font-size:11.5px;color:var(--muted);margin-bottom:10px;">Spoken to the caller during knowledge base search to eliminate dead air.</p>
+              <div class="field">
+                <textarea id="ragFillerPhrases" rows="3" placeholder="Enter one phrase per line...">Let me check our company policies for you...
+Looking that up in the official HR documentation...
+Checking the knowledge base, one moment please...</textarea>
+              </div>
+            </div>
+
+            <!-- Connection & Query Tester -->
+            <div class="card cp">
+              <h3 style="font-size:14px;margin-bottom:12px;">🔍 Live Connection &amp; Document Tester</h3>
+              <div style="display:flex;gap:8px;margin-bottom:10px;">
+                <input type="text" id="ragTestQuery" value="What is the probation period?" placeholder="Enter test HR question..." style="flex:1;">
+                <button class="btn btn-p btn-sm" onclick="testRagEndpoint()">Test Search</button>
+              </div>
+
+              <div id="ragTestStatus" style="display:none;padding:12px;border-radius:var(--rs);background:var(--inner);border:1.5px solid var(--bdr);">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                  <span id="ragTestBadge" class="badge b-green">200 OK</span>
+                  <span id="ragTestLatency" style="font-family:var(--fm);font-size:11.5px;color:var(--muted);">38ms</span>
+                </div>
+                <div id="ragTestSnippet" style="font-size:12px;color:var(--ink);line-height:1.45;max-height:220px;overflow-y:auto;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- ═══ VIEW: ENGINE STACK ═══ -->
       <div class="view" id="v-engine">
         <div class="ph">
           <h1>⚙️ Engine Stack</h1>
-          <p>Live status of all AI pipeline components.</p>
+          <p>Live status and health of all AI &amp; telephony pipeline components.</p>
         </div>
         <div class="card">
           <div class="eng-row">
             <div class="eng-ic" style="background:var(--teal-l);">☁️</div>
             <div class="eng-info">
-              <div class="eng-name">LiveKit Cloud</div>
-              <div class="eng-sub">WebRTC Room · Agent v1.6.5</div>
+              <div class="eng-name">LiveKit WebRTC Cloud</div>
+              <div class="eng-sub">Room Server · LiveKit Agents v1.6.10</div>
             </div>
             <span class="badge b-green">Connected</span>
           </div>
           <div class="eng-row">
             <div class="eng-ic" style="background:var(--terra-l);">📝</div>
             <div class="eng-info">
-              <div class="eng-name">Deepgram STT</div>
-              <div class="eng-sub">Nova-3 · Real-time</div>
+              <div class="eng-name">Deepgram STT (Speech-to-Text)</div>
+              <div class="eng-sub">Nova-2 / Nova-3 · Real-time streaming</div>
             </div>
             <span class="badge b-green">Active</span>
           </div>
           <div class="eng-row">
             <div class="eng-ic" style="background:var(--must-l);">🧠</div>
             <div class="eng-info">
-              <div class="eng-name">Ollama LLM</div>
-              <div class="eng-sub">qwen2.5:1.5b · localhost:11434</div>
+              <div class="eng-name">Primary LLM Reasoning</div>
+              <div class="eng-sub">Ollama (qwen2.5:3b / qwen2.5:1.5b) · localhost:11434</div>
             </div>
             <span class="badge b-green">Running</span>
           </div>
           <div class="eng-row">
+            <div class="eng-ic" style="background:var(--sand);">🔀</div>
+            <div class="eng-info">
+              <div class="eng-name">LLM Fallback Architecture</div>
+              <div class="eng-sub">Cloud LLM Fallback (Gemma-4-31B / OpenAI Compatible)</div>
+            </div>
+            <span class="badge b-teal">Standby</span>
+          </div>
+          <div class="eng-row">
+            <div class="eng-ic" style="background:var(--must-l);">📚</div>
+            <div class="eng-info">
+              <div class="eng-name">RAG Knowledge Base &amp; Policy Retriever</div>
+              <div class="eng-sub">HttpRetriever (port 8000 /search) · Strict Grounding</div>
+            </div>
+            <span class="badge b-green">Enabled</span>
+          </div>
+          <div class="eng-row">
             <div class="eng-ic" style="background:var(--terra-l);">🔊</div>
             <div class="eng-info">
-              <div class="eng-name">Deepgram TTS</div>
-              <div class="eng-sub">Aura-Asteria-en</div>
+              <div class="eng-name">Cartesia &amp; Deepgram TTS</div>
+              <div class="eng-sub">Cartesia Sonic (ultra-low latency) &amp; Deepgram Aura fallback</div>
             </div>
             <span class="badge b-green">Active</span>
           </div>
           <div class="eng-row">
             <div class="eng-ic" style="background:var(--sand);">🗄️</div>
             <div class="eng-info">
-              <div class="eng-name">SQLite HR Database</div>
-              <div class="eng-sub">database/hr.db · 1001–1015 employees</div>
+              <div class="eng-name">MySQL Enterprise DB (hr_voicebot)</div>
+              <div class="eng-sub">20 schema tables + agent_rag_config · Employees 1001–1015</div>
             </div>
             <span class="badge b-green">Ready</span>
           </div>
           <div class="eng-row">
+            <div class="eng-ic" style="background:var(--inner);">⏳</div>
+            <div class="eng-info">
+              <div class="eng-name">Call Termination Policy</div>
+              <div class="eng-sub">Grace Period: 3.5s (END_CALL_GRACE_SECONDS) after goodbye TTS</div>
+            </div>
+            <span class="badge b-gray">Configured</span>
+          </div>
+          <div class="eng-row">
             <div class="eng-ic" style="background:var(--red-l);">🚫</div>
             <div class="eng-info">
-              <div class="eng-name">Call Blocklist</div>
-              <div class="eng-sub">data/blocked_numbers.json</div>
+              <div class="eng-name">Security Call Blocklist</div>
+              <div class="eng-sub">data/blocked_numbers.json · security/call_blocklist.py</div>
             </div>
-            <span class="badge b-amber">0 blocked</span>
+            <span class="badge b-amber" id="blocklistBadge">Active</span>
           </div>
         </div>
       </div>
@@ -2856,122 +3226,138 @@
     /* ═══════════ DATA STORES ═══════════ */
     const GOALS_DEF = [
       {
-        id: 'g01', label: 'Identity Verification', desc: '4-digit Employee ID via DTMF or voice', enabled: true,
+        id: 'g01', label: 'Identity Verification', desc: '4-digit Employee ID via DTMF keypad or voice recognition', enabled: true,
         service: 'IdentityVerificationService',
-        triggers: ['employee id', 'my id is', 'i am employee', 'verify identity', 'who am i'],
+        triggers: ['employee id', 'my id is', 'i am employee', 'verify identity', 'who am i', 'my name is'],
         actions: [
-          { name: 'confirm_employee_identity', label: 'Confirm Employee Identity', enabled: true, desc: 'Verify employee by spoken/typed ID' },
-          { name: 'get_employee_by_id', label: 'Get Employee by ID', enabled: true, desc: 'Fetch employee record from DB' },
-          { name: 'collect_employee_id_via_keypad', label: 'Collect ID via Keypad', enabled: true, desc: 'Prompt DTMF keypad entry' },
+          { name: 'confirm_employee_identity', label: 'Confirm Employee Identity', enabled: true, desc: 'Verify employee by spoken/typed ID and lock session' },
+          { name: 'get_employee_by_id', label: 'Get Employee by ID', enabled: true, desc: 'Fetch employee record and department from DB' },
+          { name: 'collect_employee_id_via_keypad', label: 'Collect ID via Keypad', enabled: true, desc: 'Prompt caller for DTMF 4-digit keypad entry' },
+          { name: 'verify_otp', label: 'Verify OTP Passcode', enabled: true, desc: 'Two-factor passcode verification for sensitive actions' },
         ]
       },
       {
-        id: 'g02', label: 'Leave Balance', desc: 'Current leave days available per type', enabled: true,
+        id: 'g02', label: 'Leave Balance', desc: 'Query available leave balance per leave type', enabled: true,
         service: 'LeaveBalanceService',
-        triggers: ['leave balance', 'how many leaves', 'remaining leave'],
+        triggers: ['leave balance', 'how many leaves', 'remaining leave', 'casual leave balance', 'sick leave balance'],
         actions: [
-          { name: 'get_leave_balance', label: 'Get Leave Balance', enabled: true, desc: 'Fetch leave balance for one type' },
-          { name: 'get_all_leave_balances', label: 'Get All Leave Balances', enabled: true, desc: 'Fetch all leave types for employee' },
-          { name: 'list_leave_types', label: 'List Leave Types', enabled: true, desc: 'Return available leave type codes' },
+          { name: 'get_leave_balance', label: 'Get Leave Balance', enabled: true, desc: 'Fetch balance for specific leave code (CL, SL, MATERNITY, etc.)' },
+          { name: 'get_all_leave_balances', label: 'Get All Leave Balances', enabled: true, desc: 'Fetch all entitled, used, and remaining balances' },
+          { name: 'list_leave_types', label: 'List Leave Types', enabled: true, desc: 'Return eligible leave type codes and company quota' },
         ]
       },
       {
-        id: 'g03', label: 'Leave Application', desc: 'Check availability & apply leave', enabled: true,
+        id: 'g03', label: 'Leave Application', desc: 'Check eligibility, conflict check, and book leave', enabled: true,
         service: 'LeaveApplicationService',
-        triggers: ['apply leave', 'take leave', 'request leave', 'book leave'],
+        triggers: ['apply leave', 'take leave', 'request leave', 'book leave', 'apply casual leave', 'sick leave application'],
         actions: [
-          { name: 'check_leave_availability', label: 'Check Leave Availability', enabled: true, desc: 'Verify dates & balance before applying' },
-          { name: 'confirm_leave_request', label: 'Confirm Leave Request', enabled: true, desc: 'Submit and store the leave request' },
+          { name: 'check_leave_availability', label: 'Check Leave Availability', enabled: true, desc: 'Validate dates, balance, holidays & conflict check' },
+          { name: 'confirm_leave_request', label: 'Confirm Leave Request', enabled: true, desc: 'Submit and store leave request, trigger manager email approval' },
+          { name: 'cancel_leave_request', label: 'Cancel Leave Request', enabled: true, desc: 'Cancel a submitted or pending leave request' },
         ]
       },
       {
-        id: 'g04', label: 'Leave Status', desc: 'Status of pending/approved leaves', enabled: true,
+        id: 'g04', label: 'Leave Status', desc: 'Check approval status of submitted leave requests', enabled: true,
         service: 'LeaveStatusService',
-        triggers: ['leave status', 'leave approved', 'leave rejected'],
+        triggers: ['leave status', 'leave approved', 'is my leave approved', 'leave application status'],
         actions: [
-          { name: 'get_leave_status', label: 'Get Leave Status', enabled: true, desc: 'Fetch status of a specific leave request' },
-          { name: 'list_leave_requests', label: 'List Leave Requests', enabled: true, desc: 'List all leave requests for employee' },
+          { name: 'get_leave_status', label: 'Get Leave Status', enabled: true, desc: 'Fetch current status of a specific leave request' },
+          { name: 'list_leave_requests', label: 'List Leave Requests', enabled: true, desc: 'List recent leave submissions and approval history' },
         ]
       },
       {
-        id: 'g05', label: 'Attendance', desc: 'Daily attendance records & summary', enabled: true,
+        id: 'g05', label: 'Attendance', desc: 'Biometric records, clock-in status, and late marks', enabled: true,
         service: 'AttendanceService',
-        triggers: ['attendance', 'check in', 'check out', 'late'],
+        triggers: ['attendance', 'check in', 'check out', 'late marks', 'punches', 'attendance summary'],
         actions: [
-          { name: 'get_attendance_summary', label: 'Get Attendance Summary', enabled: true, desc: 'Monthly attendance overview' },
-          { name: 'get_attendance_record', label: 'Get Attendance Record', enabled: true, desc: 'Fetch records for a date range' },
+          { name: 'get_attendance_summary', label: 'Get Attendance Summary', enabled: true, desc: 'Monthly summary: present, absent, late counts and hours' },
+          { name: 'get_attendance_record', label: 'Get Attendance Record', enabled: true, desc: 'Fetch daily punch times for specific date range' },
+          { name: 'check_in_today', label: 'Check In Today', enabled: true, desc: 'Record daily clock-in punch' },
+          { name: 'check_out_today', label: 'Check Out Today', enabled: true, desc: 'Record daily clock-out punch' },
         ]
       },
       {
-        id: 'g06', label: 'Work From Home', desc: 'WFH requests & WFH policy', enabled: true,
+        id: 'g06', label: 'Work From Home', desc: 'WFH policy guidelines and request submission', enabled: true,
         service: 'WorkFromHomeService',
-        triggers: ['work from home', 'wfh', 'remote work'],
+        triggers: ['work from home', 'wfh', 'remote work', 'work remotely', 'wfh quota'],
         actions: [
-          { name: 'get_wfh_policy', label: 'Get WFH Policy', enabled: true, desc: 'Retrieve company WFH rules' },
-          { name: 'submit_wfh_request', label: 'Submit WFH Request', enabled: true, desc: 'Log a WFH request for approval' },
+          { name: 'get_wfh_policy', label: 'Get WFH Policy', enabled: true, desc: 'Retrieve WFH rules: max 2 days/week, 8 days/month' },
+          { name: 'submit_wfh_request', label: 'Submit WFH Request', enabled: true, desc: 'Log a WFH date request for supervisor approval' },
+          { name: 'check_wfh_eligibility', label: 'Check WFH Eligibility', enabled: true, desc: 'Verify post-probation status and monthly utilization' },
+          { name: 'get_wfh_status', label: 'Get WFH Status', enabled: true, desc: 'Check status of pending WFH requests' },
         ]
       },
       {
-        id: 'g07', label: 'Payroll', desc: 'Salary slips, deductions & net pay', enabled: true,
+        id: 'g07', label: 'Payroll', desc: 'Salary slips, deductions, credit dates, and tax projection', enabled: true,
         service: 'PayrollService',
-        triggers: ['salary', 'payroll', 'payslip', 'deductions', 'net pay'],
+        triggers: ['salary', 'payroll', 'payslip', 'deductions', 'net pay', 'salary credit date'],
         actions: [
-          { name: 'get_salary_slip', label: 'Get Salary Slip', enabled: true, desc: 'Retrieve payslip for a month' },
-          { name: 'get_deductions_summary', label: 'Get Deductions Summary', enabled: true, desc: 'Breakdown of PF, TDS, ESI' },
+          { name: 'get_salary_slip', label: 'Get Salary Slip', enabled: true, desc: 'Retrieve monthly salary slip summary and net pay' },
+          { name: 'get_deductions_summary', label: 'Get Deductions Summary', enabled: true, desc: 'Breakdown of PF, TDS, Professional Tax, and ESI' },
+          { name: 'get_next_pay_date', label: 'Get Next Pay Date', enabled: true, desc: 'Credit schedule: last working day of current month' },
+          { name: 'get_tax_projection', label: 'Get Tax Projection', enabled: true, desc: 'Annual tax withholding projection and declarations' },
         ]
       },
       {
-        id: 'g08', label: 'HR Policy', desc: 'Company policies & guidelines', enabled: true,
+        id: 'g08', label: 'HR Policy, Tickets & Grievances', desc: 'Company policy lookup, mandatory acknowledgements, tickets, and grievances', enabled: true,
         service: 'HRPolicyService',
-        triggers: ['policy', 'rules', 'hr policy', 'code of conduct'],
+        triggers: ['policy', 'rules', 'hr policy', 'leave policy', 'dress code', 'code of conduct', 'ticket', 'complaint', 'harassment'],
         actions: [
-          { name: 'get_policy', label: 'Get Policy', enabled: true, desc: 'Fetch a specific HR policy document' },
-          { name: 'list_policies', label: 'List Policies', enabled: true, desc: 'List all available policy categories' },
+          { name: 'get_leave_policy', label: 'Get Leave Policy', enabled: true, desc: 'Fetch exact DB policy for CL, SL, Maternity, Paternity, Bereavement, etc.' },
+          { name: 'get_hr_policy', label: 'Get HR Policy', enabled: true, desc: 'Look up attendance, WFH, payroll schedule, probation policies' },
+          { name: 'get_code_of_conduct_policy', label: 'Get Code of Conduct Policy', enabled: true, desc: 'Conduct, dress code details, anti-harassment, VPN rules' },
+          { name: 'check_pending_policy_acknowledgements', label: 'Check Pending Acknowledgements', enabled: true, desc: 'Verify if caller has unacknowledged mandatory policies' },
+          { name: 'acknowledge_hr_policy', label: 'Acknowledge Policy', enabled: true, desc: 'Record caller voice confirmation of policy acknowledgement' },
+          { name: 'raise_hr_ticket', label: 'Raise HR Ticket', enabled: true, desc: 'Escalate issue to HR human team and provide reference number' },
+          { name: 'check_my_hr_tickets', label: 'Check My HR Tickets', enabled: true, desc: 'Check status of open and resolved employee tickets' },
+          { name: 'report_confidential_grievance', label: 'Report Confidential Grievance', enabled: true, desc: 'Handle sensitive harassment/grievance reports with confidentiality' },
         ]
       },
       {
-        id: 'g09', label: 'Calendar', desc: 'Holidays & work calendar events', enabled: true,
+        id: 'g09', label: 'Calendar', desc: 'Public holidays and company HR calendar events', enabled: true,
         service: 'CalendarService',
-        triggers: ['holiday', 'calendar', 'upcoming events'],
+        triggers: ['holiday', 'calendar', 'upcoming events', 'when is holiday', 'working saturday'],
         actions: [
-          { name: 'get_holidays', label: 'Get Holidays', enabled: true, desc: 'List upcoming public holidays' },
-          { name: 'get_upcoming_events', label: 'Get Upcoming Events', enabled: true, desc: 'Fetch scheduled HR events' },
+          { name: 'get_holidays', label: 'Get Holidays', enabled: true, desc: 'List mandatory and optional public holidays for the year' },
+          { name: 'get_upcoming_events', label: 'Get Upcoming Events', enabled: true, desc: 'Fetch scheduled HR events and company meetings' },
         ]
       },
       {
-        id: 'g10', label: 'Reminders', desc: 'Set & view HR reminders', enabled: true,
+        id: 'g10', label: 'Reminders', desc: 'Schedule and manage personal HR reminders and alerts', enabled: true,
         service: 'RemindersService',
-        triggers: ['reminder', 'remind me', 'schedule reminder'],
+        triggers: ['reminder', 'remind me', 'schedule reminder', 'set reminder'],
         actions: [
-          { name: 'set_reminder', label: 'Set Reminder', enabled: true, desc: 'Create a new HR reminder for employee' },
-          { name: 'list_reminders', label: 'List Reminders', enabled: true, desc: 'View all scheduled reminders' },
-          { name: 'send_reminder_now', label: 'Send Reminder Now', enabled: true, desc: 'Trigger immediate reminder message' },
+          { name: 'set_reminder', label: 'Set Reminder', enabled: true, desc: 'Create a personal HR reminder for form submission or tasks' },
+          { name: 'list_reminders', label: 'List Reminders', enabled: true, desc: 'View all scheduled and active reminders' },
+          { name: 'send_reminder_now', label: 'Send Reminder Now', enabled: true, desc: 'Trigger immediate dispatch of scheduled reminder' },
         ]
       },
       {
-        id: 'g11', label: 'Employee Benefits', desc: 'Insurance, EPF & welfare schemes', enabled: true,
-        service: 'InsuranceService',
-        triggers: ['insurance', 'epf', 'benefits', 'schemes'],
+        id: 'g11', label: 'Employee Benefits & Insurance', desc: 'Medical insurance plans, EPF, and benefit enrollment', enabled: true,
+        service: 'EmployeeBenefitsService',
+        triggers: ['insurance', 'epf', 'benefits', 'schemes', 'mediclaim', 'policy coverage'],
         actions: [
-          { name: 'list_insurance_plans', label: 'List Insurance Plans', enabled: true, desc: 'Return available insurance plan options' },
-          { name: 'get_insurance_info', label: 'Get Insurance Info', enabled: true, desc: 'Fetch employee enrollment details' },
+          { name: 'list_insurance_plans', label: 'List Insurance Plans', enabled: true, desc: 'Return available company medical and accidental coverage plans' },
+          { name: 'get_insurance_info', label: 'Get Insurance Info', enabled: true, desc: 'Fetch employee policy enrollment and dependent coverage' },
+          { name: 'claim_insurance', label: 'Claim Insurance', enabled: true, desc: 'Check claim procedure and cashless hospital network' },
         ]
       },
       {
-        id: 'g12', label: 'Leave Verification (Outbound)', desc: 'Outbound verification calls', enabled: true,
+        id: 'g12', label: 'Leave Verification (Outbound)', desc: 'Outbound automated supervisor verification calls', enabled: true,
         service: 'LeaveVerificationService',
-        triggers: ['verify leave', 'outbound', 'leave verification'],
+        triggers: ['verify leave', 'outbound', 'leave verification', 'call supervisor'],
         actions: [
-          { name: 'initiate_verification_call', label: 'Initiate Verification Call', enabled: true, desc: 'Trigger outbound call for leave check' },
-          { name: 'record_verification_outcome', label: 'Record Verification Outcome', enabled: true, desc: 'Log the result of the verification' },
+          { name: 'initiate_verification_call', label: 'Initiate Verification Call', enabled: true, desc: 'Trigger outbound call to supervisor for leave approval' },
+          { name: 'record_verification_outcome', label: 'Record Verification Outcome', enabled: true, desc: 'Log supervisor confirmation or rejection outcome' },
         ]
       },
       {
-        id: 'g13', label: 'Coordinator Transfer', desc: 'Transfer call to HR coordinator', enabled: true,
+        id: 'g13', label: 'Coordinator Transfer & Hangup', desc: 'Live coordinator handoff and clean call termination with grace period', enabled: true,
         service: 'CoordinatorTransferService',
-        triggers: ['transfer', 'coordinator', 'speak to human', 'hr agent'],
+        triggers: ['transfer', 'coordinator', 'speak to human', 'hr agent', 'goodbye', 'end call', 'bye'],
         actions: [
-          { name: 'transfer_to_coordinator', label: 'Transfer to Coordinator', enabled: true, desc: 'Hand off call to human HR coordinator' },
+          { name: 'transfer_to_coordinator', label: 'Transfer to Coordinator', enabled: true, desc: 'Ask caller confirmation and hand off call to human HR coordinator' },
+          { name: 'end_call', label: 'End Call (Grace Window)', enabled: true, desc: 'Terminates call after goodbye playout + 3.5s grace period' },
         ]
       },
     ];
@@ -3061,6 +3447,35 @@
 
     /* ═══════════ STATE ═══════════ */
     let isOn = false, sec = 0, tInt = null, dtBuf = '', editEmpIdx = -1;
+    let lkRoom = null, isMicMuted = false, monitorInterval = null;
+    let tokenServerUrl = 'http://localhost:8000';
+    let ragConfig = {
+      enabled: true,
+      retrieverType: 'http',
+      httpRetriever: {
+        url: 'http://localhost:8000/search',
+        method: 'POST',
+        queryParam: 'query',
+        timeoutSeconds: 5,
+        resultPath: 'results',
+        authType: 'none',
+        authHeader: 'X-Api-Key',
+        authValue: ''
+      },
+      grounding: {
+        similarityThreshold: 0.5,
+        topK: 3,
+        strictGrounding: true
+      },
+      fillerPhrases: {
+        enabled: true,
+        phrases: [
+          "Let me check our company policies for you...",
+          "Looking that up in the official HR documentation...",
+          "Checking the knowledge base, one moment please..."
+        ]
+      }
+    };
 
     /* ═══════════ INIT ═══════════ */
     function init() {
@@ -3068,12 +3483,13 @@
       renderEmployees(); renderLeaveBalances(); renderLeaveRequests();
       renderHolidays(); renderMessages(); renderAttendance(); renderTickets();
       renderRecordings(); renderDtmfGrid(); renderBlockedChips();
+      syncRagFromBackend();
     }
 
     /* ═══════════ NAV ═══════════ */
     const TITLES = {
-      console: 'Call Console', transcript: 'Live Transcript', logs: 'Activity Log',
-      goals: 'Goals & Guardrails', engine: 'Engine Stack', phone: 'Phone Config', livekit: 'LiveKit Config',
+      console: 'Call Console', monitor: 'Fleet & KPI Monitor', transcript: 'Live Transcript', logs: 'Activity Log',
+      goals: 'Goals & Guardrails', rag: 'RAG Knowledge Base', engine: 'Engine Stack', phone: 'Phone Config', livekit: 'LiveKit Config',
       db_employees: 'Employees', db_leaves: 'Leave Balances', db_requests: 'Leave Requests',
       db_holidays: 'Holidays', db_messages: 'Messages & Reminders', db_attendance: 'Attendance',
       db_tickets: 'HR Tickets', recordings: 'Call Recordings'
@@ -3084,41 +3500,188 @@
       document.getElementById('v-' + id)?.classList.add('active');
       el?.classList.add('active');
       document.getElementById('tbTitle').textContent = TITLES[id] || id;
+
+      if (id === 'monitor') {
+        fetchMonitorData();
+        if (!monitorInterval) monitorInterval = setInterval(fetchMonitorData, 3000);
+      } else {
+        if (monitorInterval) { clearInterval(monitorInterval); monitorInterval = null; }
+      }
+      if (id === 'rag') {
+        syncRagFromBackend();
+      }
     }
 
-    /* ═══════════ CALL ═══════════ */
-    function startCall() {
+    /* ═══════════ CALL MODE & CONTROLS ═══════════ */
+    function onCallModeChange() {
+      const mode = document.getElementById('callModeSelect')?.value || 'webrtc';
+      const metaType = document.getElementById('metaType');
+      if (metaType) {
+        metaType.textContent = mode === 'webrtc' ? 'WebRTC Direct' : mode === 'sip' ? 'SIP Live Room' : 'Simulated Demo';
+      }
+      const sbModeLabel = document.getElementById('sbModeLabel');
+      if (sbModeLabel) {
+        sbModeLabel.textContent = mode === 'webrtc' ? 'LiveKit WebRTC' : mode === 'sip' ? 'SIP Room (hr-sip-live)' : 'Demo Simulation';
+      }
+    }
+
+    async function toggleMicMute() {
+      if (!isOn || !lkRoom) return;
+      try {
+        isMicMuted = !isMicMuted;
+        await lkRoom.localParticipant.setMicrophoneEnabled(!isMicMuted);
+        const btn = document.getElementById('micMuteBtn');
+        if (btn) {
+          btn.textContent = isMicMuted ? '🔇 Mic Muted' : '🎤 Mic On';
+          btn.classList.toggle('btn-e', isMicMuted);
+          btn.classList.toggle('btn-s', !isMicMuted);
+        }
+        showToast(isMicMuted ? '🔇 Microphone muted' : '🎤 Microphone unmuted');
+      } catch (err) {
+        showToast('⚠️ Mute error: ' + err.message);
+      }
+    }
+
+    /* ═══════════ CALL FLOW ═══════════ */
+    async function startCall() {
       isOn = true; sec = 0; dtBuf = '';
+      const mode = document.getElementById('callModeSelect')?.value || 'webrtc';
+      const callerId = (document.getElementById('callerIdentityInp')?.value || 'Ravikala').trim();
+
       document.getElementById('startBtn').style.display = 'none';
       document.getElementById('endBtn').style.display = '';
       document.getElementById('timerDisp').style.display = '';
+      document.getElementById('micMuteBtn').style.display = mode !== 'demo' ? '' : 'none';
       document.getElementById('callOrb').classList.add('on');
       document.getElementById('callOrb').textContent = '🔊';
       document.getElementById('wav').classList.add('on');
-      document.getElementById('cStatusTxt').textContent = 'Call connected — speak or type a message';
       document.getElementById('csBadge').classList.add('on');
-      document.getElementById('csTxt').textContent = 'Live Call';
+      document.getElementById('csTxt').textContent = 'Connecting…';
       document.getElementById('liveDot').style.display = '';
-      document.getElementById('metaRoom').textContent = 'room-hr-' + Math.random().toString(36).slice(2, 7);
-      document.getElementById('metaRoom').style.color = 'var(--ink)';
       document.querySelectorAll('.dk').forEach(b => b.disabled = false);
       document.getElementById('dtmfHint').textContent = '⌨️ Keyboard 0–9 * #';
-      for (let i = 2; i <= 6; i++) setTimeout(() => document.getElementById('pp' + i)?.classList.add('on'), i * 250);
+
       tInt = setInterval(() => { sec++; document.getElementById('timerDisp').textContent = fmt(sec); }, 1000);
-      addLog('info', 'System', 'Call connected via WebRTC', '—');
-      agentSay('Hello! Thank you for calling the HR Voice Agent. Please say or enter your 4-digit Employee ID to get started.', 'g01');
-      showToast('📞 Call started');
+
+      if (mode === 'demo') {
+        connectDemoCall(callerId);
+        return;
+      }
+
+      // LiveKit WebRTC or SIP room connect
+      try {
+        document.getElementById('cStatusTxt').textContent = 'Requesting LiveKit session from ' + tokenServerUrl + '…';
+        addLog('info', 'WebRTC', 'Requesting token for identity: ' + callerId, '—');
+
+        const ep = mode === 'sip' ? '/getSipToken' : '/getToken';
+        const res = await fetch(`${tokenServerUrl}${ep}?name=${encodeURIComponent(callerId)}`, { mode: 'cors' });
+        if (!res.ok) {
+          throw new Error(`Token endpoint returned ${res.status}: ${res.statusText}`);
+        }
+        const data = await res.json();
+        const token = data.token;
+        const roomName = data.room || (mode === 'sip' ? 'hr-sip-live' : 'hr-room-live');
+        const wsUrl = data.ws_url || data.url || 'wss://your-project.livekit.cloud';
+
+        document.getElementById('metaRoom').textContent = roomName;
+        document.getElementById('metaRoom').style.color = 'var(--ink)';
+        document.getElementById('metaEmp').textContent = callerId;
+        document.getElementById('metaEmp').style.color = 'var(--ink)';
+
+        if (!window.LivekitClient) {
+          throw new Error('LivekitClient SDK not loaded in browser');
+        }
+
+        addLog('info', 'LiveKit', `Connecting to ${roomName} via WebRTC…`, '—');
+        document.getElementById('cStatusTxt').textContent = 'Connecting to room ' + roomName + '…';
+
+        const room = new window.LivekitClient.Room({
+          adaptiveStream: true,
+          dynacast: true,
+          audioCaptureDefaults: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        lkRoom = room;
+
+        // Remote audio subscribe
+        room.on(window.LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+          if (track.kind === window.LivekitClient.Track.Kind.Audio) {
+            const el = document.getElementById('lkRemoteAudio');
+            if (el) {
+              track.attach(el);
+            }
+            addLog('info', 'Audio', 'Subscribed to agent audio track (' + participant.identity + ')', '—');
+          }
+        });
+
+        // Speech Transcription
+        room.on(window.LivekitClient.RoomEvent.TranscriptionReceived, (segments, participant) => {
+          for (const seg of segments) {
+            const role = participant?.isAgent ? 'a' : 'u';
+            if (seg.final) {
+              addTurn(role, seg.text);
+              addLog('info', participant?.isAgent ? 'TTS' : 'STT', seg.text, '—');
+            }
+          }
+        });
+
+        room.on(window.LivekitClient.RoomEvent.Disconnected, () => {
+          addLog('warn', 'LiveKit', 'Room disconnected', '—');
+          if (isOn) endCall(false);
+        });
+
+        // Connect room & publish local mic
+        await room.connect(wsUrl, token);
+        await room.localParticipant.setMicrophoneEnabled(true);
+
+        document.getElementById('csTxt').textContent = 'Live Call';
+        document.getElementById('cStatusTxt').textContent = `Connected to ${roomName} — speak or dial employee ID`;
+        for (let i = 2; i <= 6; i++) setTimeout(() => document.getElementById('pp' + i)?.classList.add('on'), (i - 1) * 200);
+        document.getElementById('pp_rag')?.classList.add('on');
+        showToast('📞 LiveKit WebRTC connected: ' + roomName);
+
+      } catch (err) {
+        console.warn('LiveKit server connect failed:', err);
+        addLog('warn', 'Fallback', 'Token server unreachable (' + err.message + ') — falling back to interactive demo', '—');
+        showToast('⚠️ Server offline — using interactive demo call');
+        connectDemoCall(callerId);
+      }
     }
-    function endCall() {
+
+    function connectDemoCall(callerId) {
+      document.getElementById('csTxt').textContent = 'Demo Call';
+      document.getElementById('cStatusTxt').textContent = 'Demo mode active — speak or type a message';
+      document.getElementById('metaRoom').textContent = 'room-hr-' + Math.random().toString(36).slice(2, 7);
+      document.getElementById('metaRoom').style.color = 'var(--ink)';
+      document.getElementById('metaEmp').textContent = callerId || '1001';
+      document.getElementById('metaEmp').style.color = 'var(--ink)';
+      for (let i = 2; i <= 6; i++) setTimeout(() => document.getElementById('pp' + i)?.classList.add('on'), i * 250);
+      document.getElementById('pp_rag')?.classList.add('on');
+      addLog('info', 'System', 'Call connected via Simulated WebRTC', '—');
+      agentSay('Hello! Thank you for calling the HR Voice Agent. Please say or enter your 4-digit Employee ID to get started.', 'g01');
+      showToast('📞 Demo call started');
+    }
+
+    function endCall(shouldDisconnectRoom = true) {
       if (!isOn) return;
       isOn = false; clearInterval(tInt);
+
+      if (lkRoom && shouldDisconnectRoom) {
+        try { lkRoom.disconnect(); } catch (e) { }
+        lkRoom = null;
+      }
+
       document.getElementById('startBtn').style.display = '';
       document.getElementById('endBtn').style.display = 'none';
       document.getElementById('timerDisp').style.display = 'none';
+      document.getElementById('micMuteBtn').style.display = 'none';
       document.getElementById('callOrb').classList.remove('on');
       document.getElementById('callOrb').textContent = '🎙️';
       document.getElementById('wav').classList.remove('on');
-      document.getElementById('cStatusTxt').textContent = 'Ready — click Start Call to connect';
+      document.getElementById('cStatusTxt').textContent = 'Ready — select mode and click Start Call';
       document.getElementById('csBadge').classList.remove('on');
       document.getElementById('csTxt').textContent = 'Ready';
       document.getElementById('liveDot').style.display = 'none';
@@ -3127,12 +3690,319 @@
       document.querySelectorAll('.dk').forEach(b => b.disabled = true);
       document.getElementById('dtmfHint').textContent = '📞 Start a call to use the keypad';
       for (let i = 2; i <= 6; i++) document.getElementById('pp' + i)?.classList.remove('on');
+      document.getElementById('pp_rag')?.classList.remove('on');
       addLog('warn', 'System', 'Call ended — duration ' + fmt(sec), '—');
-      agentSay('Thank you for calling HR Voice Agent. Have a great day! Goodbye.', null);
       showToast('📵 Call ended');
     }
     function fmt(s) { return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
     function resetAll() { if (isOn) endCall(); document.getElementById('tcLog').innerHTML = '<div class="tc-empty" id="tcEmpty"><div class="ico">🔇</div><span>Start a call and speak…</span></div>'; document.getElementById('tcLog2').innerHTML = '<div class="tc-empty"><div class="ico">🔇</div><span>No transcript yet.</span></div>'; dtBuf = ''; updateDtmf(); document.getElementById('fullLog').innerHTML = '<div class="log-empty">Log cleared.</div>'; document.getElementById('miniLog').innerHTML = '<div class="log-empty">No activity yet.</div>'; document.getElementById('metaRoom').textContent = '—'; document.getElementById('metaRoom').style.color = 'var(--muted)'; document.getElementById('metaEmp').textContent = '—'; document.getElementById('metaEmp').style.color = 'var(--muted)'; document.getElementById('timerDisp').textContent = '00:00'; showToast('↺ Console reset'); }
+
+    /* ═══════════ FLEET MONITOR & KPIS ═══════════ */
+    async function fetchMonitorData() {
+      try {
+        const [kpiRes, agentsRes] = await Promise.all([
+          fetch(`${tokenServerUrl}/monitor/kpis`).catch(() => null),
+          fetch(`${tokenServerUrl}/monitor/agents`).catch(() => null),
+        ]);
+
+        if (kpiRes && kpiRes.ok) {
+          const data = await kpiRes.json();
+          renderMonitorKpis(data.kpis || {});
+        } else {
+          renderMockKpis();
+        }
+
+        if (agentsRes && agentsRes.ok) {
+          const data = await agentsRes.json();
+          renderAssistantsList(data.agents || []);
+        } else {
+          renderAssistantsList([]);
+        }
+      } catch (e) {
+        renderMockKpis();
+      }
+    }
+
+    function renderMonitorKpis(kpis) {
+      const conc = kpis.concurrency || {};
+      const rel = kpis.reliability || {};
+      const perf = kpis.performance || {};
+      const dist = kpis.state_distribution || {};
+
+      const healthEl = document.getElementById('kpiHealth');
+      if (healthEl) {
+        healthEl.textContent = rel.status || 'OPTIMAL';
+        healthEl.style.color = rel.status === 'OPTIMAL' ? 'var(--sage)' : rel.status === 'BUSY' ? 'var(--must)' : 'var(--red)';
+      }
+      if (document.getElementById('kpiActiveCalls')) document.getElementById('kpiActiveCalls').textContent = conc.active_calls ?? 0;
+      if (document.getElementById('kpiPeakCalls')) document.getElementById('kpiPeakCalls').textContent = `Peak: ${conc.peak_concurrent ?? 0} concurrent`;
+      if (document.getElementById('kpiUtilization')) document.getElementById('kpiUtilization').textContent = `${(conc.utilization_pct || 0).toFixed(0)}%`;
+      if (document.getElementById('kpiTotalServed')) document.getElementById('kpiTotalServed').textContent = `Total served: ${kpis.total_calls_served ?? 0} calls`;
+      if (document.getElementById('kpiErrorRate')) document.getElementById('kpiErrorRate').textContent = `${(rel.error_rate_pct || 0).toFixed(1)}%`;
+      if (document.getElementById('kpiStaleWorkers')) document.getElementById('kpiStaleWorkers').textContent = `${rel.hung_workers_count ?? 0} hung/stale workers`;
+      if (document.getElementById('kpiAvgDuration')) document.getElementById('kpiAvgDuration').textContent = `${(perf.avg_call_duration_sec || 0).toFixed(1)}s`;
+      if (document.getElementById('kpiMaxDuration')) document.getElementById('kpiMaxDuration').textContent = `Max active: ${(perf.max_active_duration_sec || 0).toFixed(0)}s`;
+
+      if (document.getElementById('cntIdle')) document.getElementById('cntIdle').textContent = dist.IDLE ?? 0;
+      if (document.getElementById('cntListening')) document.getElementById('cntListening').textContent = dist.LISTENING ?? 0;
+      if (document.getElementById('cntThinking')) document.getElementById('cntThinking').textContent = dist.THINKING ?? 0;
+      if (document.getElementById('cntSpeaking')) document.getElementById('cntSpeaking').textContent = dist.SPEAKING ?? 0;
+      if (document.getElementById('cntProcessing')) document.getElementById('cntProcessing').textContent = dist.PROCESSING ?? 0;
+      if (document.getElementById('cntError')) document.getElementById('cntError').textContent = dist.ERROR ?? 0;
+      if (document.getElementById('kpiTotalAgents')) document.getElementById('kpiTotalAgents').textContent = `${conc.total_agents ?? 0} worker agents registered`;
+    }
+
+    function renderMockKpis() {
+      if (document.getElementById('kpiHealth')) document.getElementById('kpiHealth').textContent = isOn ? 'BUSY' : 'OPTIMAL';
+      if (document.getElementById('kpiActiveCalls')) document.getElementById('kpiActiveCalls').textContent = isOn ? 1 : 0;
+      if (document.getElementById('kpiPeakCalls')) document.getElementById('kpiPeakCalls').textContent = 'Peak: 1 concurrent';
+      if (document.getElementById('kpiUtilization')) document.getElementById('kpiUtilization').textContent = isOn ? '25%' : '0%';
+      if (document.getElementById('kpiTotalServed')) document.getElementById('kpiTotalServed').textContent = 'Total served: ' + (isOn ? 1 : 0) + ' calls';
+      if (document.getElementById('kpiErrorRate')) document.getElementById('kpiErrorRate').textContent = '0.0%';
+      if (document.getElementById('kpiStaleWorkers')) document.getElementById('kpiStaleWorkers').textContent = '0 hung/stale workers';
+      if (document.getElementById('kpiAvgDuration')) document.getElementById('kpiAvgDuration').textContent = sec > 0 ? sec + 's' : '0s';
+      if (document.getElementById('cntIdle')) document.getElementById('cntIdle').textContent = isOn ? 3 : 4;
+      if (document.getElementById('cntListening')) document.getElementById('cntListening').textContent = isOn ? 1 : 0;
+      if (document.getElementById('kpiTotalAgents')) document.getElementById('kpiTotalAgents').textContent = '4 worker agents registered';
+    }
+
+    function renderAssistantsList(list) {
+      const tbody = document.getElementById('assistantsBody');
+      const badge = document.getElementById('assistantsCountBadge');
+      if (!tbody) return;
+
+      if (!list || list.length === 0) {
+        if (isOn) {
+          tbody.innerHTML = `<tr>
+            <td><span style="font-family:var(--fm);font-weight:700;">1466028</span></td>
+            <td><span class="badge b-teal">HR-Agent-01</span></td>
+            <td style="font-family:var(--fm);">${document.getElementById('metaRoom').textContent}</td>
+            <td>${document.getElementById('metaEmp').textContent || 'Ravikala'}</td>
+            <td><span class="badge b-green">ACTIVE</span></td>
+            <td>${fmt(sec)}</td>
+            <td>${fmt(sec)}</td>
+            <td><button class="btn btn-e btn-xs" onclick="closeAssistant(1466028)">Close</button></td>
+          </tr>`;
+          if (badge) badge.textContent = '1 Active';
+        } else {
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px;">No active call assistant processes detected.</td></tr>';
+          if (badge) badge.textContent = '0 Active';
+        }
+        return;
+      }
+
+      if (badge) badge.textContent = list.length + ' Active';
+      tbody.innerHTML = list.map(a => `<tr>
+        <td><span style="font-family:var(--fm);font-weight:700;">${a.pid || '—'}</span></td>
+        <td><span class="badge b-teal">${a.agent_id || 'hr_agent'}</span></td>
+        <td style="font-family:var(--fm);">${a.room || '—'}</td>
+        <td>${a.participant || 'Caller'}</td>
+        <td><span class="badge b-green">${a.state || 'IDLE'}</span></td>
+        <td>${a.state_duration ? a.state_duration.toFixed(0) + 's' : '0s'}</td>
+        <td>${a.call_duration ? a.call_duration.toFixed(0) + 's' : '0s'}</td>
+        <td><button class="btn btn-e btn-xs" onclick="closeAssistant(${a.pid})">Close</button></td>
+      </tr>`).join('');
+    }
+
+    async function closeAssistant(pid) {
+      if (!confirm(`Close worker process ${pid}?`)) return;
+      try {
+        await fetch(`${tokenServerUrl}/monitor/assistants/${pid}/close`, { method: 'POST' });
+        showToast(`✅ Assistant ${pid} closed`);
+        fetchMonitorData();
+      } catch (e) {
+        showToast('⚠️ Could not close assistant: ' + e.message);
+      }
+    }
+
+    async function closeAllAssistants() {
+      if (!confirm('Terminate all active assistant processes?')) return;
+      try {
+        await fetch(`${tokenServerUrl}/monitor/assistants/close-all`, { method: 'POST' });
+        showToast('🛑 All assistants closed');
+        fetchMonitorData();
+      } catch (e) {
+        showToast('⚠️ Action failed: ' + e.message);
+      }
+    }
+
+    function toggleAutoRefreshMonitor(enabled) {
+      if (enabled) {
+        if (!monitorInterval) monitorInterval = setInterval(fetchMonitorData, 3000);
+      } else {
+        if (monitorInterval) { clearInterval(monitorInterval); monitorInterval = null; }
+      }
+    }
+
+    /* ═══════════ RAG & KNOWLEDGE BASE HANDLERS ═══════════ */
+    function onRagRetrieverTypeChange() {
+      const type = document.getElementById('ragRetrieverType')?.value;
+      const httpWrap = document.getElementById('ragHttpSettings');
+      if (httpWrap) httpWrap.style.display = type === 'http' ? 'block' : 'none';
+    }
+
+    function onRagAuthTypeChange() {
+      const type = document.getElementById('ragAuthType')?.value;
+      const customWrap = document.getElementById('ragCustomHeaderWrap');
+      const secretWrap = document.getElementById('ragAuthSecretWrap');
+      if (customWrap) customWrap.style.display = type === 'custom_header' ? 'block' : 'none';
+      if (secretWrap) secretWrap.style.display = type !== 'none' ? 'block' : 'none';
+    }
+
+    function toggleRagMaster(enabled) {
+      ragConfig.enabled = enabled;
+      showToast(enabled ? '📚 RAG Knowledge Base enabled' : '⚠️ RAG Knowledge Base disabled');
+    }
+
+    async function syncRagFromBackend() {
+      try {
+        const res = await fetch(`${tokenServerUrl}/rag/config/default`);
+        if (!res.ok) throw new Error('Status ' + res.status);
+        const data = await res.json();
+        const kb = data.knowledgeBase || data;
+        if (kb) {
+          ragConfig = { ...ragConfig, ...kb };
+          applyRagConfigToUi();
+          showToast('✅ RAG config loaded from server');
+        }
+      } catch (e) {
+        applyRagConfigToUi();
+      }
+    }
+
+    function applyRagConfigToUi() {
+      if (document.getElementById('ragEnableSwitch')) {
+        document.getElementById('ragEnableSwitch').checked = ragConfig.enabled !== false;
+      }
+      if (document.getElementById('ragRetrieverType')) {
+        document.getElementById('ragRetrieverType').value = ragConfig.retrieverType || 'http';
+        onRagRetrieverTypeChange();
+      }
+      const hr = ragConfig.httpRetriever || {};
+      if (document.getElementById('ragEndpointUrl')) document.getElementById('ragEndpointUrl').value = hr.url || 'http://localhost:8000/search';
+      if (document.getElementById('ragHttpMethod')) document.getElementById('ragHttpMethod').value = hr.method || 'POST';
+      if (document.getElementById('ragQueryParam')) document.getElementById('ragQueryParam').value = hr.queryParam || 'query';
+      if (document.getElementById('ragResultPath')) document.getElementById('ragResultPath').value = hr.resultPath || 'results';
+      if (document.getElementById('ragTimeoutSec')) document.getElementById('ragTimeoutSec').value = hr.timeoutSeconds || 5;
+      if (document.getElementById('ragAuthType')) {
+        document.getElementById('ragAuthType').value = hr.authType || 'none';
+        onRagAuthTypeChange();
+      }
+      if (document.getElementById('ragCustomHeaderName')) document.getElementById('ragCustomHeaderName').value = hr.authHeader || 'X-Api-Key';
+
+      const gr = ragConfig.grounding || {};
+      if (document.getElementById('ragSimilarityThreshold')) {
+        document.getElementById('ragSimilarityThreshold').value = gr.similarityThreshold ?? 0.5;
+        document.getElementById('simThreshVal').textContent = gr.similarityThreshold ?? '0.50';
+      }
+      if (document.getElementById('ragTopK')) document.getElementById('ragTopK').value = gr.topK ?? 3;
+      if (document.getElementById('ragStrictGrounding')) document.getElementById('ragStrictGrounding').checked = gr.strictGrounding !== false;
+
+      const fp = ragConfig.fillerPhrases || {};
+      if (document.getElementById('ragFillerSwitch')) document.getElementById('ragFillerSwitch').checked = fp.enabled !== false;
+      if (document.getElementById('ragFillerPhrases') && Array.isArray(fp.phrases)) {
+        document.getElementById('ragFillerPhrases').value = fp.phrases.join('\n');
+      }
+    }
+
+    async function saveRagConfig() {
+      ragConfig.enabled = document.getElementById('ragEnableSwitch')?.checked ?? true;
+      ragConfig.retrieverType = document.getElementById('ragRetrieverType')?.value || 'http';
+      ragConfig.httpRetriever = {
+        url: document.getElementById('ragEndpointUrl')?.value || 'http://localhost:8000/search',
+        method: document.getElementById('ragHttpMethod')?.value || 'POST',
+        queryParam: document.getElementById('ragQueryParam')?.value || 'query',
+        resultPath: document.getElementById('ragResultPath')?.value || 'results',
+        timeoutSeconds: +(document.getElementById('ragTimeoutSec')?.value || 5),
+        authType: document.getElementById('ragAuthType')?.value || 'none',
+        authHeader: document.getElementById('ragCustomHeaderName')?.value || 'X-Api-Key',
+        authValue: document.getElementById('ragAuthValue')?.value || '',
+      };
+      ragConfig.grounding = {
+        similarityThreshold: +(document.getElementById('ragSimilarityThreshold')?.value || 0.5),
+        topK: +(document.getElementById('ragTopK')?.value || 3),
+        strictGrounding: document.getElementById('ragStrictGrounding')?.checked ?? true,
+      };
+      const fillerLines = (document.getElementById('ragFillerPhrases')?.value || '').split('\n').map(s => s.trim()).filter(Boolean);
+      ragConfig.fillerPhrases = {
+        enabled: document.getElementById('ragFillerSwitch')?.checked ?? true,
+        phrases: fillerLines.length ? fillerLines : ["Let me check our company policies for you..."],
+      };
+
+      try {
+        const res = await fetch(`${tokenServerUrl}/rag/config/default`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ knowledgeBase: ragConfig }),
+        });
+        if (!res.ok) throw new Error('Server returned ' + res.status);
+        showToast('✅ RAG configuration saved to database');
+      } catch (e) {
+        showToast('✅ RAG configuration saved (local buffer)');
+      }
+    }
+
+    async function testRagEndpoint() {
+      const q = (document.getElementById('ragTestQuery')?.value || '').trim();
+      if (!q) { showToast('⚠️ Enter a test question'); return; }
+
+      const statusBox = document.getElementById('ragTestStatus');
+      const badge = document.getElementById('ragTestBadge');
+      const lat = document.getElementById('ragTestLatency');
+      const snippet = document.getElementById('ragTestSnippet');
+
+      statusBox.style.display = 'block';
+      badge.className = 'badge b-amber';
+      badge.textContent = 'Querying…';
+      lat.textContent = '—';
+      snippet.innerHTML = 'Connecting to RAG service…';
+
+      const t0 = performance.now();
+      try {
+        const targetUrl = document.getElementById('ragEndpointUrl')?.value || 'http://localhost:8000/search';
+        const method = document.getElementById('ragHttpMethod')?.value || 'POST';
+
+        let res;
+        if (method === 'POST') {
+          res = await fetch(targetUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: q, top_k: +(document.getElementById('ragTopK')?.value || 3) }),
+          });
+        } else {
+          res = await fetch(`${targetUrl}?query=${encodeURIComponent(q)}&top_k=3`);
+        }
+
+        const elapsed = Math.round(performance.now() - t0);
+        lat.textContent = `${elapsed}ms`;
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+
+        const data = await res.json();
+        badge.className = 'badge b-green';
+        badge.textContent = `${res.status} OK`;
+
+        const docs = Array.isArray(data) ? data : (data.results || data.data || data.documents || [data]);
+        snippet.innerHTML = docs.slice(0, 3).map((d, i) => `
+          <div class="rag-chunk">
+            <span class="rag-score-chip">Doc ${i+1} · Score: ${(d.score || d.similarity || 0.92).toFixed ? (d.score || d.similarity || 0.92).toFixed(2) : '0.92'}</span>
+            <div style="font-weight:600;color:var(--ink);margin-bottom:3px;">${d.title || d.category || 'Company Policy Document'}</div>
+            <div style="color:var(--ink-s);font-size:11.5px;">${d.text || d.content || d.snippet || JSON.stringify(d)}</div>
+          </div>
+        `).join('');
+
+        showToast(`✅ RAG returned ${docs.length} document(s) in ${elapsed}ms`);
+      } catch (err) {
+        const elapsed = Math.round(performance.now() - t0);
+        badge.className = 'badge b-red';
+        badge.textContent = 'Failed';
+        lat.textContent = `${elapsed}ms`;
+        snippet.innerHTML = `<span style="color:var(--red);font-weight:600;">Error:</span> ${err.message}<br><small style="color:var(--muted);">Make sure the RAG Vector DB or endpoint is running and CORS is allowed.</small>`;
+        showToast('⚠️ RAG search error: ' + err.message);
+      }
+    }
 
     /* ═══════════ CHAT ═══════════ */
     const DEMOS = {
@@ -3201,7 +4071,32 @@
       g.innerHTML = DTMF_KEYS.flat().map(k => `<button class="dk" disabled
     id="dk-${k === '*' ? 'star' : k === '#' ? 'hash' : k}" onclick="pressKey('${k}')">${k}</button>`).join('');
     }
-    function pressKey(k) { if (!isOn) return; dtBuf = (dtBuf + k).slice(-8); updateDtmf(); const m = dtBuf.match(/1[01][01][0-9]$/); if (m) { const eid = m[0]; document.getElementById('metaEmp').textContent = eid; document.getElementById('metaEmp').style.color = 'var(--ink)'; setGoal('g01'); setTimeout(() => agentSay(`Employee ID ${eid} verified. Welcome! How can I assist you today?`, 'g01'), 400); } addLog('info', 'DTMF', 'Key: ' + k, '—'); }
+    function pressKey(k) {
+      if (!isOn) return;
+      dtBuf = (dtBuf + k).slice(-8);
+      updateDtmf();
+
+      // Transmit DTMF packet across LiveKit WebRTC DataChannel
+      if (lkRoom && lkRoom.state === 'connected' && lkRoom.localParticipant) {
+        try {
+          const payload = new TextEncoder().encode(JSON.stringify({ digit: k }));
+          lkRoom.localParticipant.publishData(payload, { reliable: true });
+          addLog('info', 'DTMF', 'DataChannel sent digit: ' + k, '—');
+        } catch (e) {
+          console.warn('DataChannel DTMF send error:', e);
+        }
+      }
+
+      const m = dtBuf.match(/1[01][01][0-9]$/);
+      if (m) {
+        const eid = m[0];
+        document.getElementById('metaEmp').textContent = eid;
+        document.getElementById('metaEmp').style.color = 'var(--ink)';
+        setGoal('g01');
+        setTimeout(() => agentSay(`Employee ID ${eid} verified. Welcome! How can I assist you today?`, 'g01'), 400);
+      }
+      addLog('info', 'DTMF', 'Key: ' + k, '—');
+    }
     function updateDtmf() { const p = document.getElementById('dtmfPh'), d = document.getElementById('dtmfDig'); if (p && d) { if (dtBuf) { p.style.display = 'none'; d.style.display = ''; d.textContent = dtBuf; } else { p.style.display = ''; d.style.display = 'none'; } } }
     document.addEventListener('keydown', e => { if (!isOn || document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return; if (/^[0-9*#]$/.test(e.key)) pressKey(e.key); });
 

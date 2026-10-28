@@ -12,8 +12,13 @@ import os
 import time
 from datetime import timedelta
 from typing import Any
+
 from livekit.agents import function_tool, RunContext
 from livekit import api
+
+# How long (seconds) to wait after goodbye TTS finishes before hanging up.
+# Gives the caller a chance to add a last word.  Override via END_CALL_GRACE_SECONDS env var.
+END_CALL_GRACE_SECONDS: float = float(os.environ.get("END_CALL_GRACE_SECONDS", "3.5"))
 
 from goals.base import GoalService, GoalMeta
 from manage_blocked_numbers import is_number_blocked
@@ -133,9 +138,26 @@ class CoordinatorTransferService(GoalService):
 
     @function_tool
     async def end_call(self, context: RunContext) -> None:
-        """Terminates and hangs up the phone call after saying goodbye."""
+        """Terminates and hangs up the phone call after the goodbye message has fully played.
+
+        IMPORTANT: This tool waits for the goodbye TTS to finish playing AND then
+        pauses for a short grace period so the caller can add a final word before
+        the line is disconnected.  Do NOT call this tool prematurely — only call it
+        after the goodbye message has been sent to the caller.
+        """
         self.log_action("end_call")
+
+        # 1. Wait for the goodbye TTS to finish playing out to the caller.
         await context.wait_for_playout()
+
+        # 2. Grace period — lets the caller interject a final word before hangup.
+        grace = float(os.environ.get("END_CALL_GRACE_SECONDS", str(END_CALL_GRACE_SECONDS)))
+        if grace > 0:
+            logger.info(f"⏳ [Hangup] Waiting {grace}s grace period before disconnecting…")
+            await asyncio.sleep(grace)
+
+        # 3. Disconnect the call.
+        logger.info("📴 [Hangup] Grace period elapsed — disconnecting call.")
         if self.job_ctx and getattr(self.job_ctx, "room", None):
             try:
                 for p in list(self.job_ctx.room.remote_participants.values()):

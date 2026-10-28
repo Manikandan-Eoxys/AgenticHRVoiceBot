@@ -29,6 +29,12 @@ apscheduler>=3.10.0
 # Microsoft SQL Server integration (optional — required for live SQL Server sync)
 # pyodbc
 
+# API Server & Dashboard
+fastapi
 uvicorn
 jsonschema
 cryptography
+psutil
+PyJWT
+livekit-api
+

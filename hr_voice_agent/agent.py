@@ -709,6 +709,12 @@ Today's actual date is {today_str}. Use this as ground truth for every relative 
 - Work From Home: Up to 2 days per week or 8 days per month with manager approval (post-probation employees).
 - Payroll Schedule: Salary is credited on the last working day of each month. Payslips available on the 1st of every month.
 
+IMPORTANT — Policy Tool Usage:
+- When the caller asks about ANY leave policy (Casual Leave, Sick Leave, Maternity, Paternity, Comp Off, Bereavement, Short Leave, LWP/LOP): you MUST call the tool `get_leave_policy(leave_type=...)` to fetch the exact DB answer. NEVER say "no policy available" — the policy data is in the database.
+- When the caller asks about attendance policy, WFH policy, payroll policy, or code of conduct details: call `get_hr_policy(topic=...)` to look up the matching policy record.
+- When the caller asks about code of conduct, dress code details, anti-harassment, VPN rules: call `get_code_of_conduct_policy(topic=...)`.
+- You MUST call the appropriate policy tool before responding — never invent or skip policy answers.
+
 ════════════════════════════════════════════════════════════════
 🔄 3. WORKFLOW RULES
 ════════════════════════════════════════════════════════════════
@@ -716,7 +722,10 @@ Today's actual date is {today_str}. Use this as ground truth for every relative 
 - Sensitive Complaints: Treat grievances and harassment reports with maximum empathy and confidentiality; log a confidential ticket immediately.
 - Unresolved Issues: If an issue cannot be resolved by policy rules, create an HR ticket and read the reference number to the caller.
 - Coordinator Transfer: If caller asks for a live human coordinator, ask them to confirm "yes, proceed" before transferring.
-- Ending the Call: When the caller says "no thank you", "goodbye", "that's all", or indicates they are done: say your brief polite goodbye (e.g. "You're welcome! Have a great day. Goodbye.") and you MUST call the tool end_call() in that same turn to disconnect the call cleanly.
+- Ending the Call: When the caller says "no thank you", "goodbye", "that's all", or clearly indicates they are done:
+  1. Say your brief polite goodbye (e.g. "You're welcome! Have a great day. Goodbye.").
+  2. Then call the tool end_call() — the tool will wait for your goodbye to finish playing and then allow a short pause before disconnecting, in case the caller adds a final word.
+  Never hang up mid-sentence or before the caller has had a chance to respond.
 """
 
 
@@ -749,7 +758,7 @@ Today's actual date is {today_str}.
 📞 3. COORDINATOR TRANSFER & ENDING
 ════════════════════════════════════════════════════════════════
 - If they ask for a live coordinator: ask for confirmation ("yes, proceed") before transferring.
-- Ending the Call: Say your brief polite goodbye and you MUST call the tool end_call() to hang up the phone line.
+- Ending the Call: Say your brief polite goodbye, then call the tool end_call() to disconnect. The tool waits for TTS to finish and gives a short grace window before hanging up.
 """
 
 
@@ -783,7 +792,7 @@ Reason for call:
 📞 3. COORDINATOR & ENDING
 ════════════════════════════════════════════════════════════════
 - If they request a human coordinator: ask for confirmation ("yes, proceed") before transferring.
-- Ending the Call: When acknowledgement is recorded and the employee has no further questions, say a brief polite goodbye and you MUST call the tool end_call() to hang up the phone line.
+- Ending the Call: When acknowledgement is recorded and the employee has no further questions, say a brief polite goodbye, then call the tool end_call() to disconnect. The tool waits for TTS to finish and allows a short pause before hanging up.
 """
 
 
