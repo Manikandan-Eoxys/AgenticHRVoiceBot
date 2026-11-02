@@ -16,6 +16,15 @@ Usage:
 
 import sys
 import os
+from pathlib import Path
+
+_current_dir = Path(__file__).resolve().parent
+_project_root = _current_dir.parent
+for _p in (_current_dir, _project_root):
+    _p_str = str(_p)
+    if _p_str not in sys.path:
+        sys.path.insert(0, _p_str)
+
 import logging
 from services.monitoring_handler import install_monitoring_handler
 from goals.email_approval import start_email_approval_daemon
