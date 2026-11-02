@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-from hr_voice_agent.telephony.base import BaseTelephonySession
+from telephony.base import BaseTelephonySession
 
 logger = logging.getLogger("telephony.context")
 

@@ -22,8 +22,8 @@ from asterisk.audiosocket import AudioSocketWriterQueue
 
 logger = logging.getLogger("asterisk.tts")
 
-# Sentence splitting pattern for natural speech cadence
-SENTENCE_SPLIT_REGEX = re.compile(r"([.!?;:\n]+)")
+# Sentence / clause splitting: break on punctuation (.!?;:,\n) to dispatch speech early
+SENTENCE_SPLIT_REGEX = re.compile(r"([.!?;:\n]|,\s+)")
 
 
 class StreamingTTSClient:
@@ -66,6 +66,7 @@ class StreamingTTSClient:
             "model": self.model,
             "encoding": "linear16",
             "sample_rate": str(self.sample_rate),
+            "container": "none",
         }
         url = f"https://api.deepgram.com/v1/speak?{urllib.parse.urlencode(params)}"
         headers = {
@@ -76,6 +77,7 @@ class StreamingTTSClient:
 
         try:
             logger.info(f"🔊 [TTS Synthesizing]: '{cleaned[:60]}'...")
+            self._current_task = asyncio.current_task()
             async with session.post(url, headers=headers, json=payload) as resp:
                 if resp.status not in (200, 201):
                     body = await resp.text()
@@ -83,19 +85,31 @@ class StreamingTTSClient:
                     return
 
                 # Stream audio chunks as they arrive from Deepgram
+                is_first = True
                 async for chunk in resp.content.iter_chunked(1024):
                     if self._cancelled:
                         break
-                    self.audio_queue.enqueue_pcm(chunk)
+                    # Defensively strip WAV RIFF container header if present
+                    if is_first:
+                        is_first = False
+                        if chunk.startswith(b"RIFF") and len(chunk) >= 44:
+                            chunk = chunk[44:]
+                    if chunk:
+                        self.audio_queue.enqueue_pcm(chunk)
+
+                if not self._cancelled:
+                    self.audio_queue.flush()
 
         except asyncio.CancelledError:
             self._cancelled = True
         except Exception as e:
             logger.error(f"❌ [TTS Exception]: {e}")
+        finally:
+            self._current_task = None
 
     async def speak_stream(self, token_generator: AsyncGenerator[str, None]) -> None:
         """
-        Consumes streaming LLM tokens, groups into natural sentence chunks,
+        Consumes streaming LLM tokens, groups into natural clause chunks,
         and streams synthesized audio in real time.
         """
         self._cancelled = False
@@ -106,15 +120,17 @@ class StreamingTTSClient:
                 break
             buffer += token
 
-            # Split on sentence boundaries
-            parts = SENTENCE_SPLIT_REGEX.split(buffer)
-            # If we have at least one complete sentence + delimiter
-            if len(parts) >= 3:
-                # parts: [sentence1, delimiter1, sentence2, delimiter2, ..., remainder]
-                to_speak = "".join(parts[:2]).strip()
-                buffer = "".join(parts[2:])
-                if to_speak:
-                    await self.speak_text(to_speak)
+            # Split on sentence/clause boundaries (.!?;:\n)
+            while True:
+                parts = SENTENCE_SPLIT_REGEX.split(buffer, maxsplit=1)
+                # If matched, parts is: [text_before, delimiter, text_after]
+                if len(parts) >= 3:
+                    to_speak = (parts[0] + parts[1]).strip()
+                    buffer = parts[2]
+                    if to_speak and not self._cancelled:
+                        await self.speak_text(to_speak)
+                else:
+                    break
 
         # Synthesize any trailing text in buffer
         if buffer.strip() and not self._cancelled:

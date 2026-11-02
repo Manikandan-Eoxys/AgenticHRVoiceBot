@@ -20,6 +20,10 @@ if _cfg_path.exists():
             if not _attr.startswith("__"):
                 globals()[_attr] = getattr(_mod, _attr)
 
+# Explicit fallback module-level bindings for static type analyzers (Pyrefly/mypy)
+OPENROUTER_API_KEY: Optional[str] = globals().get("OPENROUTER_API_KEY", None)
+OPENROUTER_MODEL: str = globals().get("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")
+
 __all__ = [
     "Config",
     "BASE_DIR",
@@ -32,6 +36,8 @@ __all__ = [
     "OLLAMA_MODEL",
     "OPENAI_API_KEY",
     "OPENAI_MODEL",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_MODEL",
     "GROQ_API_KEY",
     "GROQ_MODEL",
     "DEEPGRAM_API_KEY",
@@ -79,6 +85,8 @@ if TYPE_CHECKING:
         OLLAMA_MODEL: str
         OPENAI_API_KEY: Optional[str]
         OPENAI_MODEL: str
+        OPENROUTER_API_KEY: Optional[str]
+        OPENROUTER_MODEL: str
         GROQ_API_KEY: Optional[str]
         GROQ_MODEL: str
         DEEPGRAM_API_KEY: Optional[str]
@@ -135,6 +143,8 @@ if TYPE_CHECKING:
     OLLAMA_MODEL: str
     OPENAI_API_KEY: Optional[str]
     OPENAI_MODEL: str
+    OPENROUTER_API_KEY: Optional[str]
+    OPENROUTER_MODEL: str
     GROQ_API_KEY: Optional[str]
     GROQ_MODEL: str
     DEEPGRAM_API_KEY: Optional[str]

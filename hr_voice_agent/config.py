@@ -45,6 +45,9 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", None)
     OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
  
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", None)
+    OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")
+
     GROQ_API_KEY   = os.getenv("GROQ_API_KEY", None)
     GROQ_MODEL     = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
  
@@ -188,6 +191,9 @@ OLLAMA_MODEL    = Config.OLLAMA_MODEL
 OPENAI_API_KEY = Config.OPENAI_API_KEY
 OPENAI_MODEL   = Config.OPENAI_MODEL
  
+OPENROUTER_API_KEY = Config.OPENROUTER_API_KEY
+OPENROUTER_MODEL   = Config.OPENROUTER_MODEL
+
 GROQ_API_KEY = Config.GROQ_API_KEY
 GROQ_MODEL   = Config.GROQ_MODEL
  

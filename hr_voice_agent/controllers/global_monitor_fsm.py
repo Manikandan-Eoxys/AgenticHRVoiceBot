@@ -30,7 +30,10 @@ _TICK_S = 0.1
 
 _ACTIVE_CALL_STATES = {
     "JOB_ACCEPTED", "CONNECTING", "SESSION_ACTIVE",
-    "LISTENING", "THINKING", "SPEAKING", "ENDING",
+    "LISTENING", "THINKING", "SPEAKING",
+    # NOTE: "ENDING" is intentionally excluded — it is a teardown phase, not an active
+    # call.  Including it caused every call termination to briefly spike active=1 and
+    # produce spurious IDLE ⇔ PARTIAL_LOAD flapping in the GlobalFSM log.
 }
 
 
@@ -473,16 +476,30 @@ class GlobalMonitorFSM:
                 logger.error(f"[GlobalFSM] loop error in {self.current_state.name}: {exc}")
                 self.next_state = self.current_state
 
-            # ── 2. Synchronize states at the very end of the iteration ──────
+            # ── 2. Synchronize states — with 1-second dwell guard ───────────
+            # Require the desired new state to be stable for at least _TRANSITION_DWELL_S
+            # before committing.  This absorbs the rapid ENDING→READY blip that previously
+            # caused spurious IDLE⇄PARTIAL_LOAD flapping in the log when no call was active.
+            _TRANSITION_DWELL_S = 1.0
             if self.next_state is not self.current_state:
-                old = self.current_state
-                self._previous_state = old
-                self._state_updated_at = time.time()
-                logger.info(f"➡️ GlobalFSM Transition [global]: {old.name} → {self.next_state.name} "
-                            f"(active={active}, agents={agents}, unhealthy={unhealthy})")
-                self.current_state = self.next_state
-                self.log_kpis(trigger=f"{old.name} → {self.next_state.name}")
-                self._push_monitoring_async()
+                if self.next_state is not getattr(self, "_pending_next", None):
+                    # A new candidate state — start the dwell timer
+                    self._pending_next = self.next_state
+                    self._pending_since = time.time()
+                elif time.time() - getattr(self, "_pending_since", 0) >= _TRANSITION_DWELL_S:
+                    # Candidate has been stable long enough — commit the transition
+                    old = self.current_state
+                    self._previous_state = old
+                    self._state_updated_at = time.time()
+                    self._pending_next = None
+                    logger.info(f"➡️ GlobalFSM Transition [global]: {old.name} → {self.next_state.name} "
+                                f"(active={active}, agents={agents}, unhealthy={unhealthy})")
+                    self.current_state = self.next_state
+                    self.log_kpis(trigger=f"{old.name} → {self.next_state.name}")
+                    self._push_monitoring_async()
+            else:
+                # State is stable — clear any pending dwell candidate
+                self._pending_next = None
 
             now_tick = time.time()
             if now_tick - self._last_push >= self._push_interval:

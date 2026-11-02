@@ -11,6 +11,8 @@ class Config:
     OLLAMA_MODEL: str
     OPENAI_API_KEY: Optional[str]
     OPENAI_MODEL: str
+    OPENROUTER_API_KEY: Optional[str]
+    OPENROUTER_MODEL: str
     GROQ_API_KEY: Optional[str]
     GROQ_MODEL: str
     DEEPGRAM_API_KEY: Optional[str]
@@ -67,6 +69,8 @@ OLLAMA_BASE_URL: str
 OLLAMA_MODEL: str
 OPENAI_API_KEY: Optional[str]
 OPENAI_MODEL: str
+OPENROUTER_API_KEY: Optional[str]
+OPENROUTER_MODEL: str
 GROQ_API_KEY: Optional[str]
 GROQ_MODEL: str
 DEEPGRAM_API_KEY: Optional[str]
@@ -114,6 +118,8 @@ __all__ = [
     "OLLAMA_MODEL",
     "OPENAI_API_KEY",
     "OPENAI_MODEL",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_MODEL",
     "GROQ_API_KEY",
     "GROQ_MODEL",
     "DEEPGRAM_API_KEY",

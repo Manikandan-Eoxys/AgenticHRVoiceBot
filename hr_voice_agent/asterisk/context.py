@@ -30,6 +30,10 @@ class PlayoutHandle:
             return await res
         return True
 
+    async def wait(self, timeout: Optional[float] = None) -> bool:
+        """Alias for wait_for_playout."""
+        return await self.wait_for_playout(timeout=timeout)
+
 
 class AsteriskParticipant:
     """Mock participant representing caller, agent, or coordinator."""

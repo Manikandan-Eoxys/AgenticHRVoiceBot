@@ -40,7 +40,7 @@ class DeepgramStreamingSTT:
         sample_rate: int = 8000,
         model: str = "nova-3",
         language: str = "en",
-        endpointing_ms: int = 350,
+        endpointing_ms: int = 240,
         on_speech_started: Optional[Callable[[], None]] = None,
         on_speech_final: Optional[Callable[[str], None]] = None,
         on_interim: Optional[Callable[[str], None]] = None,
@@ -56,6 +56,7 @@ class DeepgramStreamingSTT:
         self.on_speech_final = on_speech_final
         self.on_interim = on_interim
 
+        self._connector: Optional[aiohttp.TCPConnector] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._receive_task: Optional[asyncio.Task] = None
@@ -88,7 +89,13 @@ class DeepgramStreamingSTT:
             "Authorization": f"Token {self.api_key}",
         }
 
-        self._session = aiohttp.ClientSession()
+        # Create an EXPLICIT TCPConnector and hold a reference to it.
+        # In Python 3.12 + aiohttp, the GC finalizer of a previous (unclosed)
+        # ClientSession can close a shared connector pool, which then causes
+        # 'Connector is closed' on a brand-new session created right after.
+        # Holding our own connector reference prevents the GC from ever touching it.
+        self._connector = aiohttp.TCPConnector(force_close=True)
+        self._session = aiohttp.ClientSession(connector=self._connector)
         logger.info(f"🎙️ [Deepgram STT] Connecting to streaming API (model={self.model}, rate={self.sample_rate}Hz)...")
         try:
             self._ws = await self._session.ws_connect(ws_url, headers=headers)
@@ -134,7 +141,12 @@ class DeepgramStreamingSTT:
                                 logger.warning(f"Error in on_speech_started callback: {ex}")
 
                     # 2. Transcription results
+                    # NOTE: some Deepgram events (SpeechStarted, UtteranceEnd, Metadata)
+                    # either omit 'channel' or set it to a list [0, 1] (channel index).
+                    # Guard with isinstance before calling .get() to avoid AttributeError.
                     channel = data.get("channel", {})
+                    if not isinstance(channel, dict):
+                        continue
                     alternatives = channel.get("alternatives", [])
                     if not alternatives:
                         continue
@@ -195,4 +207,12 @@ class DeepgramStreamingSTT:
                 await self._session.close()
             except Exception:
                 pass
+            self._session = None
+        # Close the explicit connector AFTER the session so all connections drain cleanly
+        if self._connector and not self._connector.closed:
+            try:
+                await self._connector.close()
+            except Exception:
+                pass
+            self._connector = None
         logger.info("🔌 [Deepgram STT] Stream closed cleanly.")

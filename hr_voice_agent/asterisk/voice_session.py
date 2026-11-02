@@ -22,6 +22,7 @@ import logging
 import os
 import time
 import wave
+from collections import deque
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -30,19 +31,22 @@ import numpy as np
 
 # LiveKit LLM types used by existing tools and FallbackLLM
 from livekit.agents.llm import ChatContext, ChatMessage
-from livekit.agents import inference
 
 from config import (
     DEEPGRAM_API_KEY,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
+    GROQ_API_KEY,
+    GROQ_MODEL,
     OLLAMA_MODEL,
     OLLAMA_BASE_URL,
-    SYSTEM_PROMPT,
     RAG_TIMEOUT,
     RAG_FILLER_DELAY,
     RAG_MAX_CONTEXT_CHARS,
     RAG_FILLER_MODE,
     ARI_URL,
 )
+from prompts import INBOUND_INSTRUCTIONS
 DEEPGRAM_LANGUAGE = os.environ.get("DEEPGRAM_LANGUAGE", "en")
 COORDINATOR_PHONE_NUMBER = os.environ.get("COORDINATOR_PHONE_NUMBER", "+918925355704")
 from controllers.agentVoiceController import VoiceController, ControllerState
@@ -74,6 +78,7 @@ from asterisk.context import (
     AsteriskRunContext,
     PlayoutHandle,
 )
+from telephony.base import BaseTelephonySession
 
 logger = logging.getLogger("asterisk.voice_session")
 
@@ -109,36 +114,55 @@ class InBandDtmfDetector8k:
             return None
         s = samples.astype(np.float32)
         rms = np.sqrt(np.mean(s**2))
-        if rms < 350:
+
+        # Gate 1: RMS floor.  Real DTMF tones are loud full-power sinusoids.
+        if rms < 1800:
             self.silence_count += 1
             if self.silence_count >= 2:
                 self.last_detected = None
+                self.hit_count = 0
             return None
+        self.silence_count = 0
 
+        # Compute Goertzel power for each of the 8 DTMF frequencies.
         powers = {}
         for f in self.all_freqs:
             coeff = self.coeffs[f]
-            s_prev = 0.0
-            s_prev2 = 0.0
+            sp, sp2 = 0.0, 0.0
             for val in s:
-                s_curr = val + coeff * s_prev - s_prev2
-                s_prev2 = s_prev
-                s_prev = s_curr
-            powers[f] = s_prev2 * s_prev2 + s_prev * s_prev - coeff * s_prev * s_prev2
+                sc = val + coeff * sp - sp2
+                sp2, sp = sp, sc
+            powers[f] = sp2 * sp2 + sp * sp - coeff * sp * sp2
 
         best_row_f = max(DTMF_FREQS_ROW, key=lambda f: powers[f])
         best_col_f = max(DTMF_FREQS_COL, key=lambda f: powers[f])
         p_row = powers[best_row_f]
         p_col = powers[best_col_f]
 
+        # Gate 2: row/col balance — both tones must be comparably strong.
         if not (0.15 < p_row / (p_col + 1e-6) < 6.5):
+            self.hit_count = 0
             return None
 
+        # Gate 3: adjacent-frequency suppression.
+        # DTMF tones are nearly pure sinusoids; speech harmonics spread power across
+        # neighbouring bins.  Raised from 2.5x → 8x to reject speech false-positives.
         other_row_powers = [powers[f] for f in DTMF_FREQS_ROW if f != best_row_f]
         other_col_powers = [powers[f] for f in DTMF_FREQS_COL if f != best_col_f]
-        if other_row_powers and p_row < 2.5 * max(other_row_powers):
+        if other_row_powers and p_row < 8.0 * max(other_row_powers):
+            self.hit_count = 0
             return None
-        if other_col_powers and p_col < 2.5 * max(other_col_powers):
+        if other_col_powers and p_col < 8.0 * max(other_col_powers):
+            self.hit_count = 0
+            return None
+
+        # Gate 4: spectral purity.
+        # At least 70% of the total power across all 8 DTMF frequencies must be
+        # concentrated in exactly the two winning frequencies.  Speech energy is
+        # spread across many frequencies so this check reliably rejects it.
+        total_power = sum(powers.values()) + 1e-6
+        if (p_row + p_col) / total_power < 0.70:
+            self.hit_count = 0
             return None
 
         r_idx = DTMF_FREQS_ROW.index(best_row_f)
@@ -149,9 +173,10 @@ class InBandDtmfDetector8k:
             return None
 
         self.hit_count += 1
-        if self.hit_count >= 2:
+        # Require 4 consecutive blocks (≈80ms) of the same digit to fire.
+        # This prevents speech transients that briefly look like DTMF from registering.
+        if self.hit_count >= 4:
             self.last_detected = digit
-            self.silence_count = 0
             self.hit_count = 0
             return digit
         return None
@@ -178,9 +203,10 @@ class AsteriskDtmfCollector:
             logger.info("🔢 [DTMF Collector] Buffer cleared via '*'")
 
 
-class AsteriskVoiceSession:
+class AsteriskVoiceSession(BaseTelephonySession):
     """
     Manages one active telephone call bridged via Asterisk AudioSocket and ARI.
+    Inherits from BaseTelephonySession so it satisfies the CallContext.session type.
     """
 
     def __init__(
@@ -193,6 +219,9 @@ class AsteriskVoiceSession:
         sample_rate: int = 8000,
         ari_client_session: Optional[Any] = None,
     ) -> None:
+        # BaseTelephonySession requires call_id and caller_number in __init__
+        super().__init__(call_id=call_uuid, caller_number=caller_id or "unknown")
+
         self.call_uuid = call_uuid
         self.channel_id = channel_id
         self.caller_id = caller_id or "unknown"
@@ -213,6 +242,9 @@ class AsteriskVoiceSession:
 
         # Telephony / Audio queues
         self.audio_queue = AudioSocketWriterQueue(writer, sample_rate=self.sample_rate)
+        self._agent_audio_buffer: deque[bytes] = deque(maxlen=500)
+        self.audio_queue.on_frame_sent = self._on_agent_frame_sent
+        self._speaking_start_time: float = 0.0
         self.tts = StreamingTTSClient(api_key=DEEPGRAM_API_KEY or "", audio_queue=self.audio_queue, sample_rate=self.sample_rate)
         self.stt: Optional[DeepgramStreamingSTT] = None
         self.dtmf_detector = InBandDtmfDetector8k(sample_rate=self.sample_rate)
@@ -229,7 +261,9 @@ class AsteriskVoiceSession:
             collector=self.dtmf_collector,
             call_metadata={"caller_id": self.caller_id, "channel_id": self.channel_id},
         )
-        self.active_tools = self.voice_controller.session_all_tools()
+        self.all_tools = self.voice_controller.session_all_tools()
+        self.active_tools = self.all_tools
+        self.verified_employee_id: Optional[str] = None
 
         # Call-specific isolated context
         from hr_voice_agent.telephony.context import CallContext
@@ -247,7 +281,7 @@ class AsteriskVoiceSession:
 
         # Conversation History
         today_str = date.today().strftime("%A, %B %-d, %Y")
-        prompt = SYSTEM_PROMPT.format(today_str=today_str) if "{today_str}" in SYSTEM_PROMPT else SYSTEM_PROMPT
+        prompt = INBOUND_INSTRUCTIONS.format(today_str=today_str)
         self.chat_ctx = ChatContext()
         self.chat_ctx.add_message(role="system", content=prompt)
 
@@ -260,6 +294,8 @@ class AsteriskVoiceSession:
         # Call Audio Recording
         self._recordings_dir = Path(__file__).resolve().parent.parent / "Recordings"
         self._wav_writer: Optional[wave.Wave_write] = None
+        self._recording_wav_path: Optional[Path] = None
+        self._log_path: Optional[Path] = None
         self._init_recording()
 
         # Background tasks
@@ -267,17 +303,48 @@ class AsteriskVoiceSession:
         self._inbound_audio_task: Optional[asyncio.Task] = None
 
     def _setup_llm(self) -> None:
+        """
+        Sets up the LLM for Asterisk calls:
+        - Primary: OpenRouter (Qwen 2.5 72B) or Groq
+        - Fallback: Local Ollama (if cloud provider has a network outage)
+        - Zero LiveKit gateway involvement.
+        """
         local_ollama = OllamaLLM(
             model=OLLAMA_MODEL.strip(),
             base_url=OLLAMA_BASE_URL,
             think=False,
         )
-        use_cloud = os.getenv("USE_CLOUD_LLM", "false").lower() in ("true", "1")
-        llm_model = os.getenv("LIVEKIT_LLM_MODEL", "google/gemma-4-31b-it")
-        if use_cloud:
-            cloud_llm = inference.LLM(model=llm_model)
-            self.llm = FallbackLLM(primary_llm=cloud_llm, fallback_llm=local_ollama)
+        
+        # 1. OpenRouter (Primary)
+        openrouter_key = (OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY", "")).strip()
+        openrouter_model = (OPENROUTER_MODEL or os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")).strip()
+
+        if openrouter_key:
+            from livekit.plugins import openai as lk_openai
+            openrouter_llm = lk_openai.LLM(
+                model=openrouter_model,
+                api_key=openrouter_key,
+                base_url="https://openrouter.ai/api/v1",
+            )
+            logger.info(f"🚀 [LLM Setup] Primary: OpenRouter ({openrouter_model}) | Fallback: Local Ollama ({OLLAMA_MODEL})")
+            self.llm = FallbackLLM(primary_llm=openrouter_llm, fallback_llm=local_ollama)
+            return
+
+        # 2. Groq (Secondary)
+        groq_key = (GROQ_API_KEY or os.getenv("GROQ_API_KEY", "")).strip()
+        groq_model = (GROQ_MODEL or os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")).strip()
+
+        if groq_key:
+            from livekit.plugins import openai as lk_openai
+            groq_llm = lk_openai.LLM(
+                model=groq_model,
+                api_key=groq_key,
+                base_url="https://api.groq.com/openai/v1",
+            )
+            logger.info(f"🚀 [LLM Setup] Primary: Groq ({groq_model}) | Fallback: Local Ollama ({OLLAMA_MODEL})")
+            self.llm = FallbackLLM(primary_llm=groq_llm, fallback_llm=local_ollama)
         else:
+            logger.info(f"🚀 [LLM Setup] Cloud LLM key not provided; using Local Ollama ({OLLAMA_MODEL})")
             self.llm = local_ollama
 
     def _init_rag(self) -> None:
@@ -298,14 +365,24 @@ class AsteriskVoiceSession:
             today_folder = self._recordings_dir / datetime.now().strftime("%d-%m-%Y")
             time_folder = today_folder / f"User-{self.room_name}-{datetime.now().strftime('%H.%M')}"
             time_folder.mkdir(parents=True, exist_ok=True)
-            wav_path = time_folder / "Conversation_Audio.wav"
-            self._wav_writer = wave.open(str(wav_path), "wb")
+            self._recording_wav_path = time_folder / "Conversation_Audio.wav"
+            self._log_path = time_folder / "Conversation_log"
+            self._wav_writer = wave.open(str(self._recording_wav_path), "wb")
             self._wav_writer.setnchannels(1)
             self._wav_writer.setsampwidth(2)
             self._wav_writer.setframerate(self.sample_rate)
-            logger.info(f"🎙️ [Recording] Local audio recording started at: {wav_path}")
+            logger.info(f"🎙️ [Recording] Local audio recording started at: {self._recording_wav_path}")
         except Exception as e:
             logger.warning(f"Could not initialize local audio recording: {e}")
+
+    def _append_transcript_log(self, text: str) -> None:
+        """Appends a turn line to Conversation_log in the recordings folder."""
+        if self._log_path:
+            try:
+                with open(self._log_path, "a", encoding="utf-8") as f:
+                    f.write(text.strip() + "\n")
+            except Exception:
+                pass
 
     async def start(self) -> None:
         """Starts call session, audio streams, and greeting."""
@@ -314,7 +391,10 @@ class AsteriskVoiceSession:
         # Start FSM loop and report CONNECTED
         self.voice_controller.ensure_fsm_running()
         self.voice_controller.on_call_start(self.room_name)
-        self.voice_controller.on_participant_joined(f"sip_{self.caller_id}")
+        # In Asterisk mode there is no LiveKit AgentSession (_active_session stays None),
+        # so on_participant_joined() would silently return early without setting the identity.
+        # Directly set _active_participant_identity so CONNECTING → SESSION_ACTIVE fires.
+        self.voice_controller._active_participant_identity = f"sip_{self.caller_id}"
 
         # Start AudioSocket paced playback
         self.audio_queue.start()
@@ -325,6 +405,7 @@ class AsteriskVoiceSession:
             sample_rate=self.sample_rate,
             language=DEEPGRAM_LANGUAGE,
             on_speech_started=self._on_user_speech_started,
+            on_interim=self._on_user_interim_transcript,
             on_speech_final=self._on_user_speech_final,
         )
         await self.stt.start()
@@ -337,12 +418,20 @@ class AsteriskVoiceSession:
 
     async def _play_greeting(self) -> None:
         """Plays the opening HR assistant greeting."""
-        await asyncio.sleep(0.3)
+        # Wait long enough for the ARI mixing bridge to be fully established
+        # before streaming audio — 0.3s was too short; Asterisk would drop frames
+        # that arrived before the bridge channels were joined.
+        await asyncio.sleep(1.5)
         greeting = (
-            "Hello! Thank you for calling HR Support. "
-            "To get started, please tell me your 4-digit employee ID or enter it on your phone keypad."
+            "Hello! Welcome to Eoxys HR voice assistant. "
+            "Please say or enter your employee ID to get started."
         )
-        self.say(greeting, allow_interruptions=True)
+        self.chat_ctx.add_message(role="assistant", content=greeting)
+        self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {greeting}")
+        await self.tts.speak_text(greeting)
+        await self.tts.wait_for_playout()
+        if self.agent_state == "speaking":
+            self._update_state("listening")
 
     def say(self, text: str, allow_interruptions: bool = True) -> PlayoutHandle:
         """Speaks a text announcement into the phone line with playout handle."""
@@ -365,13 +454,88 @@ class AsteriskVoiceSession:
             self.tts.interrupt()
             self._update_state("listening")
 
+    def _on_agent_frame_sent(self, frame: bytes) -> None:
+        """Buffers 20ms outbound agent audio frame for synchronized call recording."""
+        if hasattr(self, "_agent_audio_buffer"):
+            self._agent_audio_buffer.append(frame)
+
     def _update_state(self, new_state: str) -> None:
         self.agent_state = new_state
+        if new_state == "speaking":
+            self._speaking_start_time = time.monotonic()
         self.voice_controller.on_agent_substate_changed(new_state)
 
+    # ── BaseTelephonySession abstract method implementations ─────────────────
+
+    async def audio_frames(self):  # type: ignore[override]
+        """Yields inbound PCM audio frames from the AudioSocket stream."""
+        while self.running:
+            try:
+                msg_type, payload = await read_packet(self.reader)
+                if msg_type == TYPE_HANGUP:
+                    break
+                if msg_type == TYPE_AUDIO and payload:
+                    yield payload
+            except Exception:
+                break
+
+    async def send_audio(self, pcm: bytes) -> None:
+        """Enqueues outbound PCM audio to the Asterisk AudioSocket writer."""
+        self.audio_queue.enqueue_pcm(pcm)
+
+    def interrupt_speech(self) -> None:
+        """Barge-in: instantly purges the outbound audio queue."""
+        self.interrupt()
+
+    async def wait_for_playout(self, timeout: Optional[float] = None) -> bool:
+        """Waits until all queued audio frames have been sent to Asterisk."""
+        return await self.tts.wait_for_playout(timeout=timeout)
+
+    async def send_dtmf(self, digits: str) -> bool:
+        """Asterisk AudioSocket does not support outbound DTMF — always False."""
+        logger.debug(f"send_dtmf({digits!r}) not supported on AudioSocket transport.")
+        return False
+
+    async def transfer_call(self, target: str) -> bool:  # type: ignore[override]
+        """Transfers the caller channel via ARI redirect (delegates to existing impl)."""
+        endpoint = target if "/" in target else f"PJSIP/{target}"
+        self.interrupt()
+        if not self.ari_http or not self.channel_id:
+            return False
+        try:
+            url = f"{ARI_URL}/channels/{self.channel_id}/redirect"
+            async with self.ari_http.post(url, params={"endpoint": endpoint}) as resp:
+                return resp.status in (200, 204)
+        except Exception as e:
+            logger.error(f"ARI transfer exception: {e}")
+            return False
+
     def _on_user_speech_started(self) -> None:
-        """Fired by Deepgram VAD the millisecond the caller starts talking."""
+        """
+        Fired by Deepgram VAD when sound activity is detected.
+        We do NOT instantly dump seconds of buffered audio on raw VAD trigger alone
+        because speaker echo / acoustic reflection into mic easily trips Deepgram VAD.
+        Instead, we note speech activity and only interrupt if:
+        1. Caller explicitly speaks confirmed words (_on_user_interim_transcript), or
+        2. High audio amplitude occurs consistently.
+        """
         if self.agent_state == "speaking":
+            elapsed_speaking = time.monotonic() - getattr(self, "_speaking_start_time", 0.0)
+            if elapsed_speaking < 1.0:
+                logger.debug(f"⚡ [Barge-In] Ignored onset acoustic reflection ({elapsed_speaking:.2f}s)")
+                return
+            # Mark candidate interruption time; will trigger interrupt if confirmed by words or DTMF
+            self._vad_candidate_at = time.monotonic()
+
+    def _on_user_interim_transcript(self, interim_text: str) -> None:
+        """
+        Fired when Deepgram transcribes interim words while caller is talking.
+        This provides verified speech verification for barge-in interruptions.
+        """
+        words = [w for w in interim_text.strip().split() if w]
+        if self.agent_state == "speaking" and words:
+            # Genuine words spoken by user while agent is talking -> trigger instant barge-in!
+            logger.info(f"⚡ [Barge-In] Caller interrupted with words: '{interim_text}' -> interrupting agent speech.")
             self.interrupt()
 
     def on_dtmf_digit(self, digit: str) -> None:
@@ -408,23 +572,57 @@ class AsteriskVoiceSession:
                     # 2. In-band Goertzel DTMF detection & audio level diagnostics
                     samples = np.frombuffer(payload, dtype=np.int16)
                     self._audio_frames_received = getattr(self, "_audio_frames_received", 0) + 1
+
+                    # Track last time we saw genuine speech (RMS > 30 ≈ background noise level).
+                    # Asterisk's DTX/comfort-noise sends near-zero silence frames interspersed
+                    # with voice — sample every 100 frames but only warn after ≥5s of true silence.
+                    frame_rms = float(np.sqrt(np.mean(samples.astype(np.float32)**2)))
+                    if frame_rms > 30.0:
+                        self._last_speech_at = getattr(self, "_last_speech_at", 0.0)
+                        import time as _time
+                        self._last_speech_at = _time.monotonic()
+
                     if self._audio_frames_received % 100 == 0:  # Every ~2 seconds
-                        rms = float(np.sqrt(np.mean(samples.astype(np.float32)**2)))
                         max_val = int(np.max(np.abs(samples)))
-                        if rms < 10.0:
-                            logger.warning(f"⚠️ [Caller Audio] Received pure silence (RMS={rms:.1f}, Peak={max_val}). Verify MicroSIP microphone is not muted and the correct input device is selected.")
-                        else:
-                            logger.info(f"🎙️ [Caller Audio] Sound detected (RMS={rms:.1f}, Peak={max_val}).")
+                        import time as _time
+                        silence_for = _time.monotonic() - getattr(self, "_last_speech_at", _time.monotonic())
+                        if frame_rms < 10.0 and silence_for >= 5.0:
+                            # Only warn if we have been in true silence for ≥5 consecutive seconds
+                            logger.warning(
+                                f"⚠️ [Caller Audio] No voice detected for {silence_for:.0f}s "
+                                f"(RMS={frame_rms:.1f}, Peak={max_val}). "
+                                "Verify MicroSIP microphone is not muted."
+                            )
+                        elif frame_rms >= 30.0:
+                            logger.info(f"🎙️ [Caller Audio] Sound detected (RMS={frame_rms:.1f}, Peak={max_val}).")
 
-                    digit = self.dtmf_detector.process_block(samples)
-                    if digit:
-                        logger.info(f"🎶 [In-Band DTMF Audio] Detected digit '{digit}' from audio stream")
-                        self.on_dtmf_digit(digit)
+                    # Gate DTMF in-band detection: skip when agent is speaking to prevent
+                    # TTS audio echoing through the microphone from registering false digits.
+                    if self.agent_state != "speaking":
+                        digit = self.dtmf_detector.process_block(samples)
+                        if digit:
+                            logger.info(f"🎶 [In-Band DTMF Audio] Detected digit '{digit}' from audio stream")
+                            self.on_dtmf_digit(digit)
 
-                    # 3. Write to local WAV recording file
+                    # 3. Write to local WAV recording file (clean multi-track mix)
                     if self._wav_writer:
                         try:
-                            self._wav_writer.writeframes(payload)
+                            if self._agent_audio_buffer:
+                                agent_frame = self._agent_audio_buffer.popleft()
+                                if len(agent_frame) == len(payload):
+                                    # If agent is speaking: write agent speech directly to avoid acoustic echo comb-filtering.
+                                    # If caller speaks simultaneously (barge-in overlap, frame_rms > 1200), mix both with headroom.
+                                    if self.agent_state == "speaking" and frame_rms <= 1200.0:
+                                        self._wav_writer.writeframes(agent_frame)
+                                    else:
+                                        u = np.frombuffer(payload, dtype=np.int16).astype(np.float32)
+                                        a = np.frombuffer(agent_frame, dtype=np.int16).astype(np.float32)
+                                        mixed = np.clip(0.7 * u + 0.7 * a, -32768, 32767).astype(np.int16).tobytes()
+                                        self._wav_writer.writeframes(mixed)
+                                else:
+                                    self._wav_writer.writeframes(payload)
+                            else:
+                                self._wav_writer.writeframes(payload)
                         except Exception:
                             pass
 
@@ -452,29 +650,32 @@ class AsteriskVoiceSession:
 
         # 2. Append User Message
         self.chat_ctx.add_message(role="user", content=user_text)
+        self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [User]: {user_text}")
         if rag_context_msg:
             self.chat_ctx.add_message(role="assistant", content=rag_context_msg)
 
-        # 3. Call LLM with Tool Calling Support
+        # 3. Dynamic Goal-Based Tool Filtering (Reduces prompt token count from ~5,500 to ~400)
+        turn_tools = self._get_relevant_tools_for_turn(user_text)
+
+        # 4. Call LLM with Pruned Tool Set
         try:
-            stream = self.llm.chat(chat_ctx=self.chat_ctx, tools=self.active_tools)
+            stream = self.llm.chat(chat_ctx=self.chat_ctx, tools=turn_tools)
             self._update_state("speaking")
 
-            full_reply_text = ""
+            reply_chunks: list[str] = []
             tool_calls_to_run: list[Any] = []
 
             async def _token_generator():
-                nonlocal full_reply_text, tool_calls_to_run
                 async for chunk in stream:
                     if not self.running:
                         break
-                    choices = getattr(chunk, "choices", [])
-                    if not choices:
+                    # LiveKit ChatChunk exposes .delta directly (not .choices[0].delta)
+                    delta = getattr(chunk, "delta", None)
+                    if delta is None:
                         continue
-                    delta = choices[0].delta
                     content = getattr(delta, "content", None)
                     if content:
-                        full_reply_text += content
+                        reply_chunks.append(content)
                         yield content
                     tool_calls = getattr(delta, "tool_calls", None)
                     if tool_calls:
@@ -484,16 +685,45 @@ class AsteriskVoiceSession:
             await self.tts.speak_stream(_token_generator())
             await self.tts.wait_for_playout()
 
+            full_reply_text = "".join(reply_chunks).strip()
             # Record assistant message into history
             if full_reply_text:
                 self.chat_ctx.add_message(role="assistant", content=full_reply_text)
+                self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {full_reply_text}")
 
             # 4. Execute any requested Function Tools
             if tool_calls_to_run:
                 for tc in tool_calls_to_run:
-                    fn_name = getattr(tc.function, "name", None) or getattr(tc, "name", "")
-                    raw_args = getattr(tc.function, "arguments", {}) or getattr(tc, "arguments", {})
-                    args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+                    fn_name = ""
+                    raw_args: Any = {}
+
+                    # Safely extract function name and arguments regardless of whether
+                    # tc is LiveKit FunctionToolCall, OpenAI tool call, or a dictionary.
+                    func = getattr(tc, "function", None) if not isinstance(tc, dict) else tc.get("function")
+                    if func is not None:
+                        if isinstance(func, dict):
+                            fn_name = func.get("name", "")
+                            raw_args = func.get("arguments", {})
+                        else:
+                            fn_name = getattr(func, "name", "")
+                            raw_args = getattr(func, "arguments", {})
+                    elif isinstance(tc, dict):
+                        fn_name = tc.get("name", "")
+                        raw_args = tc.get("arguments", {})
+                    else:
+                        fn_name = getattr(tc, "name", "")
+                        raw_args = getattr(tc, "arguments", {})
+
+                    if isinstance(raw_args, str):
+                        try:
+                            args = json.loads(raw_args) if raw_args.strip() else {}
+                        except Exception as e:
+                            logger.warning(f"Failed to parse tool call arguments '{raw_args}': {e}")
+                            args = {}
+                    elif isinstance(raw_args, dict):
+                        args = raw_args
+                    else:
+                        args = {}
 
                     logger.info(f"🛠️ [Tool Invoking] {fn_name}({args})")
                     tool_fn = self._find_tool_by_name(fn_name)
@@ -501,43 +731,148 @@ class AsteriskVoiceSession:
                         try:
                             # Pass AsteriskRunContext if accepted
                             import inspect
-                            sig = inspect.signature(tool_fn)
+                            target_callable = getattr(tool_fn, "_func", tool_fn)
+                            sig = inspect.signature(target_callable)
                             if "context" in sig.parameters:
-                                res = await tool_fn(**args, context=self.run_ctx)
+                                res = tool_fn(**args, context=self.run_ctx)
                             else:
-                                res = await tool_fn(**args)
+                                res = tool_fn(**args)
+
+                            if asyncio.iscoroutine(res):
+                                res = await res
 
                             logger.info(f"✅ [Tool Result] {fn_name} -> {str(res)[:100]}")
-                            self.chat_ctx.add_message(role="tool", content=str(res))
+                            # LiveKit ChatContext only accepts: system/user/assistant/developer.
+                            # Store tool results as 'assistant' messages with a label prefix.
+                            self.chat_ctx.add_message(
+                                role="assistant",
+                                content=f"[Tool Result: {fn_name}] {res}",
+                            )
 
                             # Trigger follow-up reply from model explaining result
                             followup_stream = self.llm.chat(chat_ctx=self.chat_ctx, tools=[])
+                            followup_chunks: list[str] = []
+                            in_think_block = False
+
                             async def _followup_gen():
+                                nonlocal in_think_block
                                 async for chunk in followup_stream:
                                     if not self.running:
                                         break
-                                    delta = chunk.choices[0].delta
+                                    delta = getattr(chunk, "delta", None)
+                                    if delta is None:
+                                        continue
                                     c = getattr(delta, "content", None)
-                                    if c:
-                                        yield c
+                                    if not c:
+                                        continue
+                                    followup_chunks.append(c)
+
+                                    # Filter out internal <think>...</think> reasoning tags
+                                    if "<think>" in c:
+                                        in_think_block = True
+                                        c = c.split("<think>")[0]
+                                    if "</think>" in c:
+                                        in_think_block = False
+                                        c = c.split("</think>")[-1]
+
+                                    if not in_think_block and c:
+                                        # Filter out accidental tool result echoes
+                                        if not c.startswith("[Tool Result:"):
+                                            yield c
+
                             await self.tts.speak_stream(_followup_gen())
                             await self.tts.wait_for_playout()
 
+                            followup_reply = "".join(followup_chunks).strip()
+                            if followup_reply:
+                                self.chat_ctx.add_message(role="assistant", content=followup_reply)
+                                self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {followup_reply}")
+
                         except Exception as e:
                             logger.error(f"❌ Tool execution failed for {fn_name}: {e}", exc_info=True)
+                    else:
+                        logger.warning(f"⚠️ Tool '{fn_name}' requested by LLM but not found in active tools.")
 
         except Exception as exc:
             logger.error(f"❌ Error during conversation turn: {exc}", exc_info=True)
 
         finally:
-            if self.running and self.agent_state != "speaking":
+            if self.running:
                 self._update_state("listening")
 
+    def _get_relevant_tools_for_turn(self, user_text: str) -> list[Callable]:
+        """
+        Dynamically selects only the relevant tools for this specific conversation turn.
+        Prevents exhausting LLM rate limits (e.g. Groq 7,000 ITPM) by pruning
+        the prompt tool schema from 44 tools (~5,400 tokens) down to 2-4 tools (~400 tokens).
+        """
+        # Always include coordinator transfer & call completion tools
+        baseline_goals = ["g13_coordinator"]
+
+        # 1. Verification Guard:
+        # Check if caller has already confirmed employee identity
+        is_verified = bool(self.verified_employee_id)
+        if not is_verified:
+            msgs = self.chat_ctx.messages() if callable(self.chat_ctx.messages) else self.chat_ctx.messages
+            for msg in msgs:
+                content = str(getattr(msg, "content", "") or "")
+                if "Identity locked to employee" in content or "Your identity is confirmed" in content:
+                    is_verified = True
+                    break
+
+        if not is_verified:
+            # Only provide identity verification + transfer/end call
+            selected = self.voice_controller.session_tools_for_goals("g01_identity", *baseline_goals)
+            logger.info(f"🎯 [Dynamic Tools] Pre-auth turn -> exposing {len(selected)} identity/call tools")
+            return selected
+
+        # 2. Authenticated Intent Routing based on user's spoken words
+        text = user_text.lower()
+        selected_goals = list(baseline_goals)
+
+        # Leave management (balance, application, status)
+        if any(w in text for w in ("leave", "vacation", "sick", "casual", "earned", "balance", "apply", "withdraw", "off")):
+            selected_goals.extend(["g02_leave_balance", "g03_leave_application", "g04_leave_status"])
+
+        # Attendance & Work From Home
+        if any(w in text for w in ("attend", "punch", "regulariz", "swipe", "shift", "late", "wfh", "home", "remote")):
+            selected_goals.extend(["g05_attendance", "g06_wfh"])
+
+        # Payroll / Salary
+        if any(w in text for w in ("salary", "pay", "slip", "payslip", "deduct", "tax", "ctc", "wage")):
+            selected_goals.append("g07_payroll")
+
+        # HR Policies, Grievances, Ticketing, Notice Period
+        if any(w in text for w in ("policy", "policies", "notice", "probation", "handbook", "ticket", "issue", "problem", "grievance", "complaint")):
+            selected_goals.append("g08_hr_policy")
+
+        # Holidays & Calendar
+        if any(w in text for w in ("holiday", "calendar", "festival", "diwali", "pongal", "working day", "off days")):
+            selected_goals.append("g09_calendar")
+
+        # Employee Benefits & Insurance
+        if any(w in text for w in ("benefit", "insurance", "mediclaim", "coverage", "health")):
+            selected_goals.append("g11_employee_benefits")
+
+        # Reminders & Acknowledgements
+        if any(w in text for w in ("remind", "acknowledg", "pending")):
+            selected_goals.append("g10_reminders")
+
+        # Retrieve the filtered tools
+        matched_tools = self.voice_controller.session_tools_for_goals(*selected_goals)
+        logger.info(f"🎯 [Dynamic Tools] Intent matched goals {selected_goals} -> exposing {len(matched_tools)} tools (saving ~5,000 tokens)")
+        return matched_tools
+
     def _find_tool_by_name(self, name: str) -> Optional[Callable]:
-        """Matches tool name to active tool in registry."""
-        for tool in self.active_tools:
+        """Matches tool name to tool in full registry."""
+        tools_pool = getattr(self, "all_tools", self.active_tools)
+        for tool in tools_pool:
             info = getattr(tool, "info", None)
-            tool_name = getattr(info, "name", None) or getattr(tool, "__name__", "")
+            tool_name = (
+                getattr(info, "name", None)
+                or getattr(tool, "__name__", "")
+                or getattr(getattr(tool, "_func", None), "__name__", "")
+            )
             if tool_name == name:
                 return tool
         return None
@@ -549,18 +884,31 @@ class AsteriskVoiceSession:
 
         self.voice_controller.rag_status = "retrieving"
         try:
+            logger.info(f"📚 [RAG Triggered] Searching Knowledge Base for query: '{text}'")
             search_task = asyncio.create_task(self._retriever.search(text, self._rag_config.top_k))
             done, _ = await asyncio.wait({search_task}, timeout=RAG_FILLER_DELAY)
+            filler_handle = None
             if not done:
-                # Play latency filler audio clip
-                self.say("Let me check that policy for you real quick...", allow_interruptions=False)
+                # Play latency filler audio clip so user is not left in dead silence
+                filler_handle = self.say("Let me check that policy for you real quick...", allow_interruptions=False)
 
             result = await asyncio.wait_for(asyncio.shield(search_task), timeout=RAG_TIMEOUT)
+            if filler_handle:
+                try:
+                    await filler_handle.wait_for_playout(timeout=3.0)
+                except Exception:
+                    pass
             snippets = clean_snippets(result, top_k=self._rag_config.top_k, max_chars=RAG_MAX_CONTEXT_CHARS)
-            return build_context_message(snippets, mode=self._rag_config.grounding_mode)
+            msg = build_context_message(snippets, mode=self._rag_config.grounding_mode)
+            if msg:
+                logger.info(f"📚 [RAG Grounded] Injected {len(snippets)} knowledge snippet(s) into context")
+            return msg
         except Exception as e:
             logger.warning(f"RAG search error: {e}")
             return None
+        finally:
+            self.voice_controller.rag_status = "idle"
+
     async def transfer_call(self, target: str) -> bool:
         """Transfers the caller channel to destination endpoint via ARI redirect."""
         endpoint = target if "/" in target else f"PJSIP/{target}"
@@ -599,10 +947,21 @@ class AsteriskVoiceSession:
         # Close AudioSocket writer
         await self.audio_queue.close()
 
+        # Flush any remaining agent speech into recording
+        if self._wav_writer and hasattr(self, "_agent_audio_buffer"):
+            while self._agent_audio_buffer:
+                try:
+                    self._wav_writer.writeframes(self._agent_audio_buffer.popleft())
+                except Exception:
+                    break
+
         # Close local WAV recording
         if self._wav_writer:
             try:
                 self._wav_writer.close()
+                self._wav_writer = None
+                if self._recording_wav_path:
+                    logger.info(f"💾 [Recording] Audio recording saved: {self._recording_wav_path}")
             except Exception:
                 pass
 

@@ -22,7 +22,7 @@ import asyncio
 import logging
 import struct
 import time
-from typing import Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 logger = logging.getLogger("asterisk.audiosocket")
 
@@ -100,11 +100,13 @@ class AudioSocketWriterQueue:
         self.frame_interval = frame_duration_ms / 1000.0  # 0.02s
 
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._pcm_buffer: bytearray = bytearray()
         self._running = True
         self._is_playing = False
         self._playout_done_event = asyncio.Event()
         self._playout_done_event.set()
         self._worker_task: Optional[asyncio.Task] = None
+        self.on_frame_sent: Optional[Any] = None
 
     def start(self) -> None:
         """Starts the background frame delivery loop."""
@@ -113,11 +115,12 @@ class AudioSocketWriterQueue:
 
     @property
     def is_playing(self) -> bool:
-        return self._is_playing or not self._queue.empty()
+        return self._is_playing or not self._queue.empty() or len(self._pcm_buffer) >= self.frame_bytes
 
     def enqueue_pcm(self, pcm_data: bytes) -> None:
         """
-        Slices arbitrary length PCM data into exact 20ms frames and enqueues them.
+        Appends streaming PCM data to the internal buffer and enqueues exact 20ms frames.
+        Maintains audio continuity across chunk boundaries without injecting silence.
         """
         if not pcm_data or not self._running:
             return
@@ -125,19 +128,28 @@ class AudioSocketWriterQueue:
         self._is_playing = True
         self._playout_done_event.clear()
 
-        # Slice into exact frame_bytes chunks
+        self._pcm_buffer.extend(pcm_data)
         step = self.frame_bytes
-        for offset in range(0, len(pcm_data), step):
-            chunk = pcm_data[offset : offset + step]
-            if len(chunk) < step:
-                # Pad final short chunk with silence to maintain 20ms framing
-                chunk = chunk + (b"\x00" * (step - len(chunk)))
-            self._queue.put_nowait(chunk)
+        while len(self._pcm_buffer) >= step:
+            frame = bytes(self._pcm_buffer[:step])
+            del self._pcm_buffer[:step]
+            self._queue.put_nowait(frame)
+
+    def flush(self) -> None:
+        """
+        Pads and flushes any trailing residual samples at the end of speech.
+        """
+        if self._pcm_buffer and self._running:
+            pad_len = self.frame_bytes - len(self._pcm_buffer)
+            frame = bytes(self._pcm_buffer) + (b"\x00" * pad_len)
+            self._pcm_buffer.clear()
+            self._queue.put_nowait(frame)
 
     def interrupt(self) -> None:
         """
         Barge-in: Instantly purges all queued audio frames and stops playback.
         """
+        self._pcm_buffer.clear()
         discarded = 0
         while not self._queue.empty():
             try:
@@ -190,6 +202,11 @@ class AudioSocketWriterQueue:
                 self.writer.write(packet)
                 await self.writer.drain()
                 self._queue.task_done()
+                if self.on_frame_sent is not None:
+                    try:
+                        self.on_frame_sent(frame)
+                    except Exception:
+                        pass
 
                 # Maintain 20ms cadence
                 now = time.monotonic()
