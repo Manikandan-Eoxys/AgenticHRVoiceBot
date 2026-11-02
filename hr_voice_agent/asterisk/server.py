@@ -70,6 +70,12 @@ class AsteriskServer:
         self._server: Optional[asyncio.Server] = None
         self._running = True
 
+    async def _get_http_session(self) -> aiohttp.ClientSession:
+        """Ensures an active aiohttp.ClientSession exists with ARI credentials."""
+        if self.http_session is None or self.http_session.closed:
+            self.http_session = aiohttp.ClientSession(auth=self.auth)
+        return self.http_session
+
     async def start(self) -> None:
         """Starts the AudioSocket TCP server and ARI WebSocket listener."""
         logger.info(f"🚀 Initializing Asterisk Telephony Daemon (App: {ARI_APP_NAME})...")
@@ -87,7 +93,7 @@ class AsteriskServer:
         except Exception as e:
             logger.warning(f"Could not start email approval daemon: {e}")
 
-        self.http_session = aiohttp.ClientSession(auth=self.auth)
+        self.http_session = await self._get_http_session()
 
         # 1. Start AudioSocket TCP server
         self._server = await asyncio.start_server(
@@ -110,8 +116,9 @@ class AsteriskServer:
 
         while self._running:
             try:
+                http_session = await self._get_http_session()
                 logger.info(f"🔌 Connecting to Asterisk ARI WebSocket: {ws_url}")
-                async with self.http_session.ws_connect(ws_url) as ws:
+                async with http_session.ws_connect(ws_url) as ws:
                     logger.info(f"✅ Connected to Asterisk ARI Stasis Application '{ARI_APP_NAME}'")
                     async for msg in ws:
                         if not self._running:
@@ -161,16 +168,18 @@ class AsteriskServer:
         elif event_type == "ChannelDtmfReceived":
             channel_id = event.get("channel", {}).get("id")
             digit = event.get("digit")
-            session = self.active_sessions.get(channel_id)
-            if session:
-                session.on_dtmf_digit(digit)
+            session = self.active_sessions.get(channel_id) if channel_id else None
+            if session and digit is not None:
+                session.on_dtmf_digit(str(digit))
 
     async def _setup_incoming_call(self, channel_id: str, caller_num: str) -> None:
         """Answers channel, creates externalMedia channel pointing to AudioSocket, and mixes them."""
         try:
+            http_session = await self._get_http_session()
+
             # 1. Answer channel
             ans_url = f"{ARI_URL}/channels/{channel_id}/answer"
-            async with self.http_session.post(ans_url) as resp:
+            async with http_session.post(ans_url) as resp:
                 if resp.status not in (200, 204):
                     logger.error(f"Failed to answer channel {channel_id}: {resp.status}")
                     return
@@ -192,7 +201,7 @@ class AsteriskServer:
                 "data": call_uuid,
             }
             logger.info(f"🛠️ Creating Asterisk externalMedia channel for UUID: {call_uuid}")
-            async with self.http_session.post(ext_url, json=payload) as resp:
+            async with http_session.post(ext_url, json=payload) as resp:
                 if resp.status not in (200, 201):
                     body = await resp.text()
                     logger.error(f"Failed to create externalMedia channel: {resp.status} - {body}")
@@ -203,7 +212,7 @@ class AsteriskServer:
             # 4. Create Mixing Bridge
             bridge_url = f"{ARI_URL}/bridges"
             bridge_payload = {"type": "mixing", "name": f"bridge_{call_uuid}"}
-            async with self.http_session.post(bridge_url, json=bridge_payload) as resp:
+            async with http_session.post(bridge_url, json=bridge_payload) as resp:
                 if resp.status not in (200, 201):
                     logger.error(f"Failed to create bridge: {resp.status}")
                     return
@@ -214,7 +223,7 @@ class AsteriskServer:
             # 5. Add caller and externalMedia to bridge
             add_url = f"{ARI_URL}/bridges/{bridge_id}/addChannel"
             params = {"channel": f"{channel_id},{ext_channel_id}"}
-            async with self.http_session.post(add_url, params=params) as resp:
+            async with http_session.post(add_url, params=params) as resp:
                 if resp.status in (200, 204):
                     logger.info(f"✅ [ARI Bridge {bridge_id}] Caller {channel_id} ↔ AudioSocket {ext_channel_id} bridged successfully.")
                 else:
@@ -251,6 +260,7 @@ class AsteriskServer:
             caller_num = self.channel_callers.get(channel_id, "unknown")
 
             # 2. Instantiate and launch isolated voice session for this call
+            http_session = await self._get_http_session()
             session = AsteriskVoiceSession(
                 call_uuid=call_uuid,
                 channel_id=channel_id,
@@ -258,7 +268,7 @@ class AsteriskServer:
                 reader=reader,
                 writer=writer,
                 sample_rate=AST_SAMPLE_RATE,
-                ari_client_session=self.http_session,
+                ari_client_session=http_session,
             )
             self.active_sessions[channel_id] = session
             await session.start()
@@ -274,10 +284,11 @@ class AsteriskServer:
     async def _cleanup_call(self, channel_id: str) -> None:
         """Destroys ARI bridge and active session."""
         bridge_id = self.active_bridges.pop(channel_id, None)
-        if bridge_id and self.http_session:
+        if bridge_id:
             try:
+                http_session = await self._get_http_session()
                 del_url = f"{ARI_URL}/bridges/{bridge_id}"
-                async with self.http_session.delete(del_url) as resp:
+                async with http_session.delete(del_url) as resp:
                     logger.info(f"🧹 Destroyed ARI bridge {bridge_id}: {resp.status}")
             except Exception as e:
                 logger.debug(f"Bridge cleanup notice: {e}")
@@ -292,12 +303,31 @@ class AsteriskServer:
             self.pending_call_uuids.pop(pending_uuid, None)
 
     async def _hangup_channel(self, channel_id: str) -> None:
-        if self.http_session:
+        try:
+            http_session = await self._get_http_session()
+            del_url = f"{ARI_URL}/channels/{channel_id}"
+            await http_session.delete(del_url)
+        except Exception:
+            pass
+
+    async def close(self) -> None:
+        """Closes HTTP session and AudioSocket server cleanly."""
+        self._running = False
+        for chan_id, session in list(self.active_sessions.items()):
             try:
-                del_url = f"{ARI_URL}/channels/{channel_id}"
-                await self.http_session.delete(del_url)
+                await session.hangup()
             except Exception:
                 pass
+        self.active_sessions.clear()
+
+        if self._server:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+
+        if self.http_session and not self.http_session.closed:
+            await self.http_session.close()
+            self.http_session = None
 
 
 def run_asterisk_server() -> None:
