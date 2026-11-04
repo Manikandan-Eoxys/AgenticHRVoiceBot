@@ -39,7 +39,28 @@ import os
 import logging
 from pathlib import Path
  
-import mysql.connector
+import pymysql
+import pymysql.cursors
+from typing import Any, Generator
+from contextlib import contextmanager
+
+class PyMySQLConnectionWrapper:
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+
+    def cursor(self, *args, dictionary: bool = False, **kwargs):
+        if dictionary:
+            return self._conn.cursor(pymysql.cursors.DictCursor)
+        return self._conn.cursor(*args, **kwargs)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
  
 logger = logging.getLogger("db-init")
  
@@ -76,14 +97,16 @@ class DatabaseContext:
 
 
 def get_db_connection():
-    """Returns an active MySQL database connection."""
+    """Returns an active MySQL database connection using PyMySQL."""
     config = {
         "host": os.environ.get("MYSQL_HOST", "localhost"),
         "user": os.environ.get("MYSQL_USER", "hrbot"),
         "password": os.environ.get("MYSQL_PASSWORD", "Eoxys@110"),
         "database": DATABASE_NAME,
+        "autocommit": True,
     }
-    return mysql.connector.connect(**config)
+    raw_conn = pymysql.connect(**config)
+    return PyMySQLConnectionWrapper(raw_conn)
 
 
 @contextmanager
@@ -168,8 +191,8 @@ def create_database(schema_path: Path = SCHEMA_PATH) -> None:
     logger.info("Loaded %d statement(s) from %s", len(statements), schema_path.name)
  
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-    except mysql.connector.Error:
+        conn = PyMySQLConnectionWrapper(pymysql.connect(**DB_CONFIG, autocommit=True))
+    except pymysql.MySQLError:
         logger.exception(
             "Could not connect to MySQL server (host=%s user=%s) — check "
             "MYSQL_HOST / MYSQL_USER / MYSQL_PASSWORD.",
@@ -185,7 +208,7 @@ def create_database(schema_path: Path = SCHEMA_PATH) -> None:
                 if cursor.description:
                     cursor.fetchall()
                 conn.commit()
-            except mysql.connector.Error as e:
+            except pymysql.MySQLError as e:
                 logger.error("Statement %d failed: %s\n---\n%s\n---", i, e, stmt[:300])
                 raise
         logger.info("✅ Database initialised successfully from %s", schema_path.name)
@@ -205,8 +228,8 @@ def run_startup_check() -> None:
     config = {**DB_CONFIG, "database": DATABASE_NAME}
     target = f"{config['host']}/{DATABASE_NAME} as {config['user']}"
     try:
-        conn = mysql.connector.connect(**config)
-    except mysql.connector.Error as e:
+        conn = PyMySQLConnectionWrapper(pymysql.connect(**config, autocommit=True))
+    except pymysql.MySQLError as e:
         logger.error("STARTUP CHECK FAILED — could not reach %s (%s)", target, e)
         return
  

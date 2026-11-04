@@ -8,7 +8,8 @@ Usage:
 
 import os
 import sys
-import mysql.connector
+import pymysql
+import pymysql.cursors
 
 DB_CONFIG = {
     "host": os.environ.get("MYSQL_HOST", "localhost"),
@@ -50,8 +51,8 @@ def print_table(title, rows, columns):
 
 def main():
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-        cur = conn.cursor(dictionary=True)
+        conn = pymysql.connect(**DB_CONFIG, autocommit=True, cursorclass=pymysql.cursors.DictCursor)
+        cur = conn.cursor()
     except Exception as e:
         print(f"❌ Failed to connect to MySQL: {e}")
         return
