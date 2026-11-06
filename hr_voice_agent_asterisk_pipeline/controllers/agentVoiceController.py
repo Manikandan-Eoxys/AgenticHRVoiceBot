@@ -18,6 +18,7 @@ Exports:
 from __future__ import annotations
 
 import os
+import inspect
 import json
 import logging
 import time
@@ -454,7 +455,7 @@ class AsteriskVoiceController:
                     logger.info(f"⏱️ [Asterisk] Telephony caller silent for {idle_for:.1f}s — auto-hangup.")
                     self.on_call_end(self._room_name)
                     if on_hangup:
-                        if asyncio.iscoroutinefunction(on_hangup):
+                        if inspect.iscoroutinefunction(on_hangup):
                             await on_hangup()
                         else:
                             on_hangup()
