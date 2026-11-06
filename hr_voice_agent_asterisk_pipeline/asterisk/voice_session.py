@@ -50,7 +50,7 @@ from config import (
 from prompts import INBOUND_INSTRUCTIONS
 DEEPGRAM_LANGUAGE = os.environ.get("DEEPGRAM_LANGUAGE", "en")
 COORDINATOR_PHONE_NUMBER = os.environ.get("COORDINATOR_PHONE_NUMBER", "+918925355704")
-from controllers.asteriskVoiceController import AsteriskVoiceController, ControllerState
+from controllers.agentVoiceController import AsteriskVoiceController, ControllerState
 from controllers.global_monitor_fsm import report_agent_event
 from ollama_llm import OllamaLLM, FallbackLLM
 from services.rag_retriever_service import (

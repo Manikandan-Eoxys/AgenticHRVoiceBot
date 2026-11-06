@@ -2,8 +2,7 @@
 hr_voice_agent_asterisk_pipeline/controllers/__init__.py
 
 Exports controllers for the Asterisk Telephony pipeline:
-  - asteriskVoiceController.py
-  - agentVoiceController.py
+  - agentVoiceController.py  (AsteriskVoiceController + FSM + aliases)
   - global_monitor_fsm.py
   - agentToolsController.py
   - agentConfigController.py
