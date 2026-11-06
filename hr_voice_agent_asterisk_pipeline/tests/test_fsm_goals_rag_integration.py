@@ -32,11 +32,11 @@ def test_global_monitor_single_instance():
     """Verifies that Global Monitor FSM starts once and stays running."""
     # Start monitor
     start_global_monitor()
-    assert global_monitor_running() is True
+    assert global_monitor_running()
 
     # Calling start a second time should be idempotent (no duplicate threads)
     start_global_monitor()
-    assert global_monitor_running() is True
+    assert global_monitor_running()
 
 
 def test_call_context_isolation():
@@ -53,8 +53,8 @@ def test_call_context_isolation():
     )
 
     # Verify initial states
-    assert ctx1.employee_verified is False
-    assert ctx2.employee_verified is False
+    assert not ctx1.employee_verified
+    assert not ctx2.employee_verified
     assert ctx1.verified_employee_id is None
     assert ctx2.verified_employee_id is None
 
@@ -62,11 +62,11 @@ def test_call_context_isolation():
     ctx1.mark_verified("1002", "Jane Doe", {"dept": "Engineering"})
 
     # Assert Call 1 is verified and Call 2 remains unverified
-    assert ctx1.employee_verified is True
+    assert ctx1.employee_verified
     assert ctx1.verified_employee_id == "1002"
     assert ctx1.employee_name == "Jane Doe"
 
-    assert ctx2.employee_verified is False
+    assert not ctx2.employee_verified
     assert ctx2.verified_employee_id is None
     assert ctx2.employee_name is None
 
@@ -129,14 +129,14 @@ def test_coordinator_transfer_asterisk():
 def test_rag_intent_detection():
     """Verifies RAG intent trigger helper."""
     # Questions that require policy lookup
-    assert needs_rag("What is the maternity leave policy?") is True
-    assert needs_rag("What are the company rules for annual leave?") is True
-    assert needs_rag("Tell me about company health insurance benefits.") is True
+    assert needs_rag("What is the maternity leave policy?")
+    assert needs_rag("What are the company rules for annual leave?")
+    assert needs_rag("Tell me about company health insurance benefits.")
 
     # Simple transactional / smalltalk questions that do not need RAG
-    assert needs_rag("Hello good morning") is False
-    assert needs_rag("Yes") is False
-    assert needs_rag("My employee ID is 1001") is False
+    assert not needs_rag("Hello good morning")
+    assert not needs_rag("Yes")
+    assert not needs_rag("My employee ID is 1001")
 
 
 def test_voice_controller_state_machine_transitions():
@@ -153,7 +153,7 @@ def test_voice_controller_state_machine_transitions():
 
         # Simulate call lifecycle signals
         vc.on_call_start("room_fsm_test")
-        assert vc._call_requested is True
+        assert vc._call_requested
 
         # Participant join requires active session
         vc._active_session = MagicMock()
@@ -164,6 +164,6 @@ def test_voice_controller_state_machine_transitions():
         assert vc._agent_substate == "speaking"
 
         vc.on_call_end("room_fsm_test")
-        assert vc._shutdown_requested is True
+        assert vc._shutdown_requested
 
     asyncio.run(_test())

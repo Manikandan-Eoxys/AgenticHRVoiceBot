@@ -65,7 +65,7 @@ def test_vad_detection():
     voice_frame = (np.sin(2 * np.pi * 300 * t) * 12000).astype(np.int16).tobytes()
 
     # 1. Silence check
-    assert vad.is_speech(silence_frame) is False
+    assert not vad.is_speech(silence_frame)
     assert vad.process_frame(silence_frame) == VadEvent.SILENCE
 
     # 2. First speech frame -> still waiting for start threshold (needs 2 frames)
@@ -105,7 +105,7 @@ def test_audio_pacer_pacing_and_barge_in():
         # Enqueue 10 frames (200ms of audio = 3200 bytes)
         test_pcm = b"\x55" * 3200
         pacer.enqueue_pcm(test_pcm)
-        assert pacer.is_playing is True
+        assert pacer.is_playing
 
         # Let 2-3 frames play out
         await asyncio.sleep(0.06)
@@ -114,10 +114,10 @@ def test_audio_pacer_pacing_and_barge_in():
         # Trigger barge-in interrupt
         purged = pacer.interrupt()
         assert purged > 0
-        assert pacer.is_playing is False
+        assert not pacer.is_playing
 
         # Playout event should be set
-        assert await pacer.wait_for_playout(timeout=0.2) is True
+        assert await pacer.wait_for_playout(timeout=0.2)
 
         await pacer.close()
 

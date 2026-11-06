@@ -158,7 +158,7 @@ async def test_tool_guardrail_timeout_and_circuit_breaker():
         tool_args={},
         caller_employee_id="EMP101",
     )
-    assert res["success"] is False
+    assert not res["success"]
     assert res["error_code"] == "TIMEOUT"
     assert "did not respond" in res["message"]
 
@@ -176,6 +176,6 @@ async def test_tool_guardrail_clean_success():
         tool_args={"leave_type": "Casual"},
         caller_employee_id=None,
     )
-    assert res["success"] is True
+    assert res["success"]
     assert res["status"] == "ok"
     assert res["data"] == "Approved Casual"

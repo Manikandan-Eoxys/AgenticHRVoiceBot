@@ -137,12 +137,12 @@ def test_streaming_tts_speak_and_cancel():
 
         # 1. Speak text
         ok = await tts.speak_text("Hello there!")
-        assert ok is True
+        assert ok
         assert session.sent_audio == [b"pcm_chunk_1", b"pcm_chunk_2"]
 
         # 2. Test cancellation
         tts.cancel()
-        assert session.interrupted is True
+        assert session.interrupted
 
         await tts.close()
 
@@ -192,8 +192,8 @@ def test_conversation_pipeline_turn_and_barge_in():
         # Test barge in
         pipeline.turn_manager.set_bot_speaking(True)
         pipeline._handle_barge_in()
-        assert session.interrupted is True
-        assert pipeline.turn_manager.is_bot_speaking is False
+        assert session.interrupted
+        assert not pipeline.turn_manager.is_bot_speaking
         mock_tts.cancel.assert_called_once()
 
         await pipeline.stop()

@@ -124,7 +124,7 @@ class TestPutRagConfig:
             resp = _client().put("/rag/config/agent-1", json=_valid_kb())
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is True
+        assert data["ok"]
         assert data["agent_id"] == "agent-1"
 
     def test_save_with_bearer_secret_is_encrypted(self):
@@ -283,7 +283,7 @@ class TestTestConnection:
             resp = _client().post("/rag/test-connection", json=self._body())
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is True
+        assert data["ok"]
         assert data["snippet_count"] == 1
         assert data["sample"] is not None
         assert len(data["sample"]) <= 120
@@ -304,7 +304,7 @@ class TestTestConnection:
             resp = _client().post("/rag/test-connection", json=self._body())
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is False
+        assert not data["ok"]
         assert data["snippet_count"] == 0
         assert data["sample"] is None
 
@@ -322,7 +322,7 @@ class TestTestConnection:
             resp = _client().post("/rag/test-connection", json=self._body())
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is False
+        assert not data["ok"]
         assert data["error"] is not None
         mock_instance.aclose.assert_called_once()
 
@@ -338,7 +338,7 @@ class TestTestConnection:
             resp = _client().post("/rag/test-connection", json=body)
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is False
+        assert not data["ok"]
         assert "URL validation" in data["error"]
 
     def test_no_url_returns_422(self):
@@ -397,7 +397,7 @@ class TestTestConnection:
             }
             resp = _client().post("/rag/test-connection", json=body)
         assert resp.status_code == 200
-        assert resp.json()["ok"] is True
+        assert resp.json()["ok"]
 
     def test_sample_truncated_to_120_chars(self):
         """First snippet in response is capped at 120 characters."""

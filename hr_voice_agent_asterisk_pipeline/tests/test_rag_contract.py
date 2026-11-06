@@ -304,22 +304,22 @@ async def test_retriever_circuit_breaker(mock_server):
             return current_time
 
         with patch("services.rag_retriever_service.time.monotonic", side_effect=fake_monotonic):
-            assert retriever.is_open is False
+            assert not retriever.is_open
 
             # Failure 1
             with pytest.raises(aiohttp.ClientResponseError):
                 await retriever.search("fail 1")
-            assert retriever.is_open is False
+            assert not retriever.is_open
 
             # Failure 2
             with pytest.raises(aiohttp.ClientResponseError):
                 await retriever.search("fail 2")
-            assert retriever.is_open is False
+            assert not retriever.is_open
 
             # Failure 3 -> should trip breaker
             with pytest.raises(aiohttp.ClientResponseError):
                 await retriever.search("fail 3")
-            assert retriever.is_open is True
+            assert retriever.is_open
 
             # 4th call: circuit breaker is open -> returns [] immediately without calling server
             suppressed = await retriever.search("while open")
@@ -327,13 +327,13 @@ async def test_retriever_circuit_breaker(mock_server):
 
             # Advance time past 60s cooldown (e.g. +61 seconds)
             current_time += 61.0
-            assert retriever.is_open is False
+            assert not retriever.is_open
 
             # Point to healthy endpoint /ok; retrieval should recover and succeed
             retriever.config.url = f"{mock_server}/ok"
             recovered = await retriever.search("recovered query")
             assert len(recovered) == 3
-            assert retriever.is_open is False
+            assert not retriever.is_open
     finally:
         await retriever.aclose()
 

@@ -117,7 +117,7 @@ def test_ari_client_rest_operations():
             mock_post.return_value.__aenter__.return_value = mock_resp
 
             ans_ok = await client.answer_channel("chan_123")
-            assert ans_ok is True
+            assert ans_ok
             mock_post.assert_called_with("http://test-asterisk:8088/ari/channels/chan_123/answer")
 
             # 2. Create mixing bridge
@@ -135,7 +135,7 @@ def test_ari_client_rest_operations():
             mock_post.return_value.__aenter__.return_value = mock_add_resp
 
             add_ok = await client.add_channel_to_bridge("b_123", ["chan_1", "ext_1"])
-            assert add_ok is True
+            assert add_ok
 
             # 4. Hangup channel
             mock_del_resp = AsyncMock()
@@ -143,11 +143,11 @@ def test_ari_client_rest_operations():
             mock_delete.return_value.__aenter__.return_value = mock_del_resp
 
             hangup_ok = await client.hangup_channel("chan_123")
-            assert hangup_ok is True
+            assert hangup_ok
 
             # 5. Destroy bridge
             destroy_ok = await client.destroy_bridge("b_123")
-            assert destroy_ok is True
+            assert destroy_ok
 
         await client.close()
 
@@ -180,7 +180,7 @@ def test_asterisk_telephony_session_lifecycle():
             external_channel_id="ext-012",
         )
 
-        assert session.is_active is True
+        assert session.is_active
         assert session.call_id == "call-uuid-123"
         assert session.caller_number == "9876543210"
 
@@ -192,7 +192,7 @@ def test_asterisk_telephony_session_lifecycle():
 
         # Test transfer while call is active
         transfer_ok = await session.transfer_call("1001")
-        assert transfer_ok is True
+        assert transfer_ok
         mock_ari.transfer_channel.assert_called_with("chan-456", "PJSIP/1001")
 
         # Feed audio frame into reader, followed by hangup
@@ -209,7 +209,7 @@ def test_asterisk_telephony_session_lifecycle():
 
         # Test hangup and idempotent teardown
         await session.hangup()
-        assert session.is_active is False
+        assert not session.is_active
         mock_ari.hangup_channel.assert_any_call("chan-456")
         mock_ari.hangup_channel.assert_any_call("ext-012")
         mock_ari.destroy_bridge.assert_called_with("bridge-789")

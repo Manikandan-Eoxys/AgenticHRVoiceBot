@@ -92,8 +92,8 @@ def test_asterisk_config_validation():
          patch("asterisk_main.ARI_USER", "asterisk"), \
          patch("asterisk_main.ARI_PASSWORD", "secret"), \
          patch("asterisk_main.DEEPGRAM_API_KEY", "dg-test-key"):
-        assert validate_config() is True
+        assert validate_config()
 
     # When key is missing
     with patch("asterisk_main.DEEPGRAM_API_KEY", ""):
-        assert validate_config() is False
+        assert not validate_config()
