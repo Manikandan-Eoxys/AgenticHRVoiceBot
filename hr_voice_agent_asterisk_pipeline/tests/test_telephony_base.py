@@ -59,7 +59,7 @@ class MockTelephonySession(BaseTelephonySession):
 def test_base_telephony_session_interface():
     async def _test():
         session = MockTelephonySession(call_id="call_abc", caller_number="9876543210")
-        assert session.is_active
+        assert session.is_active is True
         assert session.call_id == "call_abc"
         assert session.caller_number == "9876543210"
 
@@ -75,14 +75,14 @@ def test_base_telephony_session_interface():
 
         # Interrupt
         session.interrupt_speech()
-        assert session.interrupted
+        assert session.interrupted is True
 
         # Send DTMF
-        assert await session.send_dtmf("123")
+        assert await session.send_dtmf("123") is True
         assert session.dtmf_sent == ["123"]
 
         # Transfer
-        assert await session.transfer_call("PJSIP/coordinator")
+        assert await session.transfer_call("PJSIP/coordinator") is True
         assert session.transferred_to == "PJSIP/coordinator"
 
         # Inbound audio stream

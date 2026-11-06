@@ -1,5 +1,5 @@
 """
-hr_voice_agent/asterisk_main.py
+hr_voice_agent_asterisk_pipeline/agent.py
 
 Asterisk ARI + AudioSocket Telephony Daemon Entrypoint
 ======================================================
@@ -59,7 +59,7 @@ from goals.email_approval import start_email_approval_daemon
 from services.monitoring_handler import install_monitoring_handler
 from asterisk.server import AsteriskServer
 
-logger = logging.getLogger("asterisk_main")
+logger = logging.getLogger("agent")
 
 
 def validate_config() -> bool:

@@ -15,7 +15,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from telephony.dtmf import DtmfBuffer
-from asterisk_main import validate_config
+from agent import validate_config
 
 
 def test_dtmf_buffer_length_trigger():
@@ -88,12 +88,12 @@ def test_dtmf_wait_for_id():
 
 def test_asterisk_config_validation():
     # When config is present
-    with patch("asterisk_main.ARI_URL", "http://127.0.0.1:8088/ari"), \
-         patch("asterisk_main.ARI_USER", "asterisk"), \
-         patch("asterisk_main.ARI_PASSWORD", "secret"), \
-         patch("asterisk_main.DEEPGRAM_API_KEY", "dg-test-key"):
+    with patch("agent.ARI_URL", "http://127.0.0.1:8088/ari"), \
+         patch("agent.ARI_USER", "asterisk"), \
+         patch("agent.ARI_PASSWORD", "secret"), \
+         patch("agent.DEEPGRAM_API_KEY", "dg-test-key"):
         assert validate_config()
 
     # When key is missing
-    with patch("asterisk_main.DEEPGRAM_API_KEY", ""):
+    with patch("agent.DEEPGRAM_API_KEY", ""):
         assert not validate_config()

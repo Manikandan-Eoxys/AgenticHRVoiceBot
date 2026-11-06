@@ -51,7 +51,7 @@ def _start_email_approval_daemon():
 def main():
     _start_email_approval_daemon()
     logger.info("☎️ [Mode: ASTERISK] Starting Asterisk ARI + AudioSocket Telephony Daemon...")
-    from asterisk_main import run
+    from agent import run
     run()
 
 
