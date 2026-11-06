@@ -121,10 +121,7 @@ class AudioPacer:
     async def _send_frame(self, frame: bytes) -> None:
         if isinstance(self.sink, asyncio.StreamWriter):
             # Encode as AudioSocket audio frame if writing to stream
-            try:
-                from telephony.audiosocket import encode_audio_frame
-            except ImportError:
-                from hr_voice_agent.telephony.audiosocket import encode_audio_frame
+            from telephony.audiosocket import encode_audio_frame
             self.sink.write(encode_audio_frame(frame))
             await self.sink.drain()
         elif callable(self.sink):

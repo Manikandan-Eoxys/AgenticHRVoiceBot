@@ -301,10 +301,7 @@ class AsteriskVoiceSession(BaseTelephonySession):
         self.verified_employee_id: Optional[str] = None
 
         # Call-specific isolated context
-        try:
-            from telephony.context import CallContext
-        except ImportError:
-            from hr_voice_agent.telephony.context import CallContext
+        from telephony.context import CallContext
         self.call_context = CallContext(
             call_id=self.call_uuid,
             caller_number=self.caller_id,

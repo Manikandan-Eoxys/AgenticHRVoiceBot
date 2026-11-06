@@ -1,19 +1,13 @@
 """
-hr_voice_agent/pipeline/__init__.py
+hr_voice_agent_asterisk_pipeline/pipeline/__init__.py
 
 Audio & conversation processing pipeline: STT, VAD, Turn Management, Streaming TTS, and Conversation Loop.
 """
 
-try:
-    from .stt_deepgram import DeepgramStreamingSTT
-    from .turn_manager import TurnManager, TurnEvent
-    from .tts_stream import StreamingTTS
-    from .conversation_loop import ConversationPipeline
-except ImportError:
-    from hr_voice_agent.pipeline.stt_deepgram import DeepgramStreamingSTT
-    from hr_voice_agent.pipeline.turn_manager import TurnManager, TurnEvent
-    from hr_voice_agent.pipeline.tts_stream import StreamingTTS
-    from hr_voice_agent.pipeline.conversation_loop import ConversationPipeline
+from .stt_deepgram import DeepgramStreamingSTT
+from .turn_manager import TurnManager, TurnEvent
+from .tts_stream import StreamingTTS
+from .conversation_loop import ConversationPipeline
 
 __all__ = [
     "DeepgramStreamingSTT",

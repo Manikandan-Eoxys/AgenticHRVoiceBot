@@ -15,16 +15,10 @@ import logging
 from collections.abc import AsyncIterator as AsyncIteratorABC
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
-try:
-    from telephony.base import BaseTelephonySession
-    from pipeline.stt_deepgram import DeepgramStreamingSTT
-    from pipeline.turn_manager import TurnManager, TurnEvent
-    from pipeline.tts_stream import StreamingTTS
-except ImportError:
-    from hr_voice_agent.telephony.base import BaseTelephonySession
-    from hr_voice_agent.pipeline.stt_deepgram import DeepgramStreamingSTT
-    from hr_voice_agent.pipeline.turn_manager import TurnManager, TurnEvent
-    from hr_voice_agent.pipeline.tts_stream import StreamingTTS
+from telephony.base import BaseTelephonySession
+from pipeline.stt_deepgram import DeepgramStreamingSTT
+from pipeline.turn_manager import TurnManager, TurnEvent
+from pipeline.tts_stream import StreamingTTS
 
 logger = logging.getLogger("pipeline.conversation")
 

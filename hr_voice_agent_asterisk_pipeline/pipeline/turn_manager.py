@@ -15,10 +15,7 @@ import logging
 import time
 from typing import Callable, List, Optional
 
-try:
-    from audio.vad import VoiceActivityDetector, VadEvent
-except ImportError:
-    from hr_voice_agent.audio.vad import VoiceActivityDetector, VadEvent
+from audio.vad import VoiceActivityDetector, VadEvent
 
 logger = logging.getLogger("pipeline.turn_manager")
 

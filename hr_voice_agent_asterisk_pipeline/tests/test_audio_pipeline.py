@@ -9,9 +9,9 @@ import time
 import numpy as np
 import pytest
 
-from hr_voice_agent.audio.resample import resample_pcm, Resampler, slice_frames
-from hr_voice_agent.audio.vad import VoiceActivityDetector, VadState, VadEvent
-from hr_voice_agent.audio.pacer import AudioPacer
+from audio.resample import resample_pcm, Resampler, slice_frames
+from audio.vad import VoiceActivityDetector, VadState, VadEvent
+from audio.pacer import AudioPacer
 
 
 def test_resample_pcm():
