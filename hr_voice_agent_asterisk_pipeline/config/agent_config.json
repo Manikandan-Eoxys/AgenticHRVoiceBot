@@ -1,0 +1,164 @@
+{
+  "schemaVersion": "1.0.0",
+  "agentId": "hr_voice_agent",
+  "agentName": "HR Voice Assistant",
+  "description": "Enterprise HR Voice Agent supporting employee inquiries, leave applications, attendance, and benefits.",
+  "status": "active",
+  "voice": {
+    "llmProvider": "ollama",
+    "llmModel": "google/gemma-4-31b-it",
+    "llmEndpoint": "http://localhost:11434/v1",
+    "sttProvider": "deepgram",
+    "sttLanguage": "en",
+    "ttsProvider": "cartesia",
+    "ttsModel": "cartesia/sonic-3",
+    "ttsVoice": "ec1e269e-9ca0-402f-8a18-58e0e022355a",
+    "temperature": 0.7
+  },
+  "telephony": {
+    "outboundTrunkId": "ST_ZoFAnNLxoPce",
+    "coordinatorPhone": "+918925355704",
+    "sipCallerId": "+918031451001",
+    "inactivityTimeoutSec": 60.0,
+    "dtmfFallback": true
+  },
+  "memory": {
+    "conversationWindow": 10,
+    "enableScratchpad": true
+  },
+  "knowledgeBase": {
+    "enabled": false,
+    "ragEndpoint": "",
+    "similarityThreshold": 0.75
+  },
+  "goals": [
+    {
+      "id": "g01_identity",
+      "name": "Identity Verification",
+      "description": "Verifies caller's 4-digit employee ID and locks session.",
+      "trigger_phrases": ["employee id", "my id is", "verify identity", "who am i"],
+      "enabled": true
+    },
+    {
+      "id": "g02_leave_balance",
+      "name": "Leave Balance Inquiry",
+      "description": "Check remaining leave balances by type or across all categories.",
+      "trigger_phrases": ["leave balance", "how many leaves", "check my leave", "casual leave balance"],
+      "enabled": true
+    },
+    {
+      "id": "g03_leave_application",
+      "name": "Leave Application",
+      "description": "Applies for leave with date validation and manager email notification.",
+      "trigger_phrases": ["apply leave", "take leave", "request leave", "i want leave"],
+      "enabled": true
+    },
+    {
+      "id": "g04_leave_status",
+      "name": "Leave Request Status",
+      "description": "Checks status of pending leave requests and sends manager reminders.",
+      "trigger_phrases": ["leave status", "leave approved", "is my leave approved"],
+      "enabled": true
+    },
+    {
+      "id": "g05_attendance",
+      "name": "Attendance & Punch Status",
+      "description": "Checks punch in/out timestamps, daily attendance, and late marks.",
+      "trigger_phrases": ["attendance", "did i punch in", "punch status", "late mark"],
+      "enabled": true
+    },
+    {
+      "id": "g06_wfh",
+      "name": "Work From Home Request",
+      "description": "Checks WFH eligibility and logs work from home requests.",
+      "trigger_phrases": ["work from home", "wfh", "remote work", "work remotely"],
+      "enabled": true
+    },
+    {
+      "id": "g07_payroll",
+      "name": "Payroll & Payslip Inquiry",
+      "description": "Provides salary credit dates, salary structure info, and tax deductions.",
+      "trigger_phrases": ["salary", "payslip", "when will salary credit", "pf deduction"],
+      "enabled": true
+    },
+    {
+      "id": "g08_hr_policy",
+      "name": "HR Policy & Grievance Tickets",
+      "description": "Answers HR policy questions and files grievance tickets.",
+      "trigger_phrases": ["policy", "maternity policy", "notice period", "raise ticket", "complaint"],
+      "enabled": true
+    },
+    {
+      "id": "g09_calendar",
+      "name": "Company Calendar & Holidays",
+      "description": "Inquires about upcoming company holidays and calendar events.",
+      "trigger_phrases": ["holiday", "is tomorrow a holiday", "upcoming holidays", "diwali holiday"],
+      "enabled": true
+    },
+    {
+      "id": "g10_reminders",
+      "name": "Scheduled Reminders",
+      "description": "Schedules personalized HR follow-ups and notifications for employees.",
+      "trigger_phrases": ["remind me", "set reminder", "notify me"],
+      "enabled": true
+    },
+    {
+      "id": "g11_employee_benefits",
+      "name": "Employee Benefits & Insurance",
+      "description": "Inquires about company health insurance plans and welfare schemes.",
+      "trigger_phrases": ["insurance", "health policy", "medical claim", "benefits"],
+      "enabled": true
+    },
+    {
+      "id": "g12_leave_verification_outbound",
+      "name": "Outbound Leave Verification",
+      "description": "Conducts outbound calls to confirm emergency leave requests.",
+      "trigger_phrases": ["verify leave request", "confirm leave call"],
+      "enabled": true
+    }
+  ],
+  "actions": [
+    {
+      "id": "act_01_get_emp",
+      "goalId": "g01_identity",
+      "functionName": "get_employee_by_id",
+      "trigger": "Caller speaks or enters employee ID",
+      "instruction": "Look up employee details from database",
+      "parameters": {"employee_id": "string"},
+      "enabled": true,
+      "dataSource": {
+        "sourceType": "sql_table",
+        "tableName": "employees",
+        "columns": ["employee_id", "full_name", "gender", "email", "phone_number"],
+        "filterColumn": "employee_id"
+      }
+    },
+    {
+      "id": "act_02_confirm_id",
+      "goalId": "g01_identity",
+      "functionName": "confirm_employee_identity",
+      "trigger": "Caller confirms readback name matches their identity",
+      "instruction": "Lock session to employee ID",
+      "parameters": {"employee_id": "string"},
+      "enabled": true,
+      "dataSource": {
+        "sourceType": "none"
+      }
+    },
+    {
+      "id": "act_03_leave_bal",
+      "goalId": "g02_leave_balance",
+      "functionName": "get_leave_balance",
+      "trigger": "Caller asks for specific leave type balance",
+      "instruction": "Fetch leave balance from DB",
+      "parameters": {"employee_id": "string", "leave_type": "string"},
+      "enabled": true,
+      "dataSource": {
+        "sourceType": "sql_table",
+        "tableName": "leave_balances",
+        "columns": ["leave_type", "total_days", "used_days"],
+        "filterColumn": "employee_id"
+      }
+    }
+  ]
+}
