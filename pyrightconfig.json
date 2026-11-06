@@ -1,5 +1,8 @@
 {
-  "extraPaths": ["hr_voice_agent"],
+  "extraPaths": [
+    "hr_voice_agent_asterisk_pipeline",
+    "hr_voice_agent_livekit_pipeline"
+  ],
   "venvPath": ".",
   "venv": ".venv",
   "reportMissingImports": true,
