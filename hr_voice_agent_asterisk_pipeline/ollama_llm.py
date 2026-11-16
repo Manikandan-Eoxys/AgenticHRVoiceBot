@@ -59,6 +59,7 @@ import json       # convert between Python dicts and JSON text
 import logging    # write log lines to the terminal
 import time       # measure how long requests take
 import uuid       # generate unique request / tool-call ids
+from typing import Any, Callable, List, Optional
 
 import aiohttp    # async HTTP client, used to call Ollama's web API
 
@@ -481,17 +482,19 @@ class OllamaLLM(LLM):
     def chat(
         self,
         *,
-        chat_ctx: ChatContext,   # conversation history
-        tools=None,              # tools the model may call
-        conn_options: APIConnectOptions = APIConnectOptions(
-            max_retry=2,          # retry up to 2 times on failure
-            retry_interval=1.0,   # wait 1 second between retries
-            timeout=60.0,   # override default 10s — qwen2.5:3b  needs up to 60s cold
-        ),
-        **kwargs,                # extra options LiveKit may pass; ignored here
-    ) -> OllamaLLMStream:
-        """Called by LiveKit once per LLM turn. Returns a stream object;
-        LiveKit then runs its _run() method to get the answer."""
+        chat_ctx: ChatContext,
+        tools: Optional[List[Callable]] = None,
+        conn_options: Optional[APIConnectOptions] = None,
+        **kwargs: Any,
+    ) -> LLMStream:
+        """Called once per LLM turn. Returns a stream object;
+        the session then runs its _run() method to get the answer."""
+        if conn_options is None:
+            conn_options = APIConnectOptions(
+                max_retry=2,          # retry up to 2 times on failure
+                retry_interval=1.0,   # wait 1 second between retries
+                timeout=60.0,         # override default 10s — qwen needs up to 60s cold
+            )
         return OllamaLLMStream(
             self,
             chat_ctx=chat_ctx,
@@ -565,9 +568,10 @@ class FallbackLLMStream(LLMStream):
         if isinstance(exc, _TRANSIENT_EXCEPTIONS):
             return True
         # Check 2: HTTP-level 429 (too many requests) or 5xx (server error)
-        # from LiveKit's APIStatusError
+        # from APIStatusError
         if isinstance(exc, APIStatusError):
-            return exc.status_code == 429 or exc.status_code >= 500  # type: ignore[attr-defined]
+            code = getattr(exc, "status_code", 0)
+            return code == 429 or code >= 500
         # Check 3: some providers wrap a 429 inside a plain message, so search the text.
         msg = str(exc).lower()
         if "429" in msg or "rate limit" in msg or "quota" in msg or "too many requests" in msg:
@@ -687,12 +691,14 @@ class FallbackLLM(LLM):
         self,
         *,
         chat_ctx: ChatContext,
-        tools=None,
-        conn_options: APIConnectOptions = APIConnectOptions(),
-        **kwargs,
+        tools: Optional[List[Callable]] = None,
+        conn_options: Optional[APIConnectOptions] = None,
+        **kwargs: Any,
     ) -> LLMStream:
-        """Called by LiveKit once per LLM turn. Returns a FallbackLLMStream,
+        """Called once per LLM turn. Returns a FallbackLLMStream,
         whose _run() decides between the cloud LLM and Ollama."""
+        if conn_options is None:
+            conn_options = APIConnectOptions()
         return FallbackLLMStream(
             self,
             chat_ctx=chat_ctx,

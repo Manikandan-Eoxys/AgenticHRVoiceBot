@@ -12,7 +12,7 @@ import inspect
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar, Union
 
 logger = logging.getLogger("asterisk.llm")
 
@@ -21,13 +21,18 @@ logger = logging.getLogger("asterisk.llm")
 # Exceptions
 # ---------------------------------------------------------------------------
 class APIConnectionError(Exception):
-    pass
+    def __init__(self, message: str = "", *args: Any, **kwargs: Any):
+        super().__init__(message, *args)
 
 class APITimeoutError(Exception):
-    pass
+    def __init__(self, message: str = "", retryable: bool = True, *args: Any, **kwargs: Any):
+        super().__init__(message, *args)
+        self.retryable = retryable
 
 class APIStatusError(Exception):
-    pass
+    def __init__(self, message: str, status_code: int = 500):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 # ---------------------------------------------------------------------------
@@ -131,12 +136,29 @@ class ChatContext:
 # ---------------------------------------------------------------------------
 @dataclass
 class FunctionToolCall:
-    id: str
-    function: Any
+    id: str = ""
+    function: Any = None
+    name: str = ""
+    arguments: Union[str, Dict[str, Any]] = ""
+    call_id: str = ""
+
+    def __post_init__(self):
+        if not self.id and self.call_id:
+            self.id = self.call_id
+        elif not self.call_id and self.id:
+            self.call_id = self.id
+        if self.function and not self.name:
+            if isinstance(self.function, dict):
+                self.name = self.function.get("name", "")
+                self.arguments = self.function.get("arguments", "")
+            else:
+                self.name = getattr(self.function, "name", "")
+                self.arguments = getattr(self.function, "arguments", "")
 
 
 @dataclass
 class ChoiceDelta:
+    role: Optional[str] = None
     content: Optional[str] = None
     tool_calls: Optional[List[Any]] = None
 
@@ -150,7 +172,8 @@ class CompletionUsage:
 
 @dataclass
 class ChatChunk:
-    delta: ChoiceDelta = field(default_factory=ChoiceDelta)
+    id: Optional[str] = None
+    delta: Optional[ChoiceDelta] = None
     usage: Optional[CompletionUsage] = None
 
 
@@ -207,39 +230,88 @@ class ToolContext:
 # ---------------------------------------------------------------------------
 class LLM:
     """Base abstract LLM for Asterisk."""
+    api_key: Optional[str] = None
+    base_url: str = ""
+
+    @property
+    def model(self) -> str:
+        return getattr(self, "_model", "")
+
     def chat(
         self,
         *,
         chat_ctx: ChatContext,
         tools: Optional[List[Callable]] = None,
         conn_options: Optional[APIConnectOptions] = None,
+        **kwargs: Any,
     ) -> "LLMStream":
         raise NotImplementedError
 
 
-class LLMStream:
+class _EventChannel:
+    """Channel helper matching LiveKit's _event_ch.send_nowait interface."""
+    def __init__(self, queue: asyncio.Queue):
+        self._queue = queue
+
+    def send_nowait(self, item: Any) -> None:
+        self._queue.put_nowait(item)
+
+    async def send(self, item: Any) -> None:
+        await self._queue.put(item)
+
+
+LLMType = TypeVar("LLMType", bound="LLM")
+
+
+class LLMStream(Generic[LLMType]):
     """Base async stream for Asterisk LLM generation."""
     def __init__(
         self,
-        llm: LLM,
+        llm: LLMType,
         *,
         chat_ctx: ChatContext,
         tools: Optional[List[Callable]] = None,
         conn_options: Optional[APIConnectOptions] = None,
     ):
-        self._llm = llm
+        self._llm: LLMType = llm
         self._chat_ctx = chat_ctx
         self._tools = tools or []
         self._conn_options = conn_options or APIConnectOptions()
+        self._queue: asyncio.Queue[Any] = asyncio.Queue()
+        self._event_ch = _EventChannel(self._queue)
+        self._started = False
+        self._task: Optional[asyncio.Task] = None
+
+    async def _run(self) -> None:
+        raise NotImplementedError
+
+    async def _run_wrapper(self) -> None:
+        try:
+            await self._run()
+        except Exception as exc:
+            logger.error(f"[{self.__class__.__name__}] Stream error: {exc}")
+            await self._queue.put(exc)
+        finally:
+            await self._queue.put(None)
 
     def __aiter__(self):
+        if not self._started:
+            self._started = True
+            self._task = asyncio.create_task(self._run_wrapper())
         return self
 
     async def __anext__(self) -> ChatChunk:
-        raise StopAsyncIteration
+        if not self._started:
+            self.__aiter__()
+        item = await self._queue.get()
+        if item is None:
+            raise StopAsyncIteration
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
-class OpenAICompatibleStream(LLMStream):
+class OpenAICompatibleStream(LLMStream["OpenAICompatibleLLM"]):
     """Streams ChatChunk objects from OpenAI-compatible cloud endpoints (OpenRouter, Groq)."""
 
     def __init__(
@@ -251,83 +323,86 @@ class OpenAICompatibleStream(LLMStream):
         conn_options: Optional[APIConnectOptions] = None,
     ):
         super().__init__(llm, chat_ctx=chat_ctx, tools=tools, conn_options=conn_options)
-        self._queue: asyncio.Queue[Optional[ChatChunk]] = asyncio.Queue()
-        self._started = False
-        self._task: Optional[asyncio.Task] = None
 
     async def _run(self) -> None:
         import aiohttp
-        try:
-            url = f"{self._llm.base_url}/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {self._llm.api_key}",
-                "Content-Type": "application/json",
-            }
-            messages, _ = self._chat_ctx.to_provider_format("openai")
-            payload: Dict[str, Any] = {
-                "model": self._llm.model,
-                "messages": messages,
-                "stream": True,
-            }
-            if self._tools:
-                tools_schema = ToolContext(self._tools).parse_function_tools("openai")
-                if tools_schema:
-                    payload["tools"] = tools_schema
+        url = f"{self._llm.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self._llm.api_key}",
+            "Content-Type": "application/json",
+        }
+        messages, _ = self._chat_ctx.to_provider_format("openai")
+        payload: Dict[str, Any] = {
+            "model": self._llm.model,
+            "messages": messages,
+            "stream": True,
+        }
+        if self._tools:
+            tools_schema = ToolContext(self._tools).parse_function_tools("openai")
+            if tools_schema:
+                payload["tools"] = tools_schema
 
-            timeout = aiohttp.ClientTimeout(total=self._conn_options.timeout)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, headers=headers, json=payload) as resp:
-                    if resp.status >= 400:
-                        err_text = await resp.text()
-                        raise APIStatusError(f"HTTP {resp.status}: {err_text}")
-                    async for line in resp.content:
-                        line_str = line.decode("utf-8").strip()
-                        if not line_str.startswith("data:"):
+        timeout = aiohttp.ClientTimeout(total=self._conn_options.timeout)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                if resp.status >= 400:
+                    err_text = await resp.text()
+                    raise APIStatusError(f"HTTP {resp.status}: {err_text}", status_code=resp.status)
+                accumulated_tool_calls: Dict[int, Dict[str, Any]] = {}
+                async for line in resp.content:
+                    line_str = line.decode("utf-8").strip()
+                    if not line_str.startswith("data:"):
+                        continue
+                    data_str = line_str[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        parsed = json.loads(data_str)
+                        choices = parsed.get("choices", [])
+                        if not choices:
                             continue
-                        data_str = line_str[5:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            parsed = json.loads(data_str)
-                            choices = parsed.get("choices", [])
-                            if not choices:
-                                continue
-                            delta_dict = choices[0].get("delta", {})
-                            content = delta_dict.get("content")
-                            tool_calls = delta_dict.get("tool_calls")
-                            if content or tool_calls:
-                                chunk = ChatChunk(delta=ChoiceDelta(content=content, tool_calls=tool_calls))
-                                await self._queue.put(chunk)
-                        except Exception:
-                            continue
-        except Exception as exc:
-            logger.error(f"[OpenAICompatibleStream] Error: {exc}")
-            raise exc
-        finally:
-            await self._queue.put(None)
+                        delta_dict = choices[0].get("delta", {})
+                        content = delta_dict.get("content")
+                        tool_calls = delta_dict.get("tool_calls")
+                        if content:
+                            chunk = ChatChunk(delta=ChoiceDelta(content=content))
+                            await self._queue.put(chunk)
+                        if tool_calls:
+                            for tc in tool_calls:
+                                idx = tc.get("index", 0)
+                                if idx not in accumulated_tool_calls:
+                                    accumulated_tool_calls[idx] = {
+                                        "id": tc.get("id", ""),
+                                        "type": "function",
+                                        "function": {"name": "", "arguments": ""},
+                                    }
+                                if tc.get("id"):
+                                    accumulated_tool_calls[idx]["id"] = tc["id"]
+                                fn = tc.get("function", {})
+                                if fn.get("name"):
+                                    accumulated_tool_calls[idx]["function"]["name"] += fn["name"]
+                                if fn.get("arguments"):
+                                    accumulated_tool_calls[idx]["function"]["arguments"] += fn["arguments"]
+                    except Exception:
+                        continue
 
-    def __aiter__(self):
-        if not self._started:
-            self._started = True
-            self._task = asyncio.create_task(self._run())
-        return self
-
-    async def __anext__(self) -> ChatChunk:
-        if not self._started:
-            self.__aiter__()
-        chunk = await self._queue.get()
-        if chunk is None:
-            raise StopAsyncIteration
-        return chunk
+                if accumulated_tool_calls:
+                    complete_calls = list(accumulated_tool_calls.values())
+                    chunk = ChatChunk(delta=ChoiceDelta(tool_calls=complete_calls))
+                    await self._queue.put(chunk)
 
 
 class OpenAICompatibleLLM(LLM):
     """OpenAI-compatible cloud LLM (OpenRouter, Groq, OpenAI)."""
 
     def __init__(self, model: str, api_key: str, base_url: str = "https://api.openai.com/v1"):
-        self.model = model
+        self._model = model
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+
+    @property
+    def model(self) -> str:
+        return self._model
 
     def chat(
         self,
@@ -335,5 +410,6 @@ class OpenAICompatibleLLM(LLM):
         chat_ctx: ChatContext,
         tools: Optional[List[Callable]] = None,
         conn_options: Optional[APIConnectOptions] = None,
+        **kwargs: Any,
     ) -> OpenAICompatibleStream:
         return OpenAICompatibleStream(self, chat_ctx=chat_ctx, tools=tools, conn_options=conn_options)

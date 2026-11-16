@@ -246,129 +246,240 @@ class AsteriskVoiceController:
         if self._fsm_task is None or self._fsm_task.done():
             self._fsm_task = asyncio.create_task(self.run_loop(), name="AsteriskVoiceControllerFSM")
 
-    async def run_state_machine(self) -> None:
-        """
-        Executes a single step / tick of the Asterisk 12-state FSM.
-        Evaluates current state logic, determines next state, applies transitions,
-        and synchronizes telemetry.
-        """
-        try:
-            match self.current_state:
+    # async def run_state_machine(self) -> None:
+    #     """
+    #     Executes a single step / tick of the Asterisk 12-state FSM.
+    #     Evaluates current state logic, determines next state, applies transitions,
+    #     and synchronizes telemetry.
+    #     """
+    #     try:
+    #         match self.current_state:
 
-                case ControllerState.UNINITIALIZED:
-                    self.next_state = ControllerState.INITIALIZING
+    #             case ControllerState.UNINITIALIZED:
+    #                 self.next_state = ControllerState.INITIALIZING
 
-                case ControllerState.INITIALIZING:
-                    self._build_engines()
-                    self.next_state = ControllerState.PREWARMING
+    #             case ControllerState.INITIALIZING:
+    #                 self._build_engines()
+    #                 self.next_state = ControllerState.PREWARMING
 
-                case ControllerState.PREWARMING:
-                    await asyncio.to_thread(self.prewarm_resources_once)
-                    self.next_state = ControllerState.READY
+    #             case ControllerState.PREWARMING:
+    #                 await asyncio.to_thread(self.prewarm_resources_once)
+    #                 self.next_state = ControllerState.READY
 
-                case ControllerState.READY:
-                    self._shutdown_requested = False
-                    self._error_requested = False
-                    if self._call_requested:
-                        self.next_state = ControllerState.JOB_ACCEPTED
+    #             case ControllerState.READY:
+    #                 self._shutdown_requested = False
+    #                 self._error_requested = False
+    #                 if self._call_requested:
+    #                     self.next_state = ControllerState.JOB_ACCEPTED
 
-                case ControllerState.JOB_ACCEPTED:
-                    self._call_requested = False
-                    self.next_state = ControllerState.CONNECTING
+    #             case ControllerState.JOB_ACCEPTED:
+    #                 self._call_requested = False
+    #                 self.next_state = ControllerState.CONNECTING
 
-                case (ControllerState.CONNECTING | ControllerState.SESSION_ACTIVE
-                    | ControllerState.LISTENING | ControllerState.THINKING
-                    | ControllerState.SPEAKING):
+    #             case (ControllerState.CONNECTING | ControllerState.SESSION_ACTIVE
+    #                 | ControllerState.LISTENING | ControllerState.THINKING
+    #                 | ControllerState.SPEAKING):
 
-                    if self._error_requested:
-                        self._error_requested = False
-                        self.next_state = ControllerState.ERROR
+    #                 if self._error_requested:
+    #                     self._error_requested = False
+    #                     self.next_state = ControllerState.ERROR
 
-                    elif self._shutdown_requested:
-                        self.next_state = ControllerState.ENDING
+    #                 elif self._shutdown_requested:
+    #                     self.next_state = ControllerState.ENDING
 
-                    elif self.current_state is ControllerState.CONNECTING:
-                        # Caller is connected once caller_id / identity is set
-                        if self._caller_identity or self.caller_id:
-                            self.next_state = ControllerState.SESSION_ACTIVE
-                        elif self._stuck_for(self.caller_connect_timeout):
-                            logger.warning(f"⏱️ [Asterisk] Timed out waiting for channel connect after {self.caller_connect_timeout}s.")
-                            self._error_message = "Asterisk channel did not connect in time"
-                            self.next_state = ControllerState.ERROR
+    #                 elif self.current_state is ControllerState.CONNECTING:
+    #                     # Caller is connected once caller_id / identity is set
+    #                     if self._caller_identity or self.caller_id:
+    #                         self.next_state = ControllerState.SESSION_ACTIVE
+    #                     elif self._stuck_for(self.caller_connect_timeout):
+    #                         logger.warning(f"⏱️ [Asterisk] Timed out waiting for channel connect after {self.caller_connect_timeout}s.")
+    #                         self._error_message = "Asterisk channel did not connect in time"
+    #                         self.next_state = ControllerState.ERROR
 
-                    else:
-                        # Sub-state transitions: LISTENING / THINKING / SPEAKING
-                        self.next_state = _SUBSTATE_TARGET.get(
-                            self._agent_substate.upper(), ControllerState.SESSION_ACTIVE
-                        )
+    #                 else:
+    #                     # Sub-state transitions: LISTENING / THINKING / SPEAKING
+    #                     self.next_state = _SUBSTATE_TARGET.get(
+    #                         self._agent_substate.upper(), ControllerState.SESSION_ACTIVE
+    #                     )
 
-                        # Per-state stall watchdogs
-                        if self.current_state is ControllerState.LISTENING:
-                            if self.stt_status == "idle":
-                                self.stt_status = "listening"
-                            elif self.stt_status == "listening" and self._stuck_for(self.stt_timeout):
-                                self.stt_status = "stalled"
-                                logger.debug(f"[Asterisk STT Watchdog] LISTENING stalled >{self.stt_timeout}s")
-                        elif self.current_state is ControllerState.THINKING:
-                            if self.llm_status == "idle":
-                                self.llm_status = "generating"
-                            elif self.llm_status == "generating" and self._stuck_for(self.llm_timeout):
-                                self.llm_status = "slow"
-                                logger.warning(f"⚠️ [Asterisk LLM Watchdog] THINKING stalled >{self.llm_timeout}s")
-                        elif self.current_state is ControllerState.SPEAKING:
-                            if self.tts_status == "idle":
-                                self.tts_status = "synthesizing"
-                            elif self.tts_status == "synthesizing" and self._stuck_for(self.tts_timeout):
-                                self.tts_status = "stalled"
-                                logger.warning(f"⚠️ [Asterisk TTS Watchdog] SPEAKING stalled >{self.tts_timeout}s")
+    #                     # Per-state stall watchdogs
+    #                     if self.current_state is ControllerState.LISTENING:
+    #                         if self.stt_status == "idle":
+    #                             self.stt_status = "listening"
+    #                         elif self.stt_status == "listening" and self._stuck_for(self.stt_timeout):
+    #                             self.stt_status = "stalled"
+    #                             logger.debug(f"[Asterisk STT Watchdog] LISTENING stalled >{self.stt_timeout}s")
+    #                     elif self.current_state is ControllerState.THINKING:
+    #                         if self.llm_status == "idle":
+    #                             self.llm_status = "generating"
+    #                         elif self.llm_status == "generating" and self._stuck_for(self.llm_timeout):
+    #                             self.llm_status = "slow"
+    #                             logger.warning(f"⚠️ [Asterisk LLM Watchdog] THINKING stalled >{self.llm_timeout}s")
+    #                     elif self.current_state is ControllerState.SPEAKING:
+    #                         if self.tts_status == "idle":
+    #                             self.tts_status = "synthesizing"
+    #                         elif self.tts_status == "synthesizing" and self._stuck_for(self.tts_timeout):
+    #                             self.tts_status = "stalled"
+    #                             logger.warning(f"⚠️ [Asterisk TTS Watchdog] SPEAKING stalled >{self.tts_timeout}s")
 
-                case ControllerState.ENDING:
-                    self._shutdown_requested = False
-                    self._telephony_session = None
-                    self._caller_identity = ""
-                    self._agent_substate = ""
-                    logger.info("🧹 [Asterisk] Teardown complete. Reset state for next telephony call")
-                    self.next_state = ControllerState.READY
+    #             case ControllerState.ENDING:
+    #                 self._shutdown_requested = False
+    #                 self._telephony_session = None
+    #                 self._caller_identity = ""
+    #                 self._agent_substate = ""
+    #                 logger.info("🧹 [Asterisk] Teardown complete. Reset state for next telephony call")
+    #                 self.next_state = ControllerState.READY
 
-                case ControllerState.ERROR:
-                    logger.error(f"🛑 [Asterisk] ControllerState.ERROR: {self._error_message}")
-                    self.next_state = ControllerState.ENDING
+    #             case ControllerState.ERROR:
+    #                 logger.error(f"🛑 [Asterisk] ControllerState.ERROR: {self._error_message}")
+    #                 self.next_state = ControllerState.ENDING
 
-                case _:
-                    self._error_message = f"Unknown state: {self.current_state}"
-                    self.next_state = ControllerState.ERROR
+    #             case _:
+    #                 self._error_message = f"Unknown state: {self.current_state}"
+    #                 self.next_state = ControllerState.ERROR
 
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.exception(f"Unhandled error in Asterisk state {self.current_state.name}: {exc}")
-            self._error_message = str(exc)
-            self.next_state = (
-                ControllerState.READY
-                if self.current_state in (ControllerState.ERROR, ControllerState.ENDING)
-                else ControllerState.ERROR
-            )
+    #     except asyncio.CancelledError:
+    #         raise
+    #     except Exception as exc:
+    #         logger.exception(f"Unhandled error in Asterisk state {self.current_state.name}: {exc}")
+    #         self._error_message = str(exc)
+    #         self.next_state = (
+    #             ControllerState.READY
+    #             if self.current_state in (ControllerState.ERROR, ControllerState.ENDING)
+    #             else ControllerState.ERROR
+    #         )
 
-        # ── Synchronize states at the end of each tick ───────────────────────────
-        if self.next_state is not self.current_state:
-            old = self.current_state
-            self._previous_state = old
-            self._state_updated_at = time.time()
-            self.stt_status = self.llm_status = self.tts_status = "idle"
-            tag = f"pid={self._pid}" + (f" | caller='{self.caller_id}'" if self.caller_id else "")
-            logger.info(f"➡️ [Asterisk FSM] Transition [{tag}]: {old.name} → {self.next_state.name}")
-            self.current_state = self.next_state
-            if self.current_state is ControllerState.READY:
-                self._ready_event.set()
-            else:
-                self._ready_event.clear()
-            self._report_to_global_fsm()
+    #     # ── Synchronize states at the end of each tick ───────────────────────────
+    #     if self.next_state is not self.current_state:
+    #         old = self.current_state
+    #         self._previous_state = old
+    #         self._state_updated_at = time.time()
+    #         self.stt_status = self.llm_status = self.tts_status = "idle"
+    #         tag = f"pid={self._pid}" + (f" | caller='{self.caller_id}'" if self.caller_id else "")
+    #         logger.info(f"➡️ [Asterisk FSM] Transition [{tag}]: {old.name} → {self.next_state.name}")
+    #         self.current_state = self.next_state
+    #         if self.current_state is ControllerState.READY:
+    #             self._ready_event.set()
+    #         else:
+    #             self._ready_event.clear()
+    #         self._report_to_global_fsm()
 
     async def run_loop(self) -> None:
         """Embedded super-loop driving the Asterisk FSM ticks."""
         logger.info(f"🚀 Asterisk Voice Controller 12-State FSM Started [pid={self._pid}]")
         while True:
-            await self.run_state_machine()
+            # await self.run_state_machine()
+            try:
+                match self.current_state:
+
+                    case ControllerState.UNINITIALIZED:
+                        self.next_state = ControllerState.INITIALIZING
+
+                    case ControllerState.INITIALIZING:
+                        self._build_engines()
+                        self.next_state = ControllerState.PREWARMING
+
+                    case ControllerState.PREWARMING:
+                        await asyncio.to_thread(self.prewarm_resources_once)
+                        self.next_state = ControllerState.READY
+
+                    case ControllerState.READY:
+                        self._shutdown_requested = False
+                        self._error_requested = False
+                        if self._call_requested:
+                            self.next_state = ControllerState.JOB_ACCEPTED
+
+                    case ControllerState.JOB_ACCEPTED:
+                        self._call_requested = False
+                        self.next_state = ControllerState.CONNECTING
+
+                    case (ControllerState.CONNECTING | ControllerState.SESSION_ACTIVE
+                        | ControllerState.LISTENING | ControllerState.THINKING
+                        | ControllerState.SPEAKING):
+
+                        if self._error_requested:
+                            self._error_requested = False
+                            self.next_state = ControllerState.ERROR
+
+                        elif self._shutdown_requested:
+                            self.next_state = ControllerState.ENDING
+
+                        elif self.current_state is ControllerState.CONNECTING:
+                            # Caller is connected once caller_id / identity is set
+                            if self._caller_identity or self.caller_id:
+                                self.next_state = ControllerState.SESSION_ACTIVE
+                            elif self._stuck_for(self.caller_connect_timeout):
+                                logger.warning(f"⏱️ [Asterisk] Timed out waiting for channel connect after {self.caller_connect_timeout}s.")
+                                self._error_message = "Asterisk channel did not connect in time"
+                                self.next_state = ControllerState.ERROR
+
+                        else:
+                            # Sub-state transitions: LISTENING / THINKING / SPEAKING
+                            self.next_state = _SUBSTATE_TARGET.get(
+                                self._agent_substate.upper(), ControllerState.SESSION_ACTIVE
+                            )
+
+                            # Per-state stall watchdogs
+                            if self.current_state is ControllerState.LISTENING:
+                                if self.stt_status == "idle":
+                                    self.stt_status = "listening"
+                                elif self.stt_status == "listening" and self._stuck_for(self.stt_timeout):
+                                    self.stt_status = "stalled"
+                                    logger.debug(f"[Asterisk STT Watchdog] LISTENING stalled >{self.stt_timeout}s")
+                            elif self.current_state is ControllerState.THINKING:
+                                if self.llm_status == "idle":
+                                    self.llm_status = "generating"
+                                elif self.llm_status == "generating" and self._stuck_for(self.llm_timeout):
+                                    self.llm_status = "slow"
+                                    logger.warning(f"⚠️ [Asterisk LLM Watchdog] THINKING stalled >{self.llm_timeout}s")
+                            elif self.current_state is ControllerState.SPEAKING:
+                                if self.tts_status == "idle":
+                                    self.tts_status = "synthesizing"
+                                elif self.tts_status == "synthesizing" and self._stuck_for(self.tts_timeout):
+                                    self.tts_status = "stalled"
+                                    logger.warning(f"⚠️ [Asterisk TTS Watchdog] SPEAKING stalled >{self.tts_timeout}s")
+
+                    case ControllerState.ENDING:
+                        self._shutdown_requested = False
+                        self._telephony_session = None
+                        self._caller_identity = ""
+                        self._agent_substate = ""
+                        logger.info("🧹 [Asterisk] Teardown complete. Reset state for next telephony call")
+                        self.next_state = ControllerState.READY
+
+                    case ControllerState.ERROR:
+                        logger.error(f"🛑 [Asterisk] ControllerState.ERROR: {self._error_message}")
+                        self.next_state = ControllerState.ENDING
+
+                    case _:
+                        self._error_message = f"Unknown state: {self.current_state}"
+                        self.next_state = ControllerState.ERROR
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception(f"Unhandled error in Asterisk state {self.current_state.name}: {exc}")
+                self._error_message = str(exc)
+                self.next_state = (
+                    ControllerState.READY
+                    if self.current_state in (ControllerState.ERROR, ControllerState.ENDING)
+                    else ControllerState.ERROR
+                )
+
+            # ── Synchronize states at the end of each tick ───────────────────────────
+            if self.next_state is not self.current_state:
+                old = self.current_state
+                self._previous_state = old
+                self._state_updated_at = time.time()
+                self.stt_status = self.llm_status = self.tts_status = "idle"
+                tag = f"pid={self._pid}" + (f" | caller='{self.caller_id}'" if self.caller_id else "")
+                logger.info(f"➡️ [Asterisk FSM] Transition [{tag}]: {old.name} → {self.next_state.name}")
+                self.current_state = self.next_state
+                if self.current_state is ControllerState.READY:
+                    self._ready_event.set()
+                else:
+                    self._ready_event.clear()
+                self._report_to_global_fsm()
 
             _now = time.time()
             if _now - self._last_beat >= 3.0:

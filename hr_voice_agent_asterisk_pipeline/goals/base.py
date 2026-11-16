@@ -79,6 +79,45 @@ class GoalService(ABC):
     def is_action_enabled(self, action_name: str) -> bool:
         return self.meta.enabled if hasattr(self, "meta") else True
 
+    def action_count(self, action_name: str) -> int:
+        """Returns how many times a given action was executed."""
+        return self._action_call_counts.get(action_name, 0)
+
+    def is_enabled(self) -> bool:
+        return getattr(self, "meta", None) is not None and self.meta.enabled
+
+    def disable(self) -> None:
+        if hasattr(self, "meta") and self.meta:
+            self.meta.enabled = False
+            logger.info(f"🔕 Goal '{self.meta.id}' disabled.")
+
+    def enable(self) -> None:
+        if hasattr(self, "meta") and self.meta:
+            self.meta.enabled = True
+            logger.info(f"🔔 Goal '{self.meta.id}' enabled.")
+
+    def tool_names(self) -> list[str]:
+        """Returns the list of tool function names registered on this service."""
+        names = []
+        for tool in self.tools():
+            info = getattr(tool, "info", None)
+            if info and hasattr(info, "name"):
+                names.append(info.name)
+            elif hasattr(tool, "__name__"):
+                names.append(tool.__name__)
+            else:
+                names.append(str(tool))
+        return names
+
+    def __repr__(self) -> str:
+        meta = getattr(self, "meta", None)
+        return (
+            f"<{self.__class__.__name__} "
+            f"id={meta.id if meta else '?'} "
+            f"enabled={meta.enabled if meta else '?'} "
+            f"tools={len(self.tools())}>"
+        )
+
 
 __all__ = [
     "GoalService",
