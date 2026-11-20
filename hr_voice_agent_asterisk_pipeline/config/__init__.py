@@ -23,6 +23,15 @@ if _cfg_path.exists():
 # Explicit fallback module-level bindings for static type analyzers (Pyrefly/mypy)
 OPENROUTER_API_KEY: Optional[str] = globals().get("OPENROUTER_API_KEY", None)
 OPENROUTER_MODEL: str = globals().get("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")
+TTS_PROVIDER: str = globals().get("TTS_PROVIDER", "deepgram")
+SARVAM_API_KEY: Optional[str] = globals().get("SARVAM_API_KEY", None)
+SARVAM_SPEAKER: str = globals().get("SARVAM_SPEAKER", "vijay_ta_narration")
+SARVAM_MODEL: str = globals().get("SARVAM_MODEL", "bulbul:v4-flash")
+SARVAM_LANGUAGE_CODE: str = globals().get("SARVAM_LANGUAGE_CODE", "ta-IN")
+TRANSLATION_ENABLED: bool = globals().get("TRANSLATION_ENABLED", True)
+PRIMARY_LANGUAGE: str = globals().get("PRIMARY_LANGUAGE", "kn")
+DEEPGRAM_MODEL: str = globals().get("DEEPGRAM_MODEL", "nova-3")
+DEEPGRAM_LANGUAGE: str = globals().get("DEEPGRAM_LANGUAGE", "en")
 
 __all__ = [
     "Config",
@@ -38,6 +47,13 @@ __all__ = [
     "GROQ_API_KEY",
     "GROQ_MODEL",
     "DEEPGRAM_API_KEY",
+    "DEEPGRAM_MODEL",
+    "DEEPGRAM_LANGUAGE",
+    "TTS_PROVIDER",
+    "SARVAM_API_KEY",
+    "SARVAM_SPEAKER",
+    "SARVAM_MODEL",
+    "SARVAM_LANGUAGE_CODE",
     "ELEVENLABS_API_KEY",
     "ELEVENLABS_VOICE_ID",
     "MYSQL_HOST",
@@ -87,6 +103,13 @@ if TYPE_CHECKING:
         GROQ_API_KEY: Optional[str]
         GROQ_MODEL: str
         DEEPGRAM_API_KEY: Optional[str]
+        DEEPGRAM_MODEL: str
+        DEEPGRAM_LANGUAGE: str
+        TTS_PROVIDER: str
+        SARVAM_API_KEY: Optional[str]
+        SARVAM_SPEAKER: str
+        SARVAM_MODEL: str
+        SARVAM_LANGUAGE_CODE: str
         ELEVENLABS_API_KEY: Optional[str]
         ELEVENLABS_VOICE_ID: Optional[str]
         LOG_LEVEL: str
@@ -139,6 +162,13 @@ if TYPE_CHECKING:
     GROQ_API_KEY: Optional[str]
     GROQ_MODEL: str
     DEEPGRAM_API_KEY: Optional[str]
+    DEEPGRAM_MODEL: str
+    DEEPGRAM_LANGUAGE: str
+    TTS_PROVIDER: str
+    SARVAM_API_KEY: Optional[str]
+    SARVAM_SPEAKER: str
+    SARVAM_MODEL: str
+    SARVAM_LANGUAGE_CODE: str
     ELEVENLABS_API_KEY: Optional[str]
     ELEVENLABS_VOICE_ID: Optional[str]
     MYSQL_HOST: str

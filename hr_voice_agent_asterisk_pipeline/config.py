@@ -52,6 +52,16 @@ class Config:
     GROQ_MODEL     = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
  
     DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+    DEEPGRAM_MODEL   = os.getenv("DEEPGRAM_MODEL", "nova-3")
+    DEEPGRAM_LANGUAGE= os.getenv("DEEPGRAM_LANGUAGE", "en")
+
+    TTS_PROVIDER     = os.getenv("TTS_PROVIDER", "deepgram").strip().lower()
+    SARVAM_API_KEY   = os.getenv("SARVAM_API_KEY", None)
+    SARVAM_SPEAKER   = os.getenv("SARVAM_SPEAKER", "chaitra_kn_conversation")
+    SARVAM_MODEL     = os.getenv("SARVAM_MODEL", "bulbul:v4-flash")
+    SARVAM_LANGUAGE_CODE = os.getenv("SARVAM_LANGUAGE_CODE", "en")
+    TRANSLATION_ENABLED  = os.getenv("TRANSLATION_ENABLED", "true").strip().lower() in ("true", "1", "yes")
+    PRIMARY_LANGUAGE     = os.getenv("PRIMARY_LANGUAGE", "kn").strip().lower()
  
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
  
@@ -186,7 +196,17 @@ OPENROUTER_MODEL   = Config.OPENROUTER_MODEL
 GROQ_API_KEY = Config.GROQ_API_KEY
 GROQ_MODEL   = Config.GROQ_MODEL
  
-DEEPGRAM_API_KEY = Config.DEEPGRAM_API_KEY
+DEEPGRAM_API_KEY   = Config.DEEPGRAM_API_KEY
+DEEPGRAM_MODEL     = Config.DEEPGRAM_MODEL
+DEEPGRAM_LANGUAGE  = Config.DEEPGRAM_LANGUAGE
+
+TTS_PROVIDER       = Config.TTS_PROVIDER
+SARVAM_API_KEY     = Config.SARVAM_API_KEY
+SARVAM_SPEAKER     = Config.SARVAM_SPEAKER
+SARVAM_MODEL       = Config.SARVAM_MODEL
+SARVAM_LANGUAGE_CODE = Config.SARVAM_LANGUAGE_CODE
+TRANSLATION_ENABLED = Config.TRANSLATION_ENABLED
+PRIMARY_LANGUAGE   = Config.PRIMARY_LANGUAGE
  
 ELEVENLABS_API_KEY  = Config.ELEVENLABS_API_KEY
 ELEVENLABS_VOICE_ID = Config.ELEVENLABS_VOICE_ID

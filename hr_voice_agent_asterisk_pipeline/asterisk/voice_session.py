@@ -46,7 +46,15 @@ from config import (
     RAG_MAX_CONTEXT_CHARS,
     RAG_FILLER_MODE,
     ARI_URL,
+    TTS_PROVIDER,
+    SARVAM_API_KEY,
+    SARVAM_SPEAKER,
+    SARVAM_MODEL,
+    SARVAM_LANGUAGE_CODE,
+    TRANSLATION_ENABLED,
+    PRIMARY_LANGUAGE,
 )
+from services.translator import SarvamTranslator
 from prompts import INBOUND_INSTRUCTIONS
 DEEPGRAM_LANGUAGE = os.environ.get("DEEPGRAM_LANGUAGE", "en")
 COORDINATOR_PHONE_NUMBER = os.environ.get("COORDINATOR_PHONE_NUMBER", "+918925355704")
@@ -268,7 +276,26 @@ class AsteriskVoiceSession(BaseTelephonySession):
         self._agent_audio_buffer: deque[bytes] = deque(maxlen=500)
         self.audio_queue.on_frame_sent = self._on_agent_frame_sent
         self._speaking_start_time: float = 0.0
-        self.tts = StreamingTTSClient(api_key=DEEPGRAM_API_KEY or "", audio_queue=self.audio_queue, sample_rate=self.sample_rate)
+        self.tts = StreamingTTSClient(
+            api_key=DEEPGRAM_API_KEY or "",
+            audio_queue=self.audio_queue,
+            sample_rate=self.sample_rate,
+            provider=TTS_PROVIDER,
+            sarvam_api_key=SARVAM_API_KEY,
+            sarvam_speaker=SARVAM_SPEAKER,
+            sarvam_model=SARVAM_MODEL,
+            sarvam_language_code=SARVAM_LANGUAGE_CODE,
+        )
+        # Cascaded Multilingual Translation (Approach 2)
+        # Translates regional language caller speech (e.g. Kannada) to English for LLM,
+        # and English LLM responses back to regional language for TTS.
+        multilingual_target = SARVAM_LANGUAGE_CODE if TTS_PROVIDER == "sarvam" else (PRIMARY_LANGUAGE or "en")
+        self.translator = SarvamTranslator(
+            api_key=SARVAM_API_KEY,
+            target_lang=multilingual_target,
+            source_lang="en-IN",
+            enabled=TRANSLATION_ENABLED,
+        )
         self.stt: Optional[DeepgramStreamingSTT] = None
         self.dtmf_detector = InBandDtmfDetector8k(sample_rate=self.sample_rate)
         self.dtmf_collector = AsteriskDtmfCollector(on_id_complete=self._on_dtmf_id_collected)
@@ -350,11 +377,13 @@ class AsteriskVoiceSession(BaseTelephonySession):
             think=False,
         )
         
-        # 1. OpenRouter (Primary)
+        use_cloud = os.getenv("USE_CLOUD_LLM", "true").lower() in ("true", "1")
+
+        # 1. OpenRouter (Primary if cloud enabled)
         openrouter_key = (OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY", "")).strip()
         openrouter_model = (OPENROUTER_MODEL or os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")).strip()
 
-        if openrouter_key:
+        if use_cloud and openrouter_key:
             from asterisk.llm_types import OpenAICompatibleLLM
             openrouter_llm = OpenAICompatibleLLM(
                 model=openrouter_model,
@@ -369,7 +398,7 @@ class AsteriskVoiceSession(BaseTelephonySession):
         groq_key = (GROQ_API_KEY or os.getenv("GROQ_API_KEY", "")).strip()
         groq_model = (GROQ_MODEL or os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")).strip()
 
-        if groq_key:
+        if use_cloud and groq_key:
             from asterisk.llm_types import OpenAICompatibleLLM
             groq_llm = OpenAICompatibleLLM(
                 model=groq_model,
@@ -458,11 +487,37 @@ class AsteriskVoiceSession(BaseTelephonySession):
         # before streaming audio — 0.3s was too short; Asterisk would drop frames
         # that arrived before the bridge channels were joined.
         await asyncio.sleep(1.5)
-        greeting = (
-            "Hello! Welcome to Eoxys HR voice assistant. "
-            "Please say or enter your employee ID to get started."
+        is_tamil = (
+            DEEPGRAM_LANGUAGE.startswith("ta")
+            or SARVAM_LANGUAGE_CODE.startswith("ta")
+            or PRIMARY_LANGUAGE.startswith("ta")
         )
-        self.chat_ctx.add_message(role="assistant", content=greeting)
+        is_kannada = (
+            DEEPGRAM_LANGUAGE.startswith("kn")
+            or SARVAM_LANGUAGE_CODE.startswith("kn")
+            or PRIMARY_LANGUAGE.startswith("kn")
+        )
+
+        english_context = (
+            "Hello! Welcome to Eoxys HR voice assistant. "
+            "Please say or enter your 4-digit employee ID to get started."
+        )
+
+        if TTS_PROVIDER == "sarvam" and is_tamil:
+            greeting = (
+                "வணக்கம்! ஈயாக்சிஸ் மனிதவள குரல் உதவியாளருக்கு நல்வரவு. "
+                "தொடர உங்கள் நான்கு இலக்க பணியாளர் அடையாள எண்ணைக் கூறவும்."
+            )
+        elif TTS_PROVIDER == "sarvam" and is_kannada:
+            greeting = (
+                "ನಮಸ್ಕಾರ! ಇಆಕ್ಸಿಸ್ ಎಚ್ಆರ್ ವಾಯ್ಸ್ ಅಸಿಸ್ಟೆಂಟ್‌ಗೆ ಸುಸ್ವಾಗತ. "
+                "ದಯವಿಟ್ಟು ನಿಮ್ಮ ನಾಲ್ಕು ಅಂಕಿಯ ಉದ್ಯೋಗಿ ಐಡಿಯನ್ನು ತಿಳಿಸಿ."
+            )
+        else:
+            greeting = english_context
+
+        # In Approach 2, store the English context in chat_ctx so LLM reasoning remains 100% English
+        self.chat_ctx.add_message(role="assistant", content=english_context)
         self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {greeting}")
         await self.tts.speak_text(greeting)
         await self.tts.wait_for_playout()
@@ -474,7 +529,10 @@ class AsteriskVoiceSession(BaseTelephonySession):
         self._update_state("speaking")
 
         async def _speak_and_wait():
-            await self.tts.speak_text(text)
+            to_speak = text
+            if self.translator and self.translator.is_active:
+                to_speak = await self.translator.to_target(text)
+            await self.tts.speak_text(to_speak)
             await self.tts.wait_for_playout()
             if self.agent_state == "speaking":
                 self._update_state("listening")
@@ -711,29 +769,90 @@ class AsteriskVoiceSession(BaseTelephonySession):
             except Exception as e:
                 logger.error(f"❌ Error during conversation turn: {e}", exc_info=True)
 
+    async def _speak_agent_stream(self, token_generator: AsyncGenerator[str, None]) -> str:
+        """
+        Consumes streaming LLM tokens. If translation is active (Approach 2),
+        buffers tokens into sentences, translates each sentence to target language (e.g. Kannada)
+        via Sarvam Mayura, and speaks it via Sarvam Bulbul TTS.
+        Otherwise speaks raw English tokens directly via speak_stream.
+        Returns the complete generated English text.
+        """
+        reply_chunks: list[str] = []
+
+        if not (self.translator and self.translator.is_active):
+            async def _forwarder():
+                async for tok in token_generator:
+                    reply_chunks.append(tok)
+                    yield tok
+            await self.tts.speak_stream(_forwarder())
+            await self.tts.wait_for_playout()
+            return "".join(reply_chunks).strip()
+
+        # ── Approach 2 Cascaded Translation Streaming ──
+        # Split on sentence boundaries to translate fluent complete sentences
+        sentence_regex = re.compile(r"([.!?\n|।])")
+        buffer = ""
+
+        async for tok in token_generator:
+            if not self.running:
+                break
+            reply_chunks.append(tok)
+            buffer += tok
+
+            while True:
+                parts = sentence_regex.split(buffer, maxsplit=1)
+                if len(parts) >= 3:
+                    complete_sentence = (parts[0] + parts[1]).strip()
+                    buffer = parts[2]
+                    if complete_sentence:
+                        target_sentence = await self.translator.to_target(complete_sentence)
+                        logger.info(f"🌐 [Translator LLM -> TTS]: '{complete_sentence}' => '{target_sentence}'")
+                        await self.tts.speak_text(target_sentence)
+                else:
+                    break
+
+        # Flush any trailing sentence/clause
+        if buffer.strip() and self.running:
+            target_trailing = await self.translator.to_target(buffer.strip())
+            logger.info(f"🌐 [Translator LLM -> TTS Trailing]: '{buffer.strip()}' => '{target_trailing}'")
+            await self.tts.speak_text(target_trailing)
+
+        await self.tts.wait_for_playout()
+        return "".join(reply_chunks).strip()
+
     async def _process_user_turn(self, user_text: str) -> None:
         """Orchestrates RAG check, LLM generation, tool execution, and TTS."""
         logger.info(f"🗣️ [Caller Turn]: '{user_text}'")
         self._update_state("thinking")
 
+        # ── Step A: Multilingual Input Translation (Caller Speech -> English) ──
+        english_user_text = user_text
+        if self.translator and self.translator.is_active:
+            english_user_text = await self.translator.to_english(user_text)
+            logger.info(f"🌐 [Translator STT -> LLM]: '{user_text}' => '{english_user_text}'")
+
         # 1. Check RAG Retrieval
-        rag_context_msg = await self._handle_rag(user_text)
+        rag_context_msg = await self._handle_rag(english_user_text)
 
         # 2. Append User Message
-        self.chat_ctx.add_message(role="user", content=user_text)
-        self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [User]: {user_text}")
+        self.chat_ctx.add_message(role="user", content=english_user_text)
+        if english_user_text != user_text:
+            self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [User ({self.translator.target_lang})]: {user_text}")
+            self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [User (EN)]: {english_user_text}")
+        else:
+            self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [User]: {user_text}")
+
         if rag_context_msg:
             self.chat_ctx.add_message(role="assistant", content=rag_context_msg)
 
         # 3. Dynamic Goal-Based Tool Filtering (Reduces prompt token count from ~5,500 to ~400)
-        turn_tools = self._get_relevant_tools_for_turn(user_text)
+        turn_tools = self._get_relevant_tools_for_turn(english_user_text)
 
         # 4. Call LLM with Pruned Tool Set
         try:
             stream = self.llm.chat(chat_ctx=self.chat_ctx, tools=turn_tools)
             self._update_state("speaking")
 
-            reply_chunks: list[str] = []
             tool_calls_to_run: list[Any] = []
 
             async def _token_generator():
@@ -746,17 +865,14 @@ class AsteriskVoiceSession(BaseTelephonySession):
                         continue
                     content = getattr(delta, "content", None)
                     if content:
-                        reply_chunks.append(content)
                         yield content
                     tool_calls = getattr(delta, "tool_calls", None)
                     if tool_calls:
                         tool_calls_to_run.extend(tool_calls)
 
-            # Stream speech directly to Asterisk
-            await self.tts.speak_stream(_token_generator())
-            await self.tts.wait_for_playout()
+            # Stream speech directly to Asterisk (with translation if enabled)
+            full_reply_text = await self._speak_agent_stream(_token_generator())
 
-            full_reply_text = "".join(reply_chunks).strip()
             # Record assistant message into history
             if full_reply_text:
                 self.chat_ctx.add_message(role="assistant", content=full_reply_text)
@@ -800,8 +916,8 @@ class AsteriskVoiceSession(BaseTelephonySession):
 
                     # Premature Hangup Guard: Prevent model from calling end_call when caller just declined a proposal
                     if fn_name == "end_call":
-                        # Strip punctuation so "No. Thank you." matches "no thank you"
-                        caller_words = re.sub(r'[^\w\s]', '', (user_text or "").lower())
+                        # Check translated english_user_text for accurate keyword detection
+                        caller_words = re.sub(r'[^\w\s]', '', (english_user_text or user_text or "").lower())
                         explicit_end = any(
                             k in caller_words
                             for k in (
@@ -822,7 +938,6 @@ class AsteriskVoiceSession(BaseTelephonySession):
                                 ),
                             )
                             followup_stream = self.llm.chat(chat_ctx=self.chat_ctx, tools=[])
-                            followup_chunks: list[str] = []
                             in_think_block = False
 
                             async def _followup_end_guard_gen():
@@ -836,7 +951,6 @@ class AsteriskVoiceSession(BaseTelephonySession):
                                     c = getattr(delta, "content", None)
                                     if not c:
                                         continue
-                                    followup_chunks.append(c)
                                     if "<think>" in c:
                                         in_think_block = True
                                         c = c.split("<think>")[0]
@@ -847,9 +961,7 @@ class AsteriskVoiceSession(BaseTelephonySession):
                                         if not c.startswith("[System"):
                                             yield c
 
-                            await self.tts.speak_stream(_followup_end_guard_gen())
-                            await self.tts.wait_for_playout()
-                            followup_reply = "".join(followup_chunks).strip()
+                            followup_reply = await self._speak_agent_stream(_followup_end_guard_gen())
                             if followup_reply:
                                 self.chat_ctx.add_message(role="assistant", content=followup_reply)
                                 self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {followup_reply}")
@@ -899,7 +1011,6 @@ class AsteriskVoiceSession(BaseTelephonySession):
 
                             # Trigger follow-up reply from model explaining result (or error)
                             followup_stream = self.llm.chat(chat_ctx=self.chat_ctx, tools=[])
-                            followup_chunks: list[str] = []
                             in_think_block = False
 
                             async def _followup_gen():
@@ -913,7 +1024,6 @@ class AsteriskVoiceSession(BaseTelephonySession):
                                     c = getattr(delta, "content", None)
                                     if not c:
                                         continue
-                                    followup_chunks.append(c)
 
                                     # Filter out internal <think>...</think> reasoning tags
                                     if "<think>" in c:
@@ -928,10 +1038,7 @@ class AsteriskVoiceSession(BaseTelephonySession):
                                         if not c.startswith("[Tool Result:") and not c.startswith("[System Note"):
                                             yield c
 
-                            await self.tts.speak_stream(_followup_gen())
-                            await self.tts.wait_for_playout()
-
-                            followup_reply = "".join(followup_chunks).strip()
+                            followup_reply = await self._speak_agent_stream(_followup_gen())
                             if followup_reply:
                                 self.chat_ctx.add_message(role="assistant", content=followup_reply)
                                 self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {followup_reply}")
@@ -1046,10 +1153,12 @@ class AsteriskVoiceSession(BaseTelephonySession):
         # Update FSM state to ENDING -> READY
         self.voice_controller.on_call_end(self.room_name)
 
-        # Close STT & TTS
+        # Close STT, TTS & Translator
         if self.stt:
             await self.stt.close()
         await self.tts.close()
+        if hasattr(self, "translator") and self.translator:
+            await self.translator.close()
 
         # Close AudioSocket writer
         await self.audio_queue.close()

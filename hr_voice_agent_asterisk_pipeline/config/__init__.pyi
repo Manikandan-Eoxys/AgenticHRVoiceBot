@@ -16,6 +16,13 @@ class Config:
     GROQ_API_KEY: Optional[str]
     GROQ_MODEL: str
     DEEPGRAM_API_KEY: Optional[str]
+    DEEPGRAM_MODEL: str
+    DEEPGRAM_LANGUAGE: str
+    TTS_PROVIDER: str
+    SARVAM_API_KEY: Optional[str]
+    SARVAM_SPEAKER: str
+    SARVAM_MODEL: str
+    SARVAM_LANGUAGE_CODE: str
     ELEVENLABS_API_KEY: Optional[str]
     ELEVENLABS_VOICE_ID: Optional[str]
     LIVEKIT_URL: Optional[str]
@@ -74,6 +81,13 @@ OPENROUTER_MODEL: str
 GROQ_API_KEY: Optional[str]
 GROQ_MODEL: str
 DEEPGRAM_API_KEY: Optional[str]
+DEEPGRAM_MODEL: str
+DEEPGRAM_LANGUAGE: str
+TTS_PROVIDER: str
+SARVAM_API_KEY: Optional[str]
+SARVAM_SPEAKER: str
+SARVAM_MODEL: str
+SARVAM_LANGUAGE_CODE: str
 ELEVENLABS_API_KEY: Optional[str]
 ELEVENLABS_VOICE_ID: Optional[str]
 MYSQL_HOST: str
@@ -123,6 +137,13 @@ __all__ = [
     "GROQ_API_KEY",
     "GROQ_MODEL",
     "DEEPGRAM_API_KEY",
+    "DEEPGRAM_MODEL",
+    "DEEPGRAM_LANGUAGE",
+    "TTS_PROVIDER",
+    "SARVAM_API_KEY",
+    "SARVAM_SPEAKER",
+    "SARVAM_MODEL",
+    "SARVAM_LANGUAGE_CODE",
     "ELEVENLABS_API_KEY",
     "ELEVENLABS_VOICE_ID",
     "MYSQL_HOST",

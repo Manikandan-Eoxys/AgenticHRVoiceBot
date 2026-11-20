@@ -336,6 +336,8 @@ class OpenAICompatibleStream(LLMStream["OpenAICompatibleLLM"]):
             "model": self._llm.model,
             "messages": messages,
             "stream": True,
+            "temperature": 0.1,
+            "max_tokens": 300,
         }
         if self._tools:
             tools_schema = ToolContext(self._tools).parse_function_tools("openai")

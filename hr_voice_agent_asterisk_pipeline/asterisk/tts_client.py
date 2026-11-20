@@ -11,9 +11,12 @@ Supports sentence-level pipelining and instant cancellation for barge-in.
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import logging
 import re
 import urllib.parse
+import wave
 from typing import Optional, AsyncGenerator
 
 import aiohttp
@@ -22,8 +25,8 @@ from asterisk.audiosocket import AudioSocketWriterQueue
 
 logger = logging.getLogger("asterisk.tts")
 
-# Sentence / clause splitting: break on punctuation (.!?;:,\n) to dispatch speech early
-SENTENCE_SPLIT_REGEX = re.compile(r"([.!?;:\n]|,\s+)")
+# Sentence / clause splitting: break on punctuation (.!?;:,\n|।) to dispatch speech early
+SENTENCE_SPLIT_REGEX = re.compile(r"([.!?;:\n|।]|,\s+)")
 
 
 def clean_tts_text(text: str) -> str:
@@ -50,8 +53,14 @@ def clean_tts_text(text: str) -> str:
     # Strip backticks
     t = t.replace("`", "")
     # Collapse multiple whitespace
-    t = re.sub(r"[ \t]+", " ", t)
-    return t.strip()
+    t = re.sub(r"[ \t]+", " ", t).strip()
+
+    # Reject text containing only punctuation or whitespace (e.g. ':', '...', '-')
+    # Must contain at least one valid word character or Indic/CJK/Latin script character
+    if not re.search(r"[\w\u0900-\u0DFF]", t):
+        return ""
+
+    return t
 
 
 class StreamingTTSClient:
@@ -65,11 +74,21 @@ class StreamingTTSClient:
         audio_queue: AudioSocketWriterQueue,
         sample_rate: int = 8000,
         model: str = "aura-asteria-en",
+        provider: str = "deepgram",
+        sarvam_api_key: Optional[str] = None,
+        sarvam_speaker: str = "chaitra_kn_conversation",
+        sarvam_model: str = "bulbul:v4-flash",
+        sarvam_language_code: str = "kn-IN",
     ) -> None:
         self.api_key = api_key
         self.audio_queue = audio_queue
         self.sample_rate = sample_rate
         self.model = model
+        self.provider = (provider or "deepgram").lower().strip()
+        self.sarvam_api_key = sarvam_api_key
+        self.sarvam_speaker = sarvam_speaker
+        self.sarvam_model = sarvam_model
+        self.sarvam_language_code = sarvam_language_code
 
         self._session: Optional[aiohttp.ClientSession] = None
         self._current_task: Optional[asyncio.Task] = None
@@ -83,11 +102,73 @@ class StreamingTTSClient:
     async def speak_text(self, text: str) -> None:
         """
         Synthesizes a complete text string and feeds audio frames to Asterisk.
+        Delegates to Sarvam AI or Deepgram based on configured provider.
         """
         cleaned = clean_tts_text(text)
         if not cleaned:
             return
 
+        if self.provider == "sarvam" and self.sarvam_api_key:
+            await self._speak_sarvam(cleaned)
+        else:
+            await self._speak_deepgram(cleaned)
+
+    async def _speak_sarvam(self, text: str) -> None:
+        """Synthesizes text using Sarvam AI Bulbul TTS into 8000 Hz 16-bit PCM."""
+        self._cancelled = False
+        session = await self._get_session()
+        url = "https://api.sarvam.ai/text-to-speech"
+        headers = {
+            "api-subscription-key": self.sarvam_api_key or "",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "inputs": [text],
+            "target_language_code": self.sarvam_language_code,
+            "speaker": self.sarvam_speaker,
+            "speech_sample_rate": self.sample_rate,
+            "model": self.sarvam_model,
+        }
+
+        try:
+            logger.info(f"🔊 [Sarvam TTS Synthesizing ({self.sarvam_language_code}/{self.sarvam_speaker})]: '{text[:60]}'...")
+            self._current_task = asyncio.current_task()
+            async with session.post(url, headers=headers, json=payload) as resp:
+                if resp.status not in (200, 201):
+                    body = await resp.text()
+                    logger.error(f"❌ [Sarvam TTS Error] Status {resp.status}: {body}")
+                    return
+
+                res_json = await resp.json()
+                audios = res_json.get("audios", [])
+                if not audios:
+                    logger.warning("⚠️ [Sarvam TTS] No audio returned.")
+                    return
+
+                wav_bytes = base64.b64decode(audios[0])
+                # Extract linear PCM frames from WAV container
+                with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+                    pcm_data = wav_file.readframes(wav_file.getnframes())
+
+                # Feed 20ms chunks (320 bytes @ 8kHz 16-bit) to audio queue
+                chunk_size = int(self.sample_rate * 2 * 0.02)  # 320 bytes
+                for i in range(0, len(pcm_data), chunk_size):
+                    if self._cancelled:
+                        break
+                    self.audio_queue.enqueue_pcm(pcm_data[i : i + chunk_size])
+
+                if not self._cancelled:
+                    self.audio_queue.flush()
+
+        except asyncio.CancelledError:
+            self._cancelled = True
+        except Exception as e:
+            logger.error(f"❌ [Sarvam TTS Exception]: {e}")
+        finally:
+            self._current_task = None
+
+    async def _speak_deepgram(self, cleaned: str) -> None:
+        """Synthesizes text using Deepgram Aura API."""
         self._cancelled = False
         session = await self._get_session()
         params = {
@@ -104,12 +185,12 @@ class StreamingTTSClient:
         payload = {"text": cleaned}
 
         try:
-            logger.info(f"🔊 [TTS Synthesizing]: '{cleaned[:60]}'...")
+            logger.info(f"🔊 [Deepgram TTS Synthesizing]: '{cleaned[:60]}'...")
             self._current_task = asyncio.current_task()
             async with session.post(url, headers=headers, json=payload) as resp:
                 if resp.status not in (200, 201):
                     body = await resp.text()
-                    logger.error(f"❌ [TTS Error] Status {resp.status}: {body}")
+                    logger.error(f"❌ [Deepgram TTS Error] Status {resp.status}: {body}")
                     return
 
                 # Stream audio chunks as they arrive from Deepgram
@@ -131,7 +212,7 @@ class StreamingTTSClient:
         except asyncio.CancelledError:
             self._cancelled = True
         except Exception as e:
-            logger.error(f"❌ [TTS Exception]: {e}")
+            logger.error(f"❌ [Deepgram TTS Exception]: {e}")
         finally:
             self._current_task = None
 
