@@ -34,11 +34,10 @@ import numpy as np
 from asterisk.llm_types import ChatContext, ChatMessage
 
 from config import (
-    DEEPGRAM_API_KEY,
-    OPENROUTER_API_KEY,
-    OPENROUTER_MODEL,
-    GROQ_API_KEY,
-    GROQ_MODEL,
+    STT_API_KEY,
+    STT_MODEL,
+    STT_LANGUAGE,
+    TTS_API_KEY,
     OLLAMA_MODEL,
     OLLAMA_BASE_URL,
     RAG_TIMEOUT,
@@ -48,7 +47,6 @@ from config import (
     ARI_URL,
 )
 from prompts import INBOUND_INSTRUCTIONS
-DEEPGRAM_LANGUAGE = os.environ.get("DEEPGRAM_LANGUAGE", "en")
 COORDINATOR_PHONE_NUMBER = os.environ.get("COORDINATOR_PHONE_NUMBER", "+918925355704")
 from controllers.agentVoiceController import AsteriskVoiceController, ControllerState
 from controllers.global_monitor_fsm import report_agent_event
@@ -72,7 +70,8 @@ from asterisk.audiosocket import (
     TYPE_HANGUP,
     TYPE_UUID,
 )
-from asterisk.deepgram_stt import DeepgramStreamingSTT
+from asterisk.stt_client import StreamingSTTClient
+from llm_selector import build_llm, get_llm_choice
 from asterisk.tts_client import StreamingTTSClient
 from asterisk.context import (
     AsteriskJobContext,
@@ -268,8 +267,8 @@ class AsteriskVoiceSession(BaseTelephonySession):
         self._agent_audio_buffer: deque[bytes] = deque(maxlen=500)
         self.audio_queue.on_frame_sent = self._on_agent_frame_sent
         self._speaking_start_time: float = 0.0
-        self.tts = StreamingTTSClient(api_key=DEEPGRAM_API_KEY or "", audio_queue=self.audio_queue, sample_rate=self.sample_rate)
-        self.stt: Optional[DeepgramStreamingSTT] = None
+        self.tts = StreamingTTSClient(api_key=TTS_API_KEY or "", audio_queue=self.audio_queue, sample_rate=self.sample_rate)
+        self.stt: Optional[StreamingSTTClient] = None
         self.dtmf_detector = InBandDtmfDetector8k(sample_rate=self.sample_rate)
         self.dtmf_collector = AsteriskDtmfCollector(on_id_complete=self._on_dtmf_id_collected)
         self._turn_lock = asyncio.Lock()
@@ -338,49 +337,10 @@ class AsteriskVoiceSession(BaseTelephonySession):
         self._inbound_audio_task: Optional[asyncio.Task] = None
 
     def _setup_llm(self) -> None:
-        """
-        Sets up the LLM for Asterisk calls:
-        - Primary: OpenRouter (Qwen 2.5 72B) or Groq
-        - Fallback: Local Ollama (if cloud provider has a network outage)
-        - Zero LiveKit gateway involvement.
-        """
-        local_ollama = OllamaLLM(
-            model=OLLAMA_MODEL.strip(),
-            base_url=OLLAMA_BASE_URL,
-            think=False,
-        )
-        
-        # 1. OpenRouter (Primary)
-        openrouter_key = (OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY", "")).strip()
-        openrouter_model = (OPENROUTER_MODEL or os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")).strip()
-
-        if openrouter_key:
-            from asterisk.llm_types import OpenAICompatibleLLM
-            openrouter_llm = OpenAICompatibleLLM(
-                model=openrouter_model,
-                api_key=openrouter_key,
-                base_url="https://openrouter.ai/api/v1",
-            )
-            logger.info(f"🚀 [LLM Setup] Primary: OpenRouter ({openrouter_model}) | Fallback: Local Ollama ({OLLAMA_MODEL})")
-            self.llm = FallbackLLM(primary_llm=openrouter_llm, fallback_llm=local_ollama)
-            return
-
-        # 2. Groq (Secondary)
-        groq_key = (GROQ_API_KEY or os.getenv("GROQ_API_KEY", "")).strip()
-        groq_model = (GROQ_MODEL or os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")).strip()
-
-        if groq_key:
-            from asterisk.llm_types import OpenAICompatibleLLM
-            groq_llm = OpenAICompatibleLLM(
-                model=groq_model,
-                api_key=groq_key,
-                base_url="https://api.groq.com/openai/v1",
-            )
-            logger.info(f"🚀 [LLM Setup] Primary: Groq ({groq_model}) | Fallback: Local Ollama ({OLLAMA_MODEL})")
-            self.llm = FallbackLLM(primary_llm=groq_llm, fallback_llm=local_ollama)
-        else:
-            logger.info(f"🚀 [LLM Setup] Cloud LLM key not provided; using Local Ollama ({OLLAMA_MODEL})")
-            self.llm = local_ollama
+        """Use the LLM chosen once at startup by llm_selector (local Ollama unless a cloud key is configured)."""
+        choice = get_llm_choice()
+        logger.info(f"🚀 [LLM Setup] {choice.describe()}")
+        self.llm = build_llm(choice)
 
     def _init_rag(self) -> None:
         try:
@@ -435,11 +395,12 @@ class AsteriskVoiceSession(BaseTelephonySession):
         # Start AudioSocket paced playback
         self.audio_queue.start()
 
-        # Start Deepgram streaming STT
-        self.stt = DeepgramStreamingSTT(
-            api_key=DEEPGRAM_API_KEY or "",
+        # Start streaming STT
+        self.stt = StreamingSTTClient(
+            api_key=STT_API_KEY or "",
             sample_rate=self.sample_rate,
-            language=DEEPGRAM_LANGUAGE,
+            model=STT_MODEL or "nova-3",
+            language=STT_LANGUAGE or "en",
             on_speech_started=self._on_user_speech_started,
             on_interim=self._on_user_interim_transcript,
             on_speech_final=self._on_user_speech_final,

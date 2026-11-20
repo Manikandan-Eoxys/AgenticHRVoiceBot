@@ -57,3 +57,6 @@ backup/
 
 # Ollama runtime libraries - do not commit
 hr_voice_agent/bin/lib/ollama/
+
+# web call dev certs
+hr_voice_agent_asterisk_pipeline/certs/

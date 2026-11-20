@@ -51,11 +51,14 @@ class Config:
     GROQ_API_KEY   = os.getenv("GROQ_API_KEY", None)
     GROQ_MODEL     = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
  
-    DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
- 
-    ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
- 
-    ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID")
+    # Speech services (provider-neutral names)
+    STT_API_KEY  = os.getenv("STT_API_KEY")
+    STT_MODEL    = os.getenv("STT_MODEL", "nova-3")
+    STT_LANGUAGE = os.getenv("STT_LANGUAGE", "en")
+    TTS_API_KEY  = os.getenv("TTS_API_KEY")
+
+    # LLM selection: auto | local | openrouter | groq  (see llm_selector.py)
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").strip().lower()
  
 
     # ------------------------------------------------------------------
@@ -186,10 +189,11 @@ OPENROUTER_MODEL   = Config.OPENROUTER_MODEL
 GROQ_API_KEY = Config.GROQ_API_KEY
 GROQ_MODEL   = Config.GROQ_MODEL
  
-DEEPGRAM_API_KEY = Config.DEEPGRAM_API_KEY
- 
-ELEVENLABS_API_KEY  = Config.ELEVENLABS_API_KEY
-ELEVENLABS_VOICE_ID = Config.ELEVENLABS_VOICE_ID
+STT_API_KEY  = Config.STT_API_KEY
+STT_MODEL    = Config.STT_MODEL
+STT_LANGUAGE = Config.STT_LANGUAGE
+TTS_API_KEY  = Config.TTS_API_KEY
+LLM_PROVIDER = Config.LLM_PROVIDER
  
 MYSQL_HOST     = Config.MYSQL_HOST
 MYSQL_USER     = Config.MYSQL_USER

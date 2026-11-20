@@ -1,7 +1,7 @@
 """
-hr_voice_agent/pipeline/stt_deepgram.py
+hr_voice_agent/pipeline/stt_client.py
 
-Real-Time Deepgram Streaming Speech-to-Text (STT) Client
+Real-Time Streaming Speech-to-Text (STT) Client
 ========================================================
 Connects to Deepgram's streaming WebSocket API to process linear 16-bit PCM.
 Emits real-time interim results, final speech segments, and server-side VAD events.
@@ -20,7 +20,7 @@ import aiohttp
 logger = logging.getLogger("pipeline.stt")
 
 
-class DeepgramStreamingSTT:
+class StreamingSTTClient:
     """
     Asynchronous streaming STT client for Deepgram Nova-3.
     """

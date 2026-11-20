@@ -746,19 +746,8 @@ class AsteriskVoiceController:
     # PRIVATE HELPERS
     # ------------------------------------------------------------------
     def _build_engines(self) -> None:
-        use_cloud = os.getenv("USE_CLOUD_LLM", "false").lower() in ("true", "1")
-        llm_model = os.getenv("ASTERISK_LLM_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct"))
-        if use_cloud:
-            logger.info(
-                "[Asterisk FSM] Engine config: Hybrid LLM (Primary: %s -> Fallback: Ollama %s).",
-                llm_model,
-                self.ollama_model,
-            )
-        else:
-            logger.info(
-                "[Asterisk FSM] Engine config: Local Ollama (%s).",
-                self.ollama_model,
-            )
+        from llm_selector import get_llm_choice  # same decision the call session uses
+        logger.info("[Asterisk FSM] Engine config: %s.", get_llm_choice().describe())
 
     def _prime_ollama_model(self) -> None:
         _prime_ollama_model(self.ollama_base_url, self.ollama_model)

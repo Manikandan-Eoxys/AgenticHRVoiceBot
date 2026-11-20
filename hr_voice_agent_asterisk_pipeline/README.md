@@ -308,7 +308,7 @@ Generate API Key
 Copy
 
 ```
-DEEPGRAM_API_KEY
+STT_API_KEY
 ```
 
 ---
@@ -367,7 +367,8 @@ OLLAMA_MODEL=qwen2.5:1.5b
 # Deepgram
 ###################################################
 
-DEEPGRAM_API_KEY=xxxxxxxxxxxxxxxx
+STT_API_KEY=xxxxxxxxxxxxxxxx
+TTS_API_KEY=xxxxxxxxxxxxxxxx
 
 ###################################################
 # Database
@@ -393,7 +394,7 @@ OLLAMA_BASE_URL
 
 OLLAMA_MODEL
 
-DEEPGRAM_API_KEY
+STT_API_KEY
 
 LIVEKIT_URL
 
@@ -623,7 +624,7 @@ LIVEKIT_API_SECRET
 Verify
 
 ```
-DEEPGRAM_API_KEY
+STT_API_KEY
 ```
 
 ---

@@ -3,7 +3,7 @@ hr_voice_agent/asterisk/tts_client.py
 
 Streaming Text-to-Speech (TTS) Client for Asterisk AudioSocket
 =============================================================
-Synthesizes speech using Deepgram Aura (or Cartesia) directly into
+Synthesizes speech (currently Deepgram Aura; authenticated with TTS_API_KEY) directly into
 linear 16-bit PCM @ 8000 Hz, streaming frames into the AudioSocketWriterQueue.
 Supports sentence-level pipelining and instant cancellation for barge-in.
 """

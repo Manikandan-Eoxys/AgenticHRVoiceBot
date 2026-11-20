@@ -30,11 +30,12 @@ logger = logging.getLogger("controllers.agent_config")
 
 _DEFAULTS: dict[str, str] = {
     # STT / LLM / TTS
-    "DEEPGRAM_API_KEY": "",
-    "DEEPGRAM_LANGUAGE": "en",
+    "STT_API_KEY": "",
+    "STT_LANGUAGE": "en",
+    "TTS_API_KEY": "",
     "LLM_MODEL": "google/gemma-4-31b-it",
-    "TTS_PROVIDER": "cartesia",
-    "TTS_MODEL": "cartesia/sonic-3",
+    "TTS_PROVIDER": "deepgram",
+    "TTS_MODEL": "aura-asteria-en",
     "TTS_VOICE": "ec1e269e-9ca0-402f-8a18-58e0e022355a",
     # Ollama fallback
     "OLLAMA_BASE_URL": "http://localhost:11434/v1",
@@ -64,7 +65,8 @@ _DEFAULTS: dict[str, str] = {
 
 # Config keys that are REQUIRED — the agent cannot function without them
 _REQUIRED_KEYS = [
-    "DEEPGRAM_API_KEY",
+    "STT_API_KEY",
+    "TTS_API_KEY",
 ]
 
 
@@ -77,11 +79,12 @@ class AgentRuntimeConfig:
     """Typed snapshot of all resolved configuration values."""
 
     # STT / LLM / TTS
-    deepgram_api_key: str = ""
-    deepgram_language: str = "en"
+    stt_api_key: str = ""
+    stt_language: str = "en"
+    tts_api_key: str = ""
     llm_model: str = "google/gemma-4-31b-it"
-    tts_provider: str = "cartesia"
-    tts_model: str = "cartesia/sonic-3"
+    tts_provider: str = "deepgram"
+    tts_model: str = "aura-asteria-en"
     tts_voice: str = "ec1e269e-9ca0-402f-8a18-58e0e022355a"
 
     # Ollama
@@ -185,11 +188,12 @@ class AgentConfigController:
         )
 
         config = AgentRuntimeConfig(
-            deepgram_api_key=env.get("DEEPGRAM_API_KEY", ""),
-            deepgram_language=env.get("DEEPGRAM_LANGUAGE", "en") or "en",
+            stt_api_key=env.get("STT_API_KEY", ""),
+            stt_language=env.get("STT_LANGUAGE", "en") or "en",
+            tts_api_key=env.get("TTS_API_KEY", ""),
             llm_model=env.get("LLM_MODEL") or env.get("LIVEKIT_LLM_MODEL", "google/gemma-4-31b-it") or "google/gemma-4-31b-it",
-            tts_provider=env.get("TTS_PROVIDER", "cartesia") or "cartesia",
-            tts_model=env.get("TTS_MODEL", "cartesia/sonic-3") or "cartesia/sonic-3",
+            tts_provider=env.get("TTS_PROVIDER", "deepgram") or "deepgram",
+            tts_model=env.get("TTS_MODEL", "aura-asteria-en") or "aura-asteria-en",
             tts_voice=env.get("TTS_VOICE", "") or "ec1e269e-9ca0-402f-8a18-58e0e022355a",
             ollama_base_url=env.get("OLLAMA_BASE_URL", "http://localhost:11434/v1") or "http://localhost:11434/v1",
             ollama_model=env.get("OLLAMA_MODEL", "qwen3:8b") or "qwen3:8b",
@@ -359,7 +363,7 @@ class AgentConfigController:
         logger.info(f"  Asterisk Mode  : enabled")
         logger.info(f"  LLM Model      : {cfg.llm_model}")
         logger.info(f"  TTS Provider   : {cfg.tts_provider} / {cfg.tts_model}")
-        logger.info(f"  STT Language   : {cfg.deepgram_language}")
+        logger.info(f"  STT Language   : {cfg.stt_language}")
         logger.info(f"  Ollama Fallback: {cfg.ollama_model} @ {cfg.ollama_base_url}")
         logger.info(f"  Coordinator    : {cfg.coordinator_phone}")
         logger.info(f"  Trunk ID       : {cfg.outbound_trunk_id}")

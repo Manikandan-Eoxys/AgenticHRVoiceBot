@@ -37,9 +37,11 @@ __all__ = [
     "OPENROUTER_MODEL",
     "GROQ_API_KEY",
     "GROQ_MODEL",
-    "DEEPGRAM_API_KEY",
-    "ELEVENLABS_API_KEY",
-    "ELEVENLABS_VOICE_ID",
+    "STT_API_KEY",
+    "STT_MODEL",
+    "STT_LANGUAGE",
+    "TTS_API_KEY",
+    "LLM_PROVIDER",
     "MYSQL_HOST",
     "MYSQL_USER",
     "MYSQL_PASSWORD",
@@ -86,9 +88,11 @@ if TYPE_CHECKING:
         OPENROUTER_MODEL: str
         GROQ_API_KEY: Optional[str]
         GROQ_MODEL: str
-        DEEPGRAM_API_KEY: Optional[str]
-        ELEVENLABS_API_KEY: Optional[str]
-        ELEVENLABS_VOICE_ID: Optional[str]
+        STT_API_KEY: Optional[str]
+        STT_MODEL: str
+        STT_LANGUAGE: str
+        TTS_API_KEY: Optional[str]
+        LLM_PROVIDER: str
         LOG_LEVEL: str
         COVERAGE_THRESHOLD: float
         IFS_CLOUD_BASE_URL: Optional[str]
@@ -138,9 +142,11 @@ if TYPE_CHECKING:
     OPENROUTER_MODEL: str
     GROQ_API_KEY: Optional[str]
     GROQ_MODEL: str
-    DEEPGRAM_API_KEY: Optional[str]
-    ELEVENLABS_API_KEY: Optional[str]
-    ELEVENLABS_VOICE_ID: Optional[str]
+    STT_API_KEY: Optional[str]
+    STT_MODEL: str
+    STT_LANGUAGE: str
+    TTS_API_KEY: Optional[str]
+    LLM_PROVIDER: str
     MYSQL_HOST: str
     MYSQL_USER: str
     MYSQL_PASSWORD: str

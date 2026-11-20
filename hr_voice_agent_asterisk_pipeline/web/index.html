@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentBuilder — Voice AI Agent Platform | EOXYS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --orange:#f7941d; --navy:#16225c; --navy-2:#1b2a6b; --teal:#0e7c66; --teal-2:#0a5c4c;
+  --ink:#1c2333; --muted:#64748B; --border:#E6E9EF; --card:#eef1f4; --white:#fff;
+  --radius:14px;
+}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{margin:0;font-family:'Manrope',system-ui,sans-serif;color:var(--ink);background:#fff;line-height:1.6;}
+h1,h2,h3,h4,h5{font-family:'Poppins',sans-serif;margin:0;}
+p{margin:0;}
+a{color:inherit;text-decoration:none;}
+ul{margin:0;padding:0;list-style:none;}
+img{max-width:100%;display:block;}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px;}
+section{padding:70px 0;}
+.eyebrow{display:flex;align-items:center;justify-content:center;gap:8px;font-size:12.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#e2532b;margin-bottom:10px;}
+.eyebrow:before{content:"✦";color:#e2532b;}
+.sec-title{text-align:center;max-width:720px;margin:0 auto 40px;}
+.sec-title h2{font-size:30px;font-weight:700;color:var(--teal);}
+.sec-title h2.navy{color:var(--navy);}
+.sec-title p{color:var(--muted);font-size:15px;margin-top:12px;}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:13px 26px;border-radius:30px;font-weight:700;font-size:14px;cursor:pointer;border:2px solid transparent;font-family:'Manrope',sans-serif;}
+.btn-primary{background:var(--teal);color:#fff;}
+.btn-primary:hover{background:var(--teal-2);}
+.btn-outline{background:transparent;color:#fff;border-color:rgba(255,255,255,.6);}
+.btn-outline:hover{border-color:#fff;}
+.btn-orange{background:var(--orange);color:#fff;}
+.btn-orange:hover{background:#e0820f;}
+
+/* ---------- HEADER ---------- */
+header{position:sticky;top:0;z-index:60;background:linear-gradient(100deg,var(--teal) 0%,var(--teal-2) 30%,var(--navy) 75%,var(--navy-2) 100%);}
+.nav{display:flex;align-items:center;justify-content:space-between;padding:14px 24px;max-width:1180px;margin:0 auto;}
+.brand{display:flex;align-items:baseline;gap:2px;font-family:'Poppins',sans-serif;font-weight:700;font-size:26px;color:#fff;}
+.brand .e{color:#5be0b3;}
+.brand small{display:block;font-size:9px;font-weight:400;letter-spacing:.15em;color:rgba(255,255,255,.7);margin-left:2px;}
+.brand-wrap{display:flex;flex-direction:column;}
+.nav-links{display:flex;gap:26px;font-size:14px;font-weight:600;color:#fff;}
+.nav-links a{opacity:.92;}
+.nav-links a:hover{opacity:1;}
+.nav-cta .btn{padding:10px 20px;font-size:13px;}
+@media (max-width:900px){.nav-links{display:none;}}
+
+/* ---------- HERO ---------- */
+.hero{background:linear-gradient(135deg,var(--navy) 0%,var(--navy-2) 60%,#101a45 100%);color:#fff;text-align:center;padding:90px 0 60px;}
+.crumb{font-size:12.5px;color:rgba(255,255,255,.6);margin-bottom:18px;}
+.hero h1{font-size:44px;max-width:820px;margin:0 auto 18px;line-height:1.18;font-weight:700;}
+.hero h1 span{color:var(--orange);}
+.hero p.sub{max-width:600px;margin:0 auto 30px;color:rgba(255,255,255,.8);font-size:16px;}
+.hero-ctas{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;}
+
+/* ---------- STATS ---------- */
+.stat-row{display:flex;justify-content:center;gap:0;flex-wrap:wrap;}
+.stat-box{padding:0 40px;text-align:center;border-right:1px solid var(--border);}
+.stat-box:last-child{border-right:none;}
+.stat-box h3{font-size:34px;color:var(--orange);font-weight:800;margin-bottom:6px;}
+.stat-box p{font-size:13px;color:var(--muted);max-width:150px;margin:0 auto;}
+
+/* ---------- TRY IT ---------- */
+.try-section{background:var(--navy);color:#fff;}
+.try-section .eyebrow{color:#ffb066;}
+.try-section .eyebrow:before{color:#ffb066;}
+.try-grid{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:center;margin-top:10px;}
+.try-visual{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:16px;padding:30px;text-align:center;}
+.call-orb{width:100px;height:100px;border-radius:50%;background:var(--orange);margin:0 auto 18px;display:flex;align-items:center;justify-content:center;}
+.call-orb.active{animation:orbpulse 1.6s infinite;}
+@keyframes orbpulse{0%{box-shadow:0 0 0 0 rgba(247,148,32,.55);}70%{box-shadow:0 0 0 22px rgba(247,148,32,0);}100%{box-shadow:0 0 0 0 rgba(247,148,32,0);}}
+.status-line{font-size:13.5px;opacity:.75;margin-bottom:18px;min-height:18px;}
+.transcript{background:rgba(0,0,0,.25);border-radius:10px;padding:14px;font-size:12.5px;text-align:left;min-height:120px;max-height:160px;overflow-y:auto;}
+.tline{margin-bottom:8px;}
+.tline b{color:var(--orange);}
+.try-form{background:#fff;color:var(--ink);border-radius:16px;padding:28px;}
+.try-form h4{font-size:18px;margin-bottom:4px;}
+.hint{color:var(--muted);font-size:13px;margin-bottom:18px;}
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:12.5px;font-weight:700;margin-bottom:6px;}
+.field input,.field select{width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;}
+.phone-row{display:flex;gap:8px;}
+.phone-row select{width:84px;flex-shrink:0;}
+.err{color:#DC2626;font-size:11.5px;margin-top:4px;display:none;}
+.try-form .btn{width:100%;justify-content:center;margin-top:6px;border:none;cursor:pointer;}
+
+
+.hr-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center;}
+.hr-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);border-radius:30px;font-size:12px;font-weight:700;letter-spacing:.04em;color:#ffd7a8;margin-bottom:18px;}
+.hr-dot{width:8px;height:8px;border-radius:50%;background:#34d399;box-shadow:0 0 0 0 rgba(52,211,153,.6);animation:hrping 2s infinite;}
+@keyframes hrping{70%{box-shadow:0 0 0 8px rgba(52,211,153,0);}100%{box-shadow:0 0 0 0 rgba(52,211,153,0);}}
+.hr-copy h2{font-size:42px;line-height:1.15;font-weight:700;color:#fff;margin-bottom:16px;}
+.hr-copy h2 span{color:var(--orange);}
+.hr-lead{font-size:16px;color:rgba(255,255,255,.78);max-width:520px;margin-bottom:26px;}
+.hr-points{display:grid;gap:14px;margin-bottom:30px;}
+.hr-points li{display:flex;gap:14px;align-items:flex-start;}
+.hr-ico{flex-shrink:0;width:38px;height:38px;border-radius:10px;background:rgba(247,148,32,.15);color:var(--orange);display:flex;align-items:center;justify-content:center;}
+.hr-points b{display:block;font-size:15px;color:#fff;}
+.hr-points small{display:block;font-size:13px;color:rgba(255,255,255,.65);}
+.hr-cta{display:inline-flex;align-items:center;gap:10px;padding:14px 28px;font-size:15px;}
+.hr-trust{display:flex;gap:22px;flex-wrap:wrap;margin-top:22px;font-size:12.5px;color:rgba(255,255,255,.6);}
+.hr-trust span:before{content:"✓";color:#34d399;margin-right:6px;font-weight:800;}
+.hr-visual svg{width:100%;height:auto;filter:drop-shadow(0 24px 40px rgba(0,0,0,.35));}
+@media(max-width:900px){.hr-grid{grid-template-columns:1fr;gap:36px;}.hr-copy h2{font-size:32px;}}
+
+/* ---------- TABS ---------- */
+.tabs-bar{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:30px;}
+.tab-btn{padding:9px 18px;border-radius:30px;border:1px solid var(--border);background:#fff;font-size:13.5px;font-weight:600;color:var(--ink);cursor:pointer;font-family:inherit;}
+.tab-btn.active{background:var(--orange);border-color:var(--orange);color:#fff;}
+.tab-panel{display:none;max-width:720px;margin:0 auto;}
+.tab-panel.active{display:block;}
+.tab-panel li{padding:10px 0;font-size:14.5px;border-bottom:1px solid #F1F5F9;}
+.tab-panel li:before{content:"✓ ";color:var(--orange);font-weight:800;}
+
+/* ---------- CARD GRID (challenges / architecture) ---------- */
+.card-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;}
+.card-grid.cols-3{grid-template-columns:repeat(3,1fr);}
+.card{background:var(--card);border-radius:12px;padding:24px;}
+.card h4{font-size:16px;margin-bottom:8px;color:var(--navy);}
+.card p{font-size:13.5px;color:var(--muted);}
+
+/* ---------- FEATURE GRID (transformation / why choose us) ---------- */
+.feat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
+.feat-item{background:#fff;border:1px solid var(--border);border-radius:12px;padding:22px 16px;text-align:center;}
+.feat-item h4{color:var(--teal);font-size:20px;margin-bottom:8px;}
+.feat-item p{font-size:13px;color:var(--muted);}
+.disclaimer{text-align:center;color:#94A3B8;font-size:12.5px;margin-top:20px;}
+
+/* ---------- WORKFLOW / ROADMAP ---------- */
+.flow{display:flex;justify-content:center;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px;}
+.flow-step{width:110px;text-align:center;}
+.flow-step .circ{width:52px;height:52px;border-radius:50%;background:var(--orange);color:#fff;font-weight:800;font-size:16px;display:flex;align-items:center;justify-content:center;margin:0 auto 10px;}
+.flow-step p{font-size:12.5px;font-weight:700;}
+.flow-arrow{font-size:20px;color:var(--orange);font-weight:700;margin-top:-30px;}
+@media(max-width:900px){.flow-arrow{display:none;}}
+.roadmap-desc{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-top:30px;}
+.roadmap-desc p{font-size:12.5px;color:var(--muted);}
+.roadmap-desc b{color:var(--ink);}
+
+/* ---------- TABLE ---------- */
+.eng-table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+.eng-table th,.eng-table td{padding:14px 18px;text-align:left;font-size:13.5px;border-bottom:1px solid var(--border);}
+.eng-table th{background:var(--card);color:var(--muted);font-weight:700;text-transform:uppercase;font-size:11.5px;letter-spacing:.04em;}
+.eng-table tr:last-child td{border-bottom:none;}
+.eng-table td b{color:var(--navy);}
+
+/* ---------- FAQ ---------- */
+.faq-item{border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden;}
+.faq-q{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;font-weight:700;font-size:14.5px;cursor:pointer;background:#fff;}
+.faq-item.open .faq-q{color:var(--orange);background:#FFF7ED;}
+.faq-q .chev{transition:transform .15s;}
+.faq-item.open .faq-q .chev{transform:rotate(180deg);}
+.faq-a{max-height:0;overflow:hidden;transition:max-height .2s ease;color:var(--muted);font-size:14px;padding:0 20px;}
+.faq-item.open .faq-a{max-height:200px;padding:0 20px 16px;}
+
+/* ---------- FINAL CTA ---------- */
+.final-cta{background:linear-gradient(135deg,var(--teal),var(--navy));color:#fff;text-align:center;border-radius:24px;padding:56px 40px;margin:0 24px;}
+.final-cta h2{font-size:28px;margin-bottom:12px;font-weight:700;}
+.final-cta p{color:rgba(255,255,255,.85);margin-bottom:24px;}
+
+/* ---------- FOOTER ---------- */
+footer{background:var(--navy);color:rgba(255,255,255,.75);padding-top:50px;}
+.foot-grid{display:grid;grid-template-columns:1.3fr repeat(4,1fr);gap:30px;padding-bottom:34px;border-bottom:1px solid rgba(255,255,255,.12);}
+.foot-grid h5{color:#fff;font-size:13px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px;}
+.foot-grid ul{display:flex;flex-direction:column;gap:9px;font-size:13.5px;}
+.foot-brand{font-family:'Poppins',sans-serif;font-weight:700;font-size:22px;color:#fff;margin-bottom:10px;}
+.foot-brand .e{color:#5be0b3;}
+.foot-bottom{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;flex-wrap:wrap;gap:10px;padding:20px 0;}
+.social{display:flex;gap:14px;}
+.social a{width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;font-size:13px;}
+
+@media(max-width:900px){
+  .hero h1{font-size:30px;}
+  .try-grid,.card-grid,.feat-grid,.card-grid.cols-3,.roadmap-desc{grid-template-columns:1fr 1fr;}
+  .foot-grid{grid-template-columns:1fr 1fr;}
+}
+@media(max-width:600px){
+  .try-grid,.card-grid,.feat-grid,.card-grid.cols-3,.roadmap-desc,.foot-grid{grid-template-columns:1fr;}
+  .stat-box{border-right:none;padding:14px 20px;}
+}
+</style>
+<link rel="stylesheet" href="/static/webcall.css">
+</head>
+<body>
+
+<!-- ================= HEADER ================= -->
+<header>
+  <div class="nav">
+    <div class="brand-wrap">
+      <div class="brand"><span class="e">e</span>oxys</div>
+      <small style="color:rgba(255,255,255,.7);font-size:9px;letter-spacing:.15em;margin-left:1px;">EVER SHARP</small>
+    </div>
+    <nav class="nav-links">
+      <a href="#products">Products</a>
+      <a href="#services">Services</a>
+      <a href="#stories">Success Stories</a>
+      <a href="#documents">Documents</a>
+      <a href="#about">About Us</a>
+    </nav>
+    <div class="nav-cta"><a class="btn btn-primary" href="#contact">Contact Us →</a></div>
+  </div>
+</header>
+
+<!-- ================= HERO ================= -->
+<section class="hero" style="padding-bottom:70px;">
+  <div class="wrap">
+    <p class="crumb">Home &nbsp;|&nbsp; AgentBuilder</p>
+    <h1>Build a Voice AI Agent That <span>Answers, Assists, and Automates</span> Every Call</h1>
+    <p class="sub">Create a no-code voice AI agent that handles inquiries, reminders, approvals, and everyday requests — engaging customers the way most of them already prefer: by voice.</p>
+    <div class="hero-ctas">
+      <a class="btn btn-orange" href="#try">Try It for Yourself</a>
+      <a class="btn btn-outline" href="#roadmap">See How It Works</a>
+    </div>
+  </div>
+</section>
+
+<!-- ================= OVERVIEW STATS ================= -->
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Overview</div>
+    <div class="sec-title"><h2>Why Voice, Why AgentBuilder</h2></div>
+    <div class="stat-row">
+      <div class="stat-box"><h3><span class="counter" data-count="71">0</span>%</h3><p>of customers prefer voice over typing</p></div>
+      <div class="stat-box"><h3>24/7</h3><p>always-on availability</p></div>
+      <div class="stat-box"><h3><span class="counter" data-count="0">0</span></h3><p>lines of code to build an agent</p></div>
+      <div class="stat-box"><h3><span class="counter" data-count="8">0</span>+</h3><p>channels from one build</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= TRY OUR HR VOICEBOT ================= -->
+<section class="try-section" id="try">
+  <div class="wrap">
+    <div class="hr-grid">
+      <div class="hr-copy">
+        <div class="hr-badge"><span class="hr-dot"></span> Live Demo · Built with AgentBuilder</div>
+        <h2>Try our <span>HR Voicebot</span></h2>
+        <p class="hr-lead">A conversational voice assistant that handles everyday HR queries instantly, so your people get answers and your HR team gets time back.</p>
+        <ul class="hr-points">
+          <li><span class="hr-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span><div><b>Leave &amp; attendance</b><small>Check balances, apply and track leave requests by voice</small></div></li>
+          <li><span class="hr-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg></span><div><b>Policies &amp; payroll</b><small>Instant answers on policies, payslips and benefits</small></div></li>
+          <li><span class="hr-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><div><b>Onboarding &amp; recruitment</b><small>Candidate screening, interview scheduling and new-hire guidance</small></div></li>
+        </ul>
+        <a class="btn btn-orange hr-cta" href="#" id="hrVoicebotBtn">Try our HR Voicebot
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></a>
+        <div class="hr-trust"><span>24/7 availability</span><span>Multilingual</span><span>Secure &amp; compliant</span></div>
+      </div>
+
+      <div class="hr-visual" aria-hidden="true">
+        <svg viewBox="0 0 520 480" xmlns="http://www.w3.org/2000/svg" role="img">
+          <defs>
+            <linearGradient id="hrBg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a3a8c"/><stop offset="1" stop-color="#1b2a6b"/></linearGradient>
+            <linearGradient id="hrOr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffae45"/><stop offset="1" stop-color="#f7941d"/></linearGradient>
+            <linearGradient id="hrSkin" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6d2b8"/><stop offset="1" stop-color="#ebb896"/></linearGradient>
+          </defs>
+          <rect x="20" y="20" width="480" height="440" rx="28" fill="url(#hrBg)" stroke="rgba(255,255,255,.18)"/>
+          <circle cx="260" cy="170" r="125" fill="rgba(255,255,255,.05)"/>
+          <circle cx="260" cy="170" r="92" fill="rgba(255,255,255,.07)"/>
+          <!-- professional avatar with headset -->
+          <path d="M150 330c0-52 49-82 110-82s110 30 110 82v10H150z" fill="#fff"/>
+          <path d="M225 252l35 40 35-40z" fill="#e8ecf5"/>
+          <path d="M260 292l-14 48h28z" fill="#f7941d"/>
+          <rect x="244" y="228" width="32" height="30" rx="10" fill="url(#hrSkin)"/>
+          <ellipse cx="260" cy="170" rx="52" ry="60" fill="url(#hrSkin)"/>
+          <path d="M207 160c-4-48 28-70 58-68 34 2 50 28 44 70-10-22-26-34-52-34-24 0-42 12-50 32z" fill="#2b2f45"/>
+          <circle cx="241" cy="178" r="4" fill="#2b2f45"/><circle cx="279" cy="178" r="4" fill="#2b2f45"/>
+          <path d="M245 203q15 12 30 0" stroke="#b5654a" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+          <!-- headset -->
+          <path d="M202 172c-6-60 30-88 60-88s66 28 58 88" fill="none" stroke="url(#hrOr)" stroke-width="9" stroke-linecap="round"/>
+          <rect x="190" y="160" width="20" height="44" rx="10" fill="url(#hrOr)"/>
+          <rect x="310" y="160" width="20" height="44" rx="10" fill="url(#hrOr)"/>
+          <path d="M320 200q4 34-36 40" fill="none" stroke="url(#hrOr)" stroke-width="6" stroke-linecap="round"/>
+          <circle cx="280" cy="241" r="7" fill="#f7941d"/>
+          <!-- waveform -->
+          <g fill="#f7941d" opacity=".95">
+            <rect x="60" y="150" width="6" height="40" rx="3"/><rect x="74" y="135" width="6" height="70" rx="3"/>
+            <rect x="88" y="120" width="6" height="100" rx="3"/><rect x="102" y="140" width="6" height="60" rx="3"/>
+            <rect x="116" y="158" width="6" height="24" rx="3"/>
+            <rect x="398" y="158" width="6" height="24" rx="3"/><rect x="412" y="140" width="6" height="60" rx="3"/>
+            <rect x="426" y="120" width="6" height="100" rx="3"/><rect x="440" y="135" width="6" height="70" rx="3"/>
+            <rect x="454" y="150" width="6" height="40" rx="3"/>
+          </g>
+          <!-- chat bubbles -->
+          <g font-family="Manrope,sans-serif">
+            <rect x="48" y="366" width="250" height="40" rx="20" fill="rgba(255,255,255,.14)"/>
+            <text x="68" y="391" font-size="13.5" fill="#fff">How many leave days do I have left?</text>
+            <rect x="170" y="414" width="302" height="36" rx="18" fill="url(#hrOr)"/>
+            <text x="190" y="437" font-size="13.5" fill="#fff" font-weight="600">You have 12 days of annual leave.</text>
+          </g>
+          <!-- floating chips -->
+          <g font-family="Manrope,sans-serif" font-size="12" font-weight="700">
+            <rect x="40" y="52" width="118" height="30" rx="15" fill="#fff"/><circle cx="58" cy="67" r="5" fill="#10b981"/><text x="70" y="72" fill="#16225c">Agent online</text>
+            <rect x="372" y="52" width="108" height="30" rx="15" fill="#fff"/><text x="388" y="72" fill="#16225c">Voice · HR</text>
+          </g>
+        </svg>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= TOUCHPOINTS ================= -->
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Optimized For Your Workflows</div>
+    <div class="sec-title"><h2>One Agent, Every Customer Touchpoint</h2></div>
+    <div class="tabs-bar" id="tabsBar"></div>
+    <div id="tabPanels"></div>
+  </div>
+</section>
+
+<!-- ================= CHALLENGES ================= -->
+<section style="background:#FAFBFC;">
+  <div class="wrap">
+    <div class="eyebrow">The Challenges</div>
+    <div class="sec-title"><h2 class="navy">Running Customer Operations Without a Voice AI Agent</h2></div>
+    <div class="card-grid">
+      <div class="card"><h4>🔓 Data scattered, hard to secure</h4><p>Customer details spread across calls, forms, chat, and email make it hard to keep data integrity and security consistent across every touchpoint.</p></div>
+      <div class="card"><h4>🤝 No room for empathy at scale</h4><p>Sensitive conversations still need a human touch, but stretched teams can't be everywhere — automation and empathy end up in tension.</p></div>
+      <div class="card"><h4>🧩 Legacy systems don't talk to each other</h4><p>Every CRM, ERP, and telephony platform speaks its own language, so integration complexity slows every new automation project down.</p></div>
+      <div class="card"><h4>📉 Quality drifts without oversight</h4><p>Without continuous monitoring, automated responses can quietly degrade or drift — introducing bias no one notices until it's a complaint.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= TRANSFORMATION ================= -->
+<section>
+  <div class="wrap">
+    <div class="eyebrow">The Transformation</div>
+    <div class="sec-title"><h2>What Changes When You Add a Voice AI Agent</h2></div>
+    <div class="feat-grid">
+      <div class="feat-item"><h4>Faster</h4><p>Personalized engagement on every channel, instantly</p></div>
+      <div class="feat-item"><h4>Leaner</h4><p>Operational efficiency through automated, optimized workflows</p></div>
+      <div class="feat-item"><h4>Sharper</h4><p>Decision-making powered by real-time predictive analytics</p></div>
+      <div class="feat-item"><h4>Consistent</h4><p>Brand messaging across every touchpoint, building loyalty</p></div>
+    </div>
+    <p class="disclaimer">Illustrative outcomes based on typical AgentBuilder deployments — swap in your own measured results once your agent is live.</p>
+  </div>
+</section>
+
+<!-- ================= ROADMAP ================= -->
+<section style="background:#FAFBFC;" id="roadmap">
+  <div class="wrap">
+    <div class="eyebrow">Roadmap to Peak Performance</div>
+    <div class="sec-title"><h2 class="navy">Five Steps From Idea to Live Agent</h2></div>
+    <div class="flow">
+      <div class="flow-step"><div class="circ">1</div><p>Build</p></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step"><div class="circ">2</div><p>Test</p></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step"><div class="circ">3</div><p>Integrate</p></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step"><div class="circ">4</div><p>Go Live</p></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step"><div class="circ">5</div><p>Analyze</p></div>
+    </div>
+    <div class="roadmap-desc">
+      <p><b>Build</b> — Define goals and write instructions in plain language, no code.</p>
+      <p><b>Test</b> — Run text and voice conversations, flag bad replies, fix them inline.</p>
+      <p><b>Integrate</b> — Connect your LLM, STT, TTS, CRM, ERP, and telephony stack.</p>
+      <p><b>Go Live</b> — Publish across voice, SMS, WhatsApp, email, and web.</p>
+      <p><b>Analyze</b> — Track usage and success metrics, keep tuning instructions.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ENGINEERED FOR IMPACT ================= -->
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Engineered for Impact</div>
+    <div class="sec-title"><h2>What's Running Under the Hood</h2></div>
+    <table class="eng-table">
+      <thead><tr><th>Layer</th><th>What it handles</th></tr></thead>
+      <tbody>
+        <tr><td><b>Telephony</b></td><td>SIP-based DID numbers with multi-channel support for inbound and outbound voice calls</td></tr>
+        <tr><td><b>Voice pipeline</b></td><td>Real-time STT → LLM → TTS handling for natural, low-latency conversation</td></tr>
+        <tr><td><b>Language understanding</b></td><td>NLP for intent extraction, requirement parsing, and sentiment detection</td></tr>
+        <tr><td><b>Integrations</b></td><td>Connects to existing CRM, ERP, and marketing platforms out of the box</td></tr>
+        <tr><td><b>Analytics</b></td><td>Automated data pipelines feeding real-time analytics across every channel</td></tr>
+        <tr><td><b>Compliance</b></td><td>Built with data privacy regulations in mind, including GDPR and India's data protection laws</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= PLATFORM ARCHITECTURE ================= -->
+<section style="background:#FAFBFC;">
+  <div class="wrap">
+    <div class="eyebrow">Platform Architecture</div>
+    <div class="sec-title"><h2 class="navy">How an AgentBuilder Agent Processes Every Interaction</h2></div>
+    <div class="card-grid cols-3">
+      <div class="card"><h4>📥 Data ingestion</h4><p>Collects audio from SIP/RTSP streams and microphones, and text from chat, forms, email, and APIs.</p></div>
+      <div class="card"><h4>🎛️ Preprocessing</h4><p>Cleans and prepares each modality — spectrograms and noise reduction for audio, NLP parsing for text.</p></div>
+      <div class="card"><h4>🧬 Feature fusion</h4><p>Combines audio and text signals into one representation using attention-based, transformer-style fusion.</p></div>
+      <div class="card"><h4>🧠 AI model layer</h4><p>Runs the right model for each input — CNN/RNN for audio, LLMs for text — then fuses the predictions.</p></div>
+      <div class="card"><h4>📊 Output &amp; alerts</h4><p>Delivers the response and surfaces real-time classification, event detection, and predictive alerts.</p></div>
+      <div class="card"><h4>🔐 Warm handoff</h4><p>Transfers to a human agent with full context retained whenever a conversation needs a person.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= FAQ ================= -->
+<section>
+  <div class="wrap" style="max-width:760px;">
+    <div class="eyebrow">FAQ</div>
+    <div class="sec-title"><h2>Common Questions</h2></div>
+    <div id="faqList"></div>
+  </div>
+</section>
+
+<!-- ================= FINAL CTA ================= -->
+<section style="padding-bottom:0;padding-top:0;">
+  <div class="final-cta">
+    <h2>Handle Every Call the Smarter Way</h2>
+    <p>Build your first Voice AI Agent today — no code, no long rollout.</p>
+    <div class="hero-ctas" style="margin-bottom:0;">
+      <a class="btn btn-orange" href="#try">Try It for Yourself</a>
+      <a class="btn btn-outline" href="#contact">Start Building</a>
+    </div>
+  </div>
+</section>
+
+<!-- ================= FOOTER ================= -->
+<footer id="contact">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <div class="foot-brand"><span class="e">e</span>oxys</div>
+        <p style="font-size:13px;max-width:240px;">No-code Voice AI Agent platform for customer support, sales, and marketing automation, from EOXYS.</p>
+      </div>
+      <div><h5>Products</h5><ul><li>eFabric Platform</li><li>TML120 ML SOM</li><li>XENO+ R2L100 Vision ML SOM</li><li>Programmable Gateway</li></ul></div>
+      <div><h5>Services</h5><ul><li>Product Engineering Services</li><li>Software Engineering Services</li><li>AI Model Services</li><li>AgentBuilder Voice AI</li></ul></div>
+      <div><h5>Success Stories</h5><ul><li>IoT Product Engineering</li><li>Cloud Software Engineering</li><li>Case Studies</li></ul></div>
+      <div><h5>Get in Touch</h5><ul><li>+91-80-23652266</li><li>info@eoxys.com</li><li>22, 7th Cross, KHB Main Road, RT Nagar, Bengaluru, Karnataka 560032</li></ul></div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 EOXYS. All Rights Reserved.</span>
+      <div class="social">
+        <a href="#" aria-label="Facebook">f</a>
+        <a href="#" aria-label="X / Twitter">𝕏</a>
+        <a href="#" aria-label="LinkedIn">in</a>
+        <a href="#" aria-label="YouTube">▶</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* ---------- Touchpoint tabs ---------- */
+const TOUCHPOINTS=[
+  {id:'support', label:'Customer Support & Retention',
+   items:['Voice-powered ticket triaging and self-service knowledge bases speed up resolution times',
+          'Self-service voice assistants handle HR, leave management, and work-plan assignments',
+          'AI-powered IVR-style call flows optimize call center workflows',
+          'Sentiment analysis and anomaly detection catch dissatisfaction early, before it escalates']},
+  {id:'postpurchase', label:'Post-Purchase Engagement',
+   items:['Recommender-style prompts suggest relevant add-ons, boosting cross-sell and upsell',
+          'Automated surveys and feedback calls monitor satisfaction continuously',
+          'Follow-up reminders keep customers engaged after the sale']},
+  {id:'presales', label:'Pre-Sales & Discovery',
+   items:['Instant, always-on responses guide product navigation and recommend solutions',
+          'Behavior-based recommendations adapt to how each caller engages',
+          'Predictive scoring flags high-potential leads and personalizes outreach']},
+  {id:'sales', label:'Sales Enablement',
+   items:['CRM-grounded insights give reps contextual suggestions in the moment',
+          'Deal-closing probability scoring helps prioritize follow-up',
+          'Automated follow-ups and scheduling reduce human error and missed touches']},
+  {id:'marketing', label:'Marketing Automation',
+   items:['Dynamic audience segmentation personalizes outreach at scale',
+          'Real-time campaign analytics measure performance across email, social, and web',
+          'Consistent messaging is delivered across every channel automatically']},
+];
+function renderTabs(){
+  const bar=document.getElementById('tabsBar');
+  const panels=document.getElementById('tabPanels');
+  bar.innerHTML=''; panels.innerHTML='';
+  TOUCHPOINTS.forEach((t,i)=>{
+    const b=document.createElement('button');
+    b.className='tab-btn'+(i===0?' active':'');
+    b.textContent=t.label;
+    b.onclick=()=>selectTab(t.id);
+    bar.appendChild(b);
+    const p=document.createElement('div');
+    p.className='tab-panel'+(i===0?' active':'');
+    p.id='panel-'+t.id;
+    p.innerHTML=`<ul>${t.items.map(x=>`<li>${x}</li>`).join('')}</ul>`;
+    panels.appendChild(p);
+  });
+}
+function selectTab(id){
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active', TOUCHPOINTS[i].id===id));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active', p.id==='panel-'+id));
+}
+renderTabs();
+
+/* ---------- FAQ ---------- */
+const FAQS=[
+  ['What is a Voice AI Agent?','It\'s an AI-powered system that talks with customers the way a person would — answering questions, handling requests like reminders, and completing simple tasks on its own.'],
+  ['Do I need to write any code to build one?','No. AgentBuilder is a no-code wizard — you define goals, write instructions in plain language, add data, and test, all through the browser.'],
+  ['Which channels can one agent reach?','Voice calls, SMS, email, WhatsApp, web forms, chatbots, self-service portals, and helpdesks — all from a single build.'],
+  ['How does it stay compliant with data privacy laws?','The platform is built with regulations like GDPR and India\'s data protection laws in mind, alongside standard data-integrity and security practices.'],
+  ['Can it connect to our existing CRM or ERP?','Yes — AgentBuilder integrates with your existing CRM, ERP, and marketing platforms so the agent works with data you already have.'],
+];
+function renderFaq(){
+  const wrap=document.getElementById('faqList');
+  wrap.innerHTML='';
+  FAQS.forEach((f)=>{
+    const item=document.createElement('div');
+    item.className='faq-item';
+    item.innerHTML=`
+      <div class="faq-q" onclick="this.parentElement.classList.toggle('open')">
+        ${f[0]}
+        <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="faq-a">${f[1]}</div>`;
+    wrap.appendChild(item);
+  });
+}
+renderFaq();
+
+/* ---------- Stat counters ---------- */
+document.addEventListener('DOMContentLoaded', function () {
+  var counters = document.querySelectorAll('.counter');
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) {
+        var el = entry.target, target = +el.dataset.count, cur = 0;
+        var step = Math.max(1, Math.ceil(target / 40));
+        var t = setInterval(function () {
+          cur += step;
+          if (cur >= target) { cur = target; clearInterval(t); }
+          el.textContent = cur;
+        }, 25);
+        observer.unobserve(el);
+      }
+    });
+  }, { threshold: 0.5 });
+  counters.forEach(function (c) { observer.observe(c); });
+});
+</script>
+
+<!-- ================= WEB CALL MODAL ================= -->
+<div class="wc-overlay" id="wcOverlay" role="dialog" aria-modal="true" aria-labelledby="wcTitle">
+  <div class="wc-card" id="wcCard" data-state="idle">
+    <span class="wc-status"><i></i><span id="wcStatus">Ready</span></span>
+    <h3 id="wcTitle">Calling HR Voicebot</h3>
+    <p class="wc-sub" id="wcSub" aria-live="polite"></p>
+    <div class="wc-meters" id="wcMeters" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    <div class="wc-timer" id="wcTimer"></div>
+    <div class="wc-pad" id="wcPad"><button type="button" data-d="1">1</button><button type="button" data-d="2">2</button><button type="button" data-d="3">3</button><button type="button" data-d="4">4</button><button type="button" data-d="5">5</button><button type="button" data-d="6">6</button><button type="button" data-d="7">7</button><button type="button" data-d="8">8</button><button type="button" data-d="9">9</button><button type="button" data-d="*">*</button><button type="button" data-d="0">0</button><button type="button" data-d="#">#</button></div>
+    <div class="wc-actions">
+      <button class="wc-btn" id="wcMute" type="button">Mute</button>
+      <button class="wc-btn" id="wcKeys" type="button">Keypad</button>
+      <button class="wc-btn end" id="wcEnd" type="button">End call</button>
+      <button class="wc-btn go" id="wcRetry" type="button" hidden>Call again</button>
+      <button class="wc-btn" id="wcClose" type="button">Close</button>
+    </div>
+    <p class="wc-note">Your voice is sent to the HR Voicebot for this demo call only.</p>
+    <audio id="wcAudio" autoplay playsinline></audio>
+  </div>
+</div>
+<script src="/static/webcall.js"></script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 """
-hr_voice_agent/asterisk/deepgram_stt.py
+hr_voice_agent/asterisk/stt_client.py
 
-Real-Time Deepgram Streaming Speech-to-Text (STT) Client
+Real-Time Streaming Speech-to-Text (STT) Client
 ========================================================
 Connects to Deepgram's streaming WebSocket API over raw PCM audio.
 Supports real-time VAD events (instant barge-in detection) and
@@ -19,10 +19,10 @@ from typing import Callable, Optional
 import aiohttp
 import numpy as np
 
-logger = logging.getLogger("asterisk.deepgram_stt")
+logger = logging.getLogger("asterisk.stt")
 
 
-class DeepgramStreamingSTT:
+class StreamingSTTClient:
     """
     Manages a real-time streaming WebSocket connection to Deepgram Nova-3.
 
@@ -96,13 +96,13 @@ class DeepgramStreamingSTT:
         # Holding our own connector reference prevents the GC from ever touching it.
         self._connector = aiohttp.TCPConnector(force_close=True)
         self._session = aiohttp.ClientSession(connector=self._connector)
-        logger.info(f"🎙️ [Deepgram STT] Connecting to streaming API (model={self.model}, rate={self.sample_rate}Hz)...")
+        logger.info(f"🎙️ [STT] Connecting to streaming API (model={self.model}, rate={self.sample_rate}Hz)...")
         try:
             self._ws = await self._session.ws_connect(ws_url, headers=headers)
-            logger.info("✅ [Deepgram STT] WebSocket connected.")
+            logger.info("✅ [STT] WebSocket connected.")
             self._receive_task = asyncio.create_task(self._listen_loop(), name="DeepgramSTTListener")
         except Exception as e:
-            logger.error(f"❌ [Deepgram STT] Connection error: {e}")
+            logger.error(f"❌ [STT] Connection error: {e}")
             await self.close()
             raise
 
@@ -113,7 +113,7 @@ class DeepgramStreamingSTT:
         try:
             await self._ws.send_bytes(pcm_bytes)
         except Exception as e:
-            logger.debug(f"[Deepgram STT] Audio send failed: {e}")
+            logger.debug(f"[STT] Audio send failed: {e}")
 
     async def _listen_loop(self) -> None:
         """Receives and parses transcripts and VAD events from Deepgram."""
@@ -183,13 +183,13 @@ class DeepgramStreamingSTT:
                                     logger.error(f"Error in on_speech_final callback: {ex}", exc_info=True)
 
                 elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                    logger.warning("⚠️ [Deepgram STT] WebSocket closed.")
+                    logger.warning("⚠️ [STT] WebSocket closed.")
                     break
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.warning(f"⚠️ [Deepgram STT] Listener loop error: {e}")
+            logger.warning(f"⚠️ [STT] Listener loop error: {e}")
 
     async def close(self) -> None:
         """Closes WebSocket and cleans up resources."""
@@ -215,4 +215,4 @@ class DeepgramStreamingSTT:
             except Exception:
                 pass
             self._connector = None
-        logger.info("🔌 [Deepgram STT] Stream closed cleanly.")
+        logger.info("🔌 [STT] Stream closed cleanly.")

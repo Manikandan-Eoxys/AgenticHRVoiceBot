@@ -1,0 +1,30 @@
+/* Web call modal - matches the AgentBuilder navy/orange theme */
+.wc-overlay{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(10,16,48,.72);backdrop-filter:blur(6px);}
+.wc-overlay.open{display:flex;}
+.wc-card{width:100%;max-width:400px;background:linear-gradient(160deg,#2a3a8c,#1b2a6b);color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:24px;padding:28px 26px 24px;box-shadow:0 30px 70px rgba(0,0,0,.5);font-family:'Manrope',system-ui,sans-serif;text-align:center;}
+.wc-status{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:700;padding:6px 14px;border-radius:30px;background:rgba(255,255,255,.1);}
+.wc-status i{width:8px;height:8px;border-radius:50%;background:#94a3b8;}
+.wc-card[data-state=connecting] .wc-status i{background:#f7941d;animation:wcpulse 1s infinite;}
+.wc-card[data-state=live] .wc-status i{background:#34d399;animation:wcpulse 2s infinite;}
+.wc-card[data-state=error] .wc-status i{background:#f87171;}
+@keyframes wcpulse{50%{opacity:.35}}
+.wc-card h3{font-family:'Poppins',sans-serif;font-size:22px;margin:18px 0 4px;}
+.wc-sub{font-size:14px;color:rgba(255,255,255,.72);min-height:42px;}
+.wc-meters{display:flex;justify-content:center;align-items:center;gap:4px;height:84px;margin:14px 0;}
+.wc-meters span{width:6px;height:8px;border-radius:4px;background:#f7941d;opacity:.45;transition:height .08s linear;}
+.wc-timer{font-variant-numeric:tabular-nums;font-size:15px;font-weight:700;color:#ffd7a8;height:22px;}
+.wc-actions{display:flex;justify-content:center;gap:12px;margin-top:14px;}
+.wc-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:52px;height:52px;padding:0 20px;border-radius:30px;border:0;cursor:pointer;font:700 14px 'Manrope',sans-serif;color:#fff;background:rgba(255,255,255,.14);}
+.wc-btn:hover{background:rgba(255,255,255,.22);}
+.wc-btn:focus-visible{outline:3px solid #ffd7a8;outline-offset:2px;}
+.wc-btn.on{background:#fff;color:#1b2a6b;}
+.wc-btn.end{background:#e5484d;}.wc-btn.end:hover{background:#cf3a3f;}
+.wc-btn.go{background:#f7941d;}.wc-btn.go:hover{background:#e0820f;}
+.wc-pad{display:none;grid-template-columns:repeat(3,1fr);gap:8px;max-width:240px;margin:16px auto 0;}
+.wc-pad.open{display:grid;}
+.wc-pad button{height:44px;border-radius:12px;border:0;background:rgba(255,255,255,.12);color:#fff;font:700 17px 'Poppins',sans-serif;cursor:pointer;}
+.wc-pad button:hover{background:rgba(255,255,255,.22);}
+.wc-pad button:focus-visible{outline:3px solid #ffd7a8;}
+.wc-note{font-size:12px;color:rgba(255,255,255,.55);margin-top:16px;}
+.wc-card [hidden]{display:none!important;}
+@media (prefers-reduced-motion:reduce){.wc-status i,.wc-meters span{animation:none;transition:none;}}

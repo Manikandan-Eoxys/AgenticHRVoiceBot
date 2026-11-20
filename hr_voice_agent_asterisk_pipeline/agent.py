@@ -48,7 +48,8 @@ from config import (
     AST_BRIDGE_ADVERTISE_HOST,
     AST_BRIDGE_PORT,
     AST_SAMPLE_RATE,
-    DEEPGRAM_API_KEY,
+    STT_API_KEY,
+    TTS_API_KEY,
     OLLAMA_MODEL,
     OLLAMA_BASE_URL,
 )
@@ -71,8 +72,10 @@ def validate_config() -> bool:
         missing.append("ARI_USER")
     if not ARI_PASSWORD:
         missing.append("ARI_PASSWORD")
-    if not DEEPGRAM_API_KEY:
-        missing.append("DEEPGRAM_API_KEY")
+    if not STT_API_KEY:
+        missing.append("STT_API_KEY")
+    if not TTS_API_KEY:
+        missing.append("TTS_API_KEY")
 
     if missing:
         logger.error(f"❌ Missing required environment configuration: {', '.join(missing)}")
@@ -82,7 +85,9 @@ def validate_config() -> bool:
     logger.info(f"   • ARI URL:        {ARI_URL} (App: {ARI_APP_NAME})")
     logger.info(f"   • AudioSocket:    {AST_BRIDGE_HOST}:{AST_BRIDGE_PORT} (Advertised: {AST_BRIDGE_ADVERTISE_HOST})")
     logger.info(f"   • Audio Format:   8000 Hz Linear 16-bit PCM (slin)")
-    logger.info(f"   • Local LLM:      {OLLAMA_MODEL} @ {OLLAMA_BASE_URL}")
+    # LLM is decided once here, before any call starts; every call reuses this choice.
+    from llm_selector import get_llm_choice
+    logger.info(f"   • LLM:            {get_llm_choice().describe()}")
     return True
 
 
@@ -138,6 +143,18 @@ async def main() -> None:
 
     server_task = asyncio.create_task(server.start(), name="AsteriskTelephonyServer")
 
+    # 6b. Optional browser web-call front door (WebRTC -> same AudioSocket pipeline)
+    webcall_server = None
+    webcall_task = None
+    try:
+        from webcall.settings import webcall_enabled
+        if webcall_enabled():
+            from webcall.server import WebCallServer
+            webcall_server = WebCallServer(asterisk_server=server)
+            webcall_task = asyncio.create_task(webcall_server.start(), name="WebCallServer")
+    except Exception as e:
+        logger.warning(f"Web call front door not started (phone calls unaffected): {e}")
+
     # Wait until shutdown signal or server error
     try:
         done, pending = await asyncio.wait(
@@ -166,6 +183,13 @@ async def main() -> None:
     except Exception as e:
         logger.error(f"❌ Server error: {e}", exc_info=True)
     finally:
+        if webcall_server is not None:
+            try:
+                await webcall_server.stop()
+            except Exception:
+                pass
+        if webcall_task is not None:
+            webcall_task.cancel()
         if server.http_session and not server.http_session.closed:
             await server.http_session.close()
         logger.info("✅ Asterisk Telephony Daemon stopped cleanly.")

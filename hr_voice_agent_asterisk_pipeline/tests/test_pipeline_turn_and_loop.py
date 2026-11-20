@@ -171,7 +171,8 @@ def test_conversation_pipeline_turn_and_barge_in():
 
         pipeline = ConversationPipeline(
             session=session,
-            deepgram_api_key="fake-key",
+            stt_api_key="fake-key",
+            tts_api_key="fake-key",
             llm_turn_handler=mock_llm_handler,
             sample_rate=8000,
             stt=mock_stt,

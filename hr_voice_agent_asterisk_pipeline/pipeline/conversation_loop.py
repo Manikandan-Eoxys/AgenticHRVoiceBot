@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator as AsyncIteratorABC
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
 from telephony.base import BaseTelephonySession
-from pipeline.stt_deepgram import DeepgramStreamingSTT
+from pipeline.stt_client import StreamingSTTClient
 from pipeline.turn_manager import TurnManager, TurnEvent
 from pipeline.tts_stream import StreamingTTS
 
@@ -31,18 +31,20 @@ class ConversationPipeline:
     def __init__(
         self,
         session: BaseTelephonySession,
-        deepgram_api_key: str = "",
+        stt_api_key: str = "",
+        tts_api_key: str = "",
         llm_turn_handler: Optional[Callable[[str], AsyncIterator[str] | Awaitable[Optional[str]]]] = None,
         sample_rate: int = 8000,
         silence_end_ms: int = 600,
         barge_in_ms: int = 180,
         tts_model: str = "aura-asteria-en",
-        stt: Optional[DeepgramStreamingSTT] = None,
+        stt: Optional[StreamingSTTClient] = None,
         tts: Optional[StreamingTTS] = None,
         turn_manager: Optional[TurnManager] = None,
     ) -> None:
         self.session = session
-        self.deepgram_api_key = deepgram_api_key
+        self.stt_api_key = stt_api_key
+        self.tts_api_key = tts_api_key
         self.llm_turn_handler = llm_turn_handler
         self.sample_rate = sample_rate
 
@@ -55,9 +57,9 @@ class ConversationPipeline:
             on_turn_completed=self._handle_completed_turn,
         )
 
-        # 2. Deepgram STT
-        self.stt = stt or DeepgramStreamingSTT(
-            api_key=deepgram_api_key,
+        # 2. STT
+        self.stt = stt or StreamingSTTClient(
+            api_key=stt_api_key,
             sample_rate=sample_rate,
             endpointing_ms=silence_end_ms // 2,
             on_speech_started=self._handle_speech_started,
@@ -66,7 +68,7 @@ class ConversationPipeline:
 
         # 3. Streaming TTS
         self.tts = tts or StreamingTTS(
-            api_key=deepgram_api_key,
+            api_key=tts_api_key,
             session=session,
             sample_rate=sample_rate,
             model=tts_model,
