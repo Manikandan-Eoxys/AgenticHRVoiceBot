@@ -129,7 +129,6 @@ def prewarm_worker_resources(startup_checks: Callable[[], None] | None = None) -
     start_scheduler()
     atexit.register(stop_scheduler)
     _scheduler_started = True
-    logger.info("⏳ Asterisk Background sync scheduler started.")
     _prime_ollama_model(OLLAMA_BASE_URL, OLLAMA_MODEL)
     if startup_checks:
         startup_checks()

@@ -65,8 +65,17 @@ class IdentityVerificationService(GoalService):
         return self.employee_service.get_employee_verification(employee_id)
 
     @function_tool
-    async def collect_employee_id_via_keypad(self, context: RunContext) -> str:
+    async def collect_employee_id_via_keypad(
+        self,
+        context: RunContext | None = None,
+        employee_id: str | None = None,
+        **kwargs: Any,
+    ) -> str:
         """Capture caller's 4-digit employee ID via phone keypad (DTMF) or digit speech when voice ID fails."""
+        if employee_id:
+            self.log_action("collect_employee_id_via_keypad", employee_id=employee_id)
+            return await self.get_employee_by_id(employee_id=employee_id)
+
         self.log_action("collect_employee_id_via_keypad")
         if not self.collector:
             return "Keypad collector not initialized. Please ask the caller to speak their 4-digit employee ID clearly."
@@ -106,6 +115,16 @@ async def get_employee_by_id(employee_id: str) -> str:
 async def list_department_employees(department_name: str) -> str:
     return await cast(Any, _default_identity_goal).list_department_employees(department_name)
 
+async def collect_employee_id_via_keypad(
+    context: RunContext | None = None,
+    employee_id: str | None = None,
+    **kwargs: Any,
+) -> str:
+    return await cast(Any, _default_identity_goal).collect_employee_id_via_keypad(
+        context=context, employee_id=employee_id, **kwargs
+    )
+
 execute_confirm_employee_identity = confirm_employee_identity
 execute_get_employee_by_id = get_employee_by_id
 execute_list_department_employees = list_department_employees
+execute_collect_employee_id_via_keypad = collect_employee_id_via_keypad

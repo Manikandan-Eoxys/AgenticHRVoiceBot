@@ -49,7 +49,7 @@ class Config:
     OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")
 
     GROQ_API_KEY   = os.getenv("GROQ_API_KEY", None)
-    GROQ_MODEL     = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    GROQ_MODEL     = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
  
     # Speech services (provider-neutral names)
     STT_API_KEY  = os.getenv("STT_API_KEY")

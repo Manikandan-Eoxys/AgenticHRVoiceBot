@@ -15,6 +15,7 @@ Usage:
 """
 
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, cast
 from config import Config
@@ -23,6 +24,9 @@ from integrations.sql_server_client import sql_client
 from database.db import get_db_connection
 
 logger = logging.getLogger(__name__)
+
+# Suppress repetitive routine execution logs from APScheduler; only log warnings and errors
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 SYNC_INTERVAL   = int(getattr(Config, "SYNC_INTERVAL_MINUTES", 15))
 MAX_ATTEMPTS    = 5
@@ -272,6 +276,11 @@ def _sync_to_sql():
 def start_scheduler():
     """Start the APScheduler background sync jobs."""
     global _scheduler
+
+    enable_sync = str(getattr(Config, "ENABLE_SYNC_SCHEDULER", os.getenv("ENABLE_SYNC_SCHEDULER", "1"))).lower().strip()
+    if enable_sync in ("0", "false", "no", "off"):
+        return
+
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
     except ImportError:
@@ -302,7 +311,7 @@ def start_scheduler():
         max_instances = 1,
     )
     _scheduler.start()
-    logger.info(
+    logger.debug(
         "[SyncScheduler] Started — IFS Cloud & SQL Server sync every %d min(s).",
         SYNC_INTERVAL,
     )
@@ -313,7 +322,7 @@ def stop_scheduler():
     global _scheduler
     if _scheduler and _scheduler.running:
         _scheduler.shutdown(wait=False)
-        logger.info("[SyncScheduler] Stopped.")
+        logger.debug("[SyncScheduler] Stopped.")
         _scheduler = None
 
 

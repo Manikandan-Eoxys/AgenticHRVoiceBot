@@ -350,6 +350,9 @@ class AgentToolsController:
         if any(w in text for w in ("remind", "acknowledg", "pending")):
             selected_goals.append("g10_reminders")
 
+        if any(w in text for w in ("identity", "verify", "employee", "who am i")):
+            selected_goals.append("g01_identity")
+
         # If no specific intent matched, default to general policies + baseline
         if len(selected_goals) == len(baseline_goals):
             selected_goals.append("g08_hr_policy")

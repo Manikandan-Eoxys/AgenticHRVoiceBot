@@ -259,6 +259,8 @@ class AsteriskVoiceSession(BaseTelephonySession):
         # Session attributes required by tools & helpers
         self.verified_employee_id: Optional[str] = None
         self.verified_employee_name: Optional[str] = None
+        self._candidate_employee_id: Optional[str] = None
+        self._candidate_employee_name: Optional[str] = None
         self.coordinator_connected: bool = False
         self.call_session = CallSession(room_name=self.room_name, call_type="inbound")
 
@@ -677,6 +679,71 @@ class AsteriskVoiceSession(BaseTelephonySession):
         logger.info(f"🗣️ [Caller Turn]: '{user_text}'")
         self._update_state("thinking")
 
+        # 0. Caller Identity Confirmation Guard (Instant readback affirmation handling)
+        if not self.verified_employee_id and getattr(self, "_candidate_employee_id", None):
+            cleaned_user = re.sub(r"[^\w\s]", "", (user_text or "").lower()).strip()
+            affirmations = {
+                "yes", "yeah", "yep", "thats me", "that is me", "correct", "right",
+                "sure", "it is me", "yes that is me", "yes thats me", "yes it is", "i am", "yes i am"
+            }
+            denials = {"no", "nope", "not me", "wrong", "thats not me", "that is not me", "incorrect"}
+
+            is_affirmation = any(aff == cleaned_user or cleaned_user.startswith(aff + " ") for aff in affirmations)
+            is_denial = any(den == cleaned_user or cleaned_user.startswith(den + " ") for den in denials)
+            has_other_intent = any(
+                kw in cleaned_user
+                for kw in ("leave", "salary", "pay", "attend", "punch", "wfh", "policy", "ticket", "benefit", "holiday", "calendar", "coordinator")
+            )
+
+            if is_affirmation and not has_other_intent:
+                # Direct immediate confirmation response — avoids secondary LLM call + tool schema errors
+                self.verified_employee_id = self._candidate_employee_id
+                setattr(self.run_ctx.session, "verified_employee_id", self._candidate_employee_id)
+                emp_name = getattr(self, "_candidate_employee_name", None) or "there"
+                self._candidate_employee_id = None
+                logger.info(f"🔒 [Identity Verified] Confirmed employee {self.verified_employee_id} ({emp_name})")
+
+                confirm_speech = f"Thank you, {emp_name}! Your identity is confirmed. How can I assist you with HR today?"
+                self.chat_ctx.add_message(role="user", content=user_text)
+                self.chat_ctx.add_message(role="assistant", content=confirm_speech)
+                self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [User]: {user_text}")
+                self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {confirm_speech}")
+
+                self._update_state("speaking")
+                await self.tts.speak_text(confirm_speech)
+                await self.tts.wait_for_playout()
+                if self.running:
+                    self._update_state("listening")
+                return
+
+            elif is_affirmation and has_other_intent:
+                self.verified_employee_id = self._candidate_employee_id
+                setattr(self.run_ctx.session, "verified_employee_id", self._candidate_employee_id)
+                emp_name = getattr(self, "_candidate_employee_name", None) or "there"
+                self._candidate_employee_id = None
+                logger.info(f"🔒 [Identity Verified] Confirmed employee {self.verified_employee_id} ({emp_name}) with intent")
+                self.chat_ctx.add_message(
+                    role="system",
+                    content=f"[System Note]: Caller identity confirmed as employee {self.verified_employee_id} ({emp_name}). Proceed to answer their request directly."
+                )
+
+            elif is_denial:
+                self._candidate_employee_id = None
+                self._candidate_employee_name = None
+                logger.info("⚠️ [Identity Denied] Caller indicated ID was incorrect.")
+                denial_speech = "I apologize. Please state your 4-digit employee ID again, or enter it using your phone keypad."
+                self.chat_ctx.add_message(role="user", content=user_text)
+                self.chat_ctx.add_message(role="assistant", content=denial_speech)
+                self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [User]: {user_text}")
+                self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {denial_speech}")
+
+                self._update_state("speaking")
+                await self.tts.speak_text(denial_speech)
+                await self.tts.wait_for_playout()
+                if self.running:
+                    self._update_state("listening")
+                return
+
         # 1. Check RAG Retrieval
         rag_context_msg = await self._handle_rag(user_text)
 
@@ -831,6 +898,16 @@ class AsteriskVoiceSession(BaseTelephonySession):
                             )
 
                             # Sync verified employee ID if identity tool just succeeded
+                            if fn_name in ("get_employee_by_id", "collect_employee_id_via_keypad"):
+                                emp_id_arg = args.get("employee_id")
+                                if emp_id_arg:
+                                    self._candidate_employee_id = str(emp_id_arg).strip()
+                                if exec_result.get("success") and "VERIFY WITH CALLER:" in str(exec_result.get("data", "")):
+                                    name_match = re.search(r"This is employee ID \d+,\s*([^—?]+)", str(exec_result["data"]))
+                                    if name_match:
+                                        self._candidate_employee_name = name_match.group(1).strip()
+                                        self.verified_employee_name = self._candidate_employee_name
+
                             new_verified = getattr(self.run_ctx.session, "verified_employee_id", None)
                             if new_verified and new_verified != self.verified_employee_id:
                                 self.verified_employee_id = new_verified
@@ -839,6 +916,18 @@ class AsteriskVoiceSession(BaseTelephonySession):
                             if exec_result["success"]:
                                 res_content = exec_result["data"]
                                 logger.info(f"✅ [Tool Result] {fn_name} -> {str(res_content)[:100]}")
+
+                                # Fast-path verification prompt to eliminate 7-8s secondary LLM inference delay
+                                if fn_name in ("get_employee_by_id", "collect_employee_id_via_keypad") and "VERIFY WITH CALLER:" in str(res_content):
+                                    verify_match = re.search(r"VERIFY WITH CALLER:\s*([^?]+\?)", str(res_content))
+                                    if verify_match:
+                                        verify_speech = verify_match.group(1).strip()
+                                        await self.tts.speak_text(verify_speech)
+                                        await self.tts.wait_for_playout()
+                                        self.chat_ctx.add_message(role="assistant", content=verify_speech)
+                                        self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {verify_speech}")
+                                        continue
+
                                 # Inject as user role instruction so the LLM immediately speaks the result to caller
                                 self.chat_ctx.add_message(
                                     role="user",
@@ -915,18 +1004,21 @@ class AsteriskVoiceSession(BaseTelephonySession):
         Prevents exhausting LLM rate limits (e.g. Groq 7,000 ITPM) by pruning
         the prompt tool schema from 44 tools (~5,400 tokens) down to 2-5 tools (~400 tokens).
         """
-        # 1. Verification Guard:
-        # Check if caller has already confirmed employee identity
         is_verified = bool(self.verified_employee_id)
         if not is_verified:
             msgs = self.chat_ctx.messages() if callable(self.chat_ctx.messages) else self.chat_ctx.messages
             for msg in msgs:
-                content = str(getattr(msg, "content", "") or "")
-                if "Identity locked to employee" in content or "Your identity is confirmed" in content:
+                content = str(getattr(msg, "content", "") or "").lower()
+                if (
+                    "identity locked to employee" in content
+                    or "your identity is confirmed" in content
+                    or "confirmed your identity" in content
+                    or "identity confirmed" in content
+                ):
                     is_verified = True
                     break
 
-        # 2. Dynamic Tool Discovery & Pruning via VoiceController
+        # Dynamic Tool Discovery & Pruning via VoiceController
         matched_tools = self.voice_controller.session_relevant_tools(user_text, is_verified=is_verified)
         logger.info(f"🎯 [Dynamic Tools] Intent-routed {len(matched_tools)} tools for turn (verified={is_verified}, saving ~5,000 tokens)")
         return matched_tools

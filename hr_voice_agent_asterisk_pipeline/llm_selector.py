@@ -60,12 +60,12 @@ def get_llm_choice() -> LLMChoice:
 
     def cloud(provider: str, reason: str) -> LLMChoice | None:
         key = _setting(f"{provider.upper()}_API_KEY")
-        if not key:
+        if not key or key.lower().startswith("your-") or "placeholder" in key.lower() or len(key) < 15:
             return None
         if provider == "openrouter":
             model = _setting("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")
             return LLMChoice(provider, model, OPENROUTER_BASE_URL, key, reason, ollama_model, ollama_url)
-        model = _setting("GROQ_MODEL", "llama-3.3-70b-versatile")
+        model = _setting("GROQ_MODEL", "openai/gpt-oss-120b")
         return LLMChoice(provider, model, GROQ_BASE_URL, key, reason, ollama_model, ollama_url)
 
     if requested == "local":
