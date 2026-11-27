@@ -149,6 +149,15 @@ async def main() -> None:
     except Exception as e:
         logger.warning(f"Web call front door not started (phone calls unaffected): {e}")
 
+    # 6c. Optional outbound call API (local HTTP trigger on 127.0.0.1)
+    outbound_runner = None
+    try:
+        from pipeline.outbound import outbound_enabled, start_outbound_api
+        if outbound_enabled():
+            outbound_runner = await start_outbound_api(server)
+    except Exception as e:
+        logger.warning(f"Outbound API not started (inbound calls unaffected): {e}")
+
     # Wait until shutdown signal or server error
     try:
         done, pending = await asyncio.wait(
@@ -184,6 +193,11 @@ async def main() -> None:
                 pass
         if webcall_task is not None:
             webcall_task.cancel()
+        if outbound_runner is not None:
+            try:
+                await outbound_runner.cleanup()
+            except Exception:
+                pass
         if server.http_session and not server.http_session.closed:
             await server.http_session.close()
         logger.info("✅ Asterisk Telephony Daemon stopped cleanly.")

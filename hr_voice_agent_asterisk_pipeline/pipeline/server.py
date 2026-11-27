@@ -49,6 +49,7 @@ from audio.audiosocket import (
     HEADER_SIZE,
     TYPE_UUID,
 )
+from pipeline.transfer import TransferManager
 from pipeline.voice_session import AsteriskVoiceSession
 
 logger = logging.getLogger("asterisk.server")
@@ -66,6 +67,11 @@ class AsteriskServer:
         self.pending_call_uuids: Dict[str, str] = {}                 # call_uuid -> channel_id
         self.pending_channels: Dict[str, str] = {}                   # channel_id -> call_uuid
         self.channel_callers: Dict[str, str] = {}                    # channel_id -> caller_num
+        self.outbound_calls: Dict[str, Dict[str, Any]] = {}          # channel_id -> outbound call info (see pipeline/outbound.py)
+        self.web_bridges: Dict[str, Any] = {}                        # web-call uuid -> WebCallBridge (browser leg)
+        self.relay_calls: Dict[str, Any] = {}                        # relay uuid -> RelayEntry (coordinator leg of a web call)
+        self.external_channels: Dict[str, str] = {}                  # caller channel_id -> AudioSocket (externalMedia) channel id
+        self.transfers = TransferManager(self)                       # coordinator hand-off (pipeline/transfer.py)
         self.http_session: Optional[aiohttp.ClientSession] = None
         self._server: Optional[asyncio.Server] = None
         self._running = True
@@ -149,6 +155,20 @@ class AsteriskServer:
             if "AudioSocket" in channel_name or "UnicastRTP" in channel_name or channel.get("dialplan", {}).get("app_data") == "externalMedia":
                 return
 
+            # Coordinator leg of a transfer just answered: join it to the caller's bridge.
+            if await self.transfers.on_stasis_start(channel_id):
+                return
+
+            # Outbound call placed by pipeline/outbound.py: the callee just answered.
+            outbound = self.outbound_calls.get(channel_id)
+            if outbound is not None:
+                outbound["status"] = "answered"
+                callee = outbound["to_number"]
+                logger.info(f"📞 [ARI] Outbound call answered by {callee} on channel {channel_id}")
+                self.channel_callers[channel_id] = callee
+                await self._setup_incoming_call(channel_id, callee, answer=False)
+                return
+
             logger.info(f"📞 [ARI] Incoming call on channel {channel_id} from '{caller_num}'")
 
             # Check security blocklist before answering
@@ -160,9 +180,30 @@ class AsteriskServer:
             self.channel_callers[channel_id] = caller_num
             await self._setup_incoming_call(channel_id, caller_num)
 
+        elif event_type == "ChannelDestroyed":
+            channel_id = event.get("channel", {}).get("id")
+            logger.info(f"🔕 [ARI] Channel destroyed: {channel_id} cause={event.get('cause')} ({event.get('cause_txt', '')})"
+                        if self._is_call_leg(channel_id) else f"[ARI] Channel destroyed: {channel_id}")
+            await self.transfers.on_channel_destroyed(channel_id, event.get("cause_txt", ""), event.get("cause"))
+            rec = self.outbound_calls.get(channel_id)
+            if rec is not None and rec.get("status") == "dialing":
+                logger.info(f"📵 [Outbound] {rec.get('to_number')} did not answer: {event.get('cause_txt', 'unknown')}")
+                self.outbound_calls.pop(channel_id, None)
+
+        elif event_type == "ChannelHangupRequest":
+            channel_id = event.get("channel", {}).get("id")
+            if self._is_call_leg(channel_id):
+                logger.info(f"🔔 [ARI] Hangup requested on {channel_id} cause={event.get('cause')} soft={event.get('soft')}")
+
+        elif event_type == "ChannelStateChange":
+            channel_id = event.get("channel", {}).get("id")
+            if channel_id in self.transfers.pending or channel_id in self.transfers.by_coord:
+                logger.info(f"📟 [ARI] Coordinator channel {channel_id} state -> {event.get('channel', {}).get('state')}")
+
         elif event_type == "StasisEnd":
             channel_id = event.get("channel", {}).get("id")
             logger.info(f"📴 [ARI] Call ended / left Stasis: Channel {channel_id}")
+            await self.transfers.on_stasis_end(channel_id)    # a transferred call: end the other leg + bridge
             await self._cleanup_call(channel_id)
 
         elif event_type == "ChannelDtmfReceived":
@@ -172,18 +213,19 @@ class AsteriskServer:
             if session and digit is not None:
                 session.on_dtmf_digit(str(digit))
 
-    async def _setup_incoming_call(self, channel_id: str, caller_num: str) -> None:
-        """Answers channel, creates externalMedia channel pointing to AudioSocket, and mixes them."""
+    async def _setup_incoming_call(self, channel_id: str, caller_num: str, answer: bool = True) -> None:
+        """Answers channel (inbound only), creates externalMedia channel pointing to AudioSocket, and mixes them."""
         try:
             http_session = await self._get_http_session()
 
-            # 1. Answer channel
-            ans_url = f"{ARI_URL}/channels/{channel_id}/answer"
-            async with http_session.post(ans_url) as resp:
-                if resp.status not in (200, 204):
-                    logger.error(f"Failed to answer channel {channel_id}: {resp.status}")
-                    await self._cleanup_call(channel_id)
-                    return
+            # 1. Answer channel (an outbound call is already answered when it enters Stasis)
+            if answer:
+                ans_url = f"{ARI_URL}/channels/{channel_id}/answer"
+                async with http_session.post(ans_url) as resp:
+                    if resp.status not in (200, 204):
+                        logger.error(f"Failed to answer channel {channel_id}: {resp.status}")
+                        await self._cleanup_call(channel_id)
+                        return
 
             # 2. Register standard RFC 4122 UUID (required by Asterisk res_audiosocket)
             call_uuid = str(uuid.uuid4())
@@ -210,6 +252,7 @@ class AsteriskServer:
                     return
                 ext_chan = await resp.json()
                 ext_channel_id = ext_chan.get("id")
+                self.external_channels[channel_id] = ext_channel_id
 
             # 4. Create Mixing Bridge
             bridge_url = f"{ARI_URL}/bridges"
@@ -261,12 +304,26 @@ class AsteriskServer:
 
             logger.info(f"🆔 AudioSocket Handshake OK — Call UUID: {call_uuid}")
 
+            # Coordinator leg of a WEB-call transfer: hand this connection to the browser bridge instead of the AI.
+            relay = self.relay_calls.pop(call_uuid, None)
+            if relay is not None:
+                logger.info("🔀 [Transfer] Asterisk connected the coordinator audio for a web call")
+                if not relay.connected.done():
+                    relay.connected.set_result((reader, writer))
+                await relay.closed.wait()
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+                return
+
             channel_id = self.pending_call_uuids.pop(call_uuid, call_uuid)
             self.pending_channels.pop(channel_id, None)
             caller_num = self.channel_callers.get(channel_id, "unknown")
 
             # 2. Instantiate and launch isolated voice session for this call
             http_session = await self._get_http_session()
+            outbound = self.outbound_calls.get(channel_id)     # None for inbound phone calls and web calls
             session = AsteriskVoiceSession(
                 call_uuid=call_uuid,
                 channel_id=channel_id,
@@ -275,6 +332,9 @@ class AsteriskServer:
                 writer=writer,
                 sample_rate=AST_SAMPLE_RATE,
                 ari_client_session=http_session,
+                call_type=outbound["call_type"] if outbound else "inbound",
+                call_metadata=dict(outbound) if outbound else None,
+                transfer_handler=lambda target, session=None, _cid=channel_id: self.transfers.transfer(_cid, target, session=session),
             )
             self.active_sessions[channel_id] = session
             await session.start()
@@ -291,6 +351,19 @@ class AsteriskServer:
 
     async def _cleanup_call(self, channel_id: str) -> None:
         """Destroys ARI bridge and active session."""
+        if self.transfers.is_transferred(channel_id):
+            # The AI session ended after handing the caller to the coordinator. The bridge and the caller's
+            # channel must stay alive until one of the two people hangs up (see TransferManager.end).
+            self.active_sessions.pop(channel_id, None)
+            return
+
+        # Do not clean up caller bridge if this channel is an external media channel of a transferred call
+        for caller, ext in list(self.external_channels.items()):
+            if ext == channel_id and self.transfers.is_transferred(caller):
+                self.external_channels.pop(caller, None)
+                return
+
+        self.external_channels.pop(channel_id, None)
         bridge_id = self.active_bridges.pop(channel_id, None)
         if bridge_id:
             try:
@@ -306,11 +379,18 @@ class AsteriskServer:
             await session.hangup()
 
         self.channel_callers.pop(channel_id, None)
+        self.outbound_calls.pop(channel_id, None)
         pending_uuid = self.pending_channels.pop(channel_id, None)
         if pending_uuid:
             self.pending_call_uuids.pop(pending_uuid, None)
 
-    async def _hangup_channel(self, channel_id: str) -> None:
+    def _is_call_leg(self, channel_id: Optional[str]) -> bool:
+        t = self.transfers
+        return bool(channel_id) and (channel_id in self.active_sessions or channel_id in self.active_bridges
+                                     or channel_id in t.pending or channel_id in t.by_coord or channel_id in t.active)
+
+    async def _hangup_channel(self, channel_id: str, reason: str = "") -> None:
+        logger.info(f"✂️ [ARI] We hang up channel {channel_id}" + (f" - {reason}" if reason else ""))
         try:
             http_session = await self._get_http_session()
             del_url = f"{ARI_URL}/channels/{channel_id}"

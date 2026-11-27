@@ -10,12 +10,6 @@ from models.config_models import (
     TelephonyConfig,
     AgentConfig,
 )
-from models.call_session import (
-    CallSession,
-    IdentityNotVerifiedError,
-    IdentityMismatchError,
-)
-
 __all__ = [
     "DataSourceConfig",
     "ActionConfig",
@@ -23,7 +17,4 @@ __all__ = [
     "VoiceConfig",
     "TelephonyConfig",
     "AgentConfig",
-    "CallSession",
-    "IdentityNotVerifiedError",
-    "IdentityMismatchError",
 ]

@@ -46,7 +46,12 @@ from config import (
     RAG_FILLER_MODE,
     ARI_URL,
 )
-from prompts import INBOUND_INSTRUCTIONS, INBOUND_INSTRUCTIONS_LOCAL
+from prompts import (
+    INBOUND_INSTRUCTIONS,
+    INBOUND_INSTRUCTIONS_LOCAL,
+    OUTBOUND_LEAVE_VERIFICATION_INSTRUCTIONS,
+    OUTBOUND_REMINDER_INSTRUCTIONS,
+)
 COORDINATOR_PHONE_NUMBER = os.environ.get("COORDINATOR_PHONE_NUMBER", "+918925355704")
 from controllers.agentVoiceController import AsteriskVoiceController, ControllerState
 from controllers.global_monitor_fsm import report_agent_event
@@ -240,6 +245,9 @@ class AsteriskVoiceSession(BaseTelephonySession):
         writer: asyncio.StreamWriter,
         sample_rate: int = 8000,
         ari_client_session: Optional[Any] = None,
+        call_type: str = "inbound",
+        call_metadata: Optional[Dict[str, Any]] = None,
+        transfer_handler: Optional[Any] = None,
     ) -> None:
         # BaseTelephonySession requires call_id and caller_number in __init__
         super().__init__(call_id=call_uuid, caller_number=caller_id or "unknown")
@@ -251,6 +259,10 @@ class AsteriskVoiceSession(BaseTelephonySession):
         self.writer = writer
         self.sample_rate = sample_rate
         self.ari_http = ari_client_session
+        self.transfer_handler = transfer_handler          # async (target) -> bool, supplied by AsteriskServer
+        self.transferred = False                          # True once the caller was handed to the coordinator
+        self.call_type = call_type or "inbound"          # inbound | assistant | leave_verification | scheduled_reminder | policy_acknowledgement
+        self.call_metadata = dict(call_metadata or {})    # outbound: employee_id, employee_name, reminder_prompt, to_number
 
         self.room_name = f"ast-{self.call_uuid[:8]}"
         self.running = True
@@ -262,7 +274,8 @@ class AsteriskVoiceSession(BaseTelephonySession):
         self._candidate_employee_id: Optional[str] = None
         self._candidate_employee_name: Optional[str] = None
         self.coordinator_connected: bool = False
-        self.call_session = CallSession(room_name=self.room_name, call_type="inbound")
+        self.is_transferring: bool = False
+        self.call_session = CallSession(room_name=self.room_name, call_type=self.call_type)
 
         # Telephony / Audio queues
         self.audio_queue = AudioSocketWriterQueue(writer, sample_rate=self.sample_rate)
@@ -292,10 +305,10 @@ class AsteriskVoiceSession(BaseTelephonySession):
             channel_id=self.channel_id,
             call_uuid=self.call_uuid,
             room_name=self.room_name,
-            call_type="inbound",
+            call_type=self.call_type,
             job_ctx=self.job_ctx,
             collector=self.dtmf_collector,
-            call_metadata={"caller_id": self.caller_id, "channel_id": self.channel_id},
+            call_metadata={**self.call_metadata, "caller_id": self.caller_id, "channel_id": self.channel_id},
         )
         self.all_tools = self.voice_controller.session_all_tools()
         self.active_tools = self.all_tools
@@ -317,11 +330,7 @@ class AsteriskVoiceSession(BaseTelephonySession):
 
         # Conversation History
         today_str = date.today().strftime("%A, %B %-d, %Y")
-        is_local_only = getattr(self.llm, "provider", "") == "ollama" or isinstance(self.llm, OllamaLLM)
-        if is_local_only:
-            prompt = INBOUND_INSTRUCTIONS_LOCAL.format(today_str=today_str)
-        else:
-            prompt = INBOUND_INSTRUCTIONS.format(today_str=today_str)
+        prompt = self._build_system_prompt(today_str)
         self.chat_ctx = ChatContext()
         self.chat_ctx.add_message(role="system", content=prompt)
 
@@ -401,7 +410,10 @@ class AsteriskVoiceSession(BaseTelephonySession):
         # Start AudioSocket paced playback
         self.audio_queue.start()
 
-        # Start streaming STT
+        # Start streaming STT — launched as a background task so its TLS/WebSocket
+        # handshake (which can take 5-15s from India to Deepgram) does NOT block the
+        # greeting. The AudioSocket audio loop and TTS are independent of STT readiness;
+        # send_audio() silently no-ops until the WebSocket is live.
         self.stt = StreamingSTTClient(
             api_key=STT_API_KEY or "",
             sample_rate=self.sample_rate,
@@ -411,13 +423,42 @@ class AsteriskVoiceSession(BaseTelephonySession):
             on_interim=self._on_user_interim_transcript,
             on_speech_final=self._on_user_speech_final,
         )
-        await self.stt.start()
+        asyncio.create_task(self.stt.start(), name="DeepgramSTTConnect")
 
         # Start background inbound audio loop (Asterisk AudioSocket -> STT + DTMF)
         self._inbound_audio_task = asyncio.create_task(self._inbound_audio_loop(), name="AsteriskInboundAudio")
 
-        # Play initial agent greeting
+        # Play initial agent greeting — fires immediately after the ARI bridge settles
         asyncio.create_task(self._play_greeting())
+
+    def _build_system_prompt(self, today_str: str) -> str:
+        """Inbound prompt for inbound/assistant calls; the matching outbound prompt for employee outbound calls."""
+        m = self.call_metadata
+        name = m.get("employee_name") or "the employee"
+        emp_id = m.get("employee_id") or ""
+        if self.call_type == "leave_verification":
+            return OUTBOUND_LEAVE_VERIFICATION_INSTRUCTIONS.format(
+                employee_name=name, employee_id=emp_id, today_str=today_str)
+        if self.call_type in ("scheduled_reminder", "policy_acknowledgement"):
+            return OUTBOUND_REMINDER_INSTRUCTIONS.format(
+                employee_name=name, employee_id=emp_id, today_str=today_str,
+                reminder_prompt=m.get("reminder_prompt") or "A general reminder from HR.")
+        llm = getattr(self, "llm", None)
+        is_local_only = getattr(llm, "provider", "") == "ollama" or isinstance(llm, OllamaLLM)
+        if is_local_only:
+            return INBOUND_INSTRUCTIONS_LOCAL.format(today_str=today_str)
+        return INBOUND_INSTRUCTIONS.format(today_str=today_str)
+
+    def _opening_line(self) -> str:
+        """First thing the agent says: a welcome for inbound calls, an introduction for outbound calls."""
+        name = self.call_metadata.get("employee_name") or "the employee"
+        if self.call_type == "leave_verification":
+            return f"Hello, is this {name}? I'm calling from HR regarding your leave request."
+        if self.call_type in ("scheduled_reminder", "policy_acknowledgement"):
+            return f"Hello, is this {name}? I'm calling from HR with a scheduled notification."
+        if self.call_type == "assistant":
+            return "Hello! This is the Eoxys HR voice assistant calling. How can I help you today?"
+        return "Hello! Welcome to Eoxys HR voice assistant. Please say or enter your employee ID to get started."
 
     async def _play_greeting(self) -> None:
         """Plays the opening HR assistant greeting."""
@@ -425,12 +466,10 @@ class AsteriskVoiceSession(BaseTelephonySession):
         # before streaming audio — 0.3s was too short; Asterisk would drop frames
         # that arrived before the bridge channels were joined.
         await asyncio.sleep(1.5)
-        greeting = (
-            "Hello! Welcome to Eoxys HR voice assistant. "
-            "Please say or enter your employee ID to get started."
-        )
+        greeting = self._opening_line()
         self.chat_ctx.add_message(role="assistant", content=greeting)
         self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {greeting}")
+        self._update_state("speaking")   # set state + speaking_start_time before TTS starts
         await self.tts.speak_text(greeting)
         await self.tts.wait_for_playout()
         if self.agent_state == "speaking":
@@ -452,6 +491,8 @@ class AsteriskVoiceSession(BaseTelephonySession):
 
     def interrupt(self) -> None:
         """Barge-in: Immediately stops agent speech and clears audio buffers."""
+        if self.is_transferring:
+            return
         if self.agent_state == "speaking":
             logger.info("⚡ [Barge-In] Interrupting agent speech.")
             self.tts.interrupt()
@@ -526,7 +567,7 @@ class AsteriskVoiceSession(BaseTelephonySession):
         """
         if self.agent_state == "speaking":
             elapsed_speaking = time.monotonic() - getattr(self, "_speaking_start_time", 0.0)
-            if elapsed_speaking < 1.0:
+            if elapsed_speaking < 2.0:
                 logger.debug(f"⚡ [Barge-In] Ignored onset acoustic reflection ({elapsed_speaking:.2f}s)")
                 return
             # Mark candidate interruption time; will trigger interrupt if confirmed by words or DTMF
@@ -536,9 +577,16 @@ class AsteriskVoiceSession(BaseTelephonySession):
         """
         Fired when Deepgram transcribes interim words while caller is talking.
         This provides verified speech verification for barge-in interruptions.
+        Only trigger barge-in after a 2-second grace window so the opening greeting
+        and short confirmation phrases ("is that correct?") are not cut off by
+        near-field echo or the caller's first reflex syllable.
         """
         words = [w for w in interim_text.strip().split() if w]
         if self.agent_state == "speaking" and words:
+            elapsed_speaking = time.monotonic() - getattr(self, "_speaking_start_time", 0.0)
+            if elapsed_speaking < 2.0:
+                logger.debug(f"⚡ [Barge-In] Grace period active ({elapsed_speaking:.2f}s) — ignoring '{interim_text}'")
+                return
             # Genuine words spoken by user while agent is talking -> trigger instant barge-in!
             logger.info(f"⚡ [Barge-In] Caller interrupted with words: '{interim_text}' -> interrupting agent speech.")
             self.interrupt()
@@ -661,6 +709,11 @@ class AsteriskVoiceSession(BaseTelephonySession):
             return
         self._last_stt_text = text
         self._last_stt_time = now
+
+        # If a live transfer to the coordinator is in progress, do not cancel or start a new turn
+        if self.is_transferring:
+            logger.info(f"⏳ [Transfer in progress] Ignoring user speech while waiting for coordinator: '{text}'")
+            return
 
         # Cancel any previous turn task still processing to avoid duplicate overlapping responses
         if self._current_turn_task and not self._current_turn_task.done():
@@ -940,13 +993,20 @@ class AsteriskVoiceSession(BaseTelephonySession):
                         try:
                             # 1 & 2 & 4. Execute through ToolExecutionGuardrail (least-privilege, timeout, breaker, sanitization)
                             verified_id = self.verified_employee_id or getattr(self.run_ctx.session, "verified_employee_id", None)
+                            if fn_name == "transfer_to_coordinator":
+                                # hold message (<=8s) + ring time + 5s grace + join; never cut the transfer short
+                                tool_timeout = float(os.environ.get("COORDINATOR_DIAL_TIMEOUT_SECONDS", "30")) + 25.0
+                            elif fn_name == "collect_employee_id_via_keypad":
+                                tool_timeout = 45.0
+                            else:
+                                tool_timeout = 3.5
                             exec_result = await default_tool_guardrail.execute_tool(
                                 tool_callable=tool_fn,
                                 tool_name=fn_name,
                                 tool_args=args,
                                 caller_employee_id=verified_id,
                                 context=self.run_ctx,
-                                timeout_seconds=3.5,
+                                timeout_seconds=tool_timeout,
                             )
 
                             # Sync verified employee ID if identity tool just succeeded
@@ -1197,24 +1257,36 @@ class AsteriskVoiceSession(BaseTelephonySession):
             self.voice_controller.rag_status = "idle"
 
     async def transfer_call(self, target: str) -> bool:
-        """Transfers the caller channel to destination endpoint via ARI redirect."""
-        endpoint = target if "/" in target else f"PJSIP/{target}"
-        logger.info(f"🔀 [Asterisk Session {self.call_uuid}] Transferring channel {self.channel_id} to {endpoint}...")
-        self.interrupt()
-        if not self.ari_http or not self.channel_id:
+        """Connect the caller to `target` (the HR coordinator) through the SIP trunk, then release this AI session.
+
+        While the coordinator's phone rings the caller hears a ring tone (played by the transfer manager through
+        this session's audio queue). Returns False - and the AI carries on with the caller - if nobody picks up or
+        the call has no Asterisk leg to hand over.
+        """
+        if self.transfer_handler is None:
+            logger.warning(f"🔀 [Session {self.call_uuid}] transfer is not available on this call type")
             return False
+        if self.tts:
+            self.tts.interrupt()
+        self.is_transferring = True
+        ok = False
         try:
-            url = f"{ARI_URL}/channels/{self.channel_id}/redirect"
-            params = {"endpoint": endpoint}
-            async with self.ari_http.post(url, params=params) as resp:
-                if resp.status in (200, 204):
-                    logger.info(f"✅ [Asterisk Session {self.call_uuid}] Redirected channel {self.channel_id} to {endpoint}")
-                    return True
-                logger.warning(f"ARI redirect returned {resp.status} for endpoint {endpoint}")
-                return False
+            ok = await self.transfer_handler(target, session=self)
         except Exception as e:
-            logger.error(f"Exception during ARI transfer: {e}")
+            logger.error(f"🔀 [Session {self.call_uuid}] transfer failed: {e}", exc_info=True)
             return False
+        finally:
+            if not ok:
+                self.is_transferring = False
+                self.transferred = False
+                self.coordinator_connected = False
+        if ok:
+            self.transferred = True
+            self.coordinator_connected = True
+            # Release the AI session shortly after the tool returns. It must NOT hang up the caller:
+            # hangup() skips the ARI channel delete once `transferred` is set.
+            asyncio.get_running_loop().call_later(1.0, lambda: asyncio.ensure_future(self.hangup()))
+        return ok
 
     async def hangup(self) -> None:
         """Ends the call cleanly across Asterisk ARI and AudioSocket."""
@@ -1267,8 +1339,8 @@ class AsteriskVoiceSession(BaseTelephonySession):
             except Exception:
                 pass
 
-        # Close Asterisk ARI channel if active
-        if self.ari_http and self.channel_id:
+        # Close Asterisk ARI channel if active (NOT after a transfer: the caller is now talking to the coordinator)
+        if self.ari_http and self.channel_id and not self.transferred:
             try:
                 del_url = f"{ARI_URL}/channels/{self.channel_id}"
                 async with self.ari_http.delete(del_url) as resp:

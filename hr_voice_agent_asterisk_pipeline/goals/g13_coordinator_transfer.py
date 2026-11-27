@@ -75,43 +75,67 @@ class CoordinatorTransferService(GoalService):
             logger.info("🛑 [Transfer] Mode is 'cutoff': stopping recorder before coordinator pick.")
             await context.session.recorder.stop()
 
-        # Underlying session is an Asterisk telephony session
         telephony_session = getattr(context, "session", None)
-        if telephony_session and hasattr(telephony_session, "transfer_call"):
-            logger.info(f"🔀 [Transfer] Asterisk telephony session detected. Calling transfer_call({coord_num})...")
-            transfer_ok = await telephony_session.transfer_call(coord_num)
-            if not transfer_ok:
-                logger.warning(f"⚠️ [Transfer] Asterisk transfer to {coord_num} failed.")
-                return (
-                    f"The coordinator at {coord_num} could not be reached right now. "
-                    "Apologise to the caller and say: 'The HR coordinator is currently unavailable. "
-                    "I can raise an HR ticket for your query so they can call you back, or I can help you with anything else. "
-                    "Which would you prefer?'"
-                )
-        else:
-            logger.warning(f"⚠️ [Transfer] No active telephony session found for transfer.")
+        if telephony_session is None or not hasattr(telephony_session, "transfer_call"):
+            logger.warning("⚠️ [Transfer] No active telephony session found for transfer.")
             return "Call transfer service is currently unavailable."
 
-        logger.info(f"✅ [Transfer] Coordinator answered: {coord_num} joined room {room.name}")
-        if hasattr(context, "session") and context.session:
-            setattr(context.session, "coordinator_connected", True)
-            try:
-                handle = context.session.say(
-                    "Connecting you to the coordinator now.",
-                    allow_interruptions=False,
-                )
-                await handle.wait_for_playout()
-                if hasattr(context.session, "input"):
-                    context.session.input.set_audio_enabled(False)
-                if hasattr(context.session, "output"):
-                    context.session.output.set_audio_enabled(False)
-            except Exception as se:
-                logger.debug(f"[Transfer] Session handoff notice: {se}")
+        if getattr(telephony_session, "_transfer_attempted", False) or getattr(self, "_transfer_attempted", False):
+            logger.warning("⚠️ [Transfer] Transfer already attempted in this call session. Preventing duplicate dial loop.")
+            return (
+                "A transfer was already attempted and the coordinator could not be reached. "
+                "Inform the caller that the coordinator is currently unavailable, and offer to raise an HR ticket for a callback."
+            )
+        telephony_session._transfer_attempted = True
+        self._transfer_attempted = True
+        # Block barge-in and new STT turns BEFORE speaking the hold notice so a late
+        # "Yes" / echo cannot cancel this task before transfer_call() even dials.
+        if hasattr(telephony_session, "is_transferring"):
+            telephony_session.is_transferring = True
 
+        dial_started = False
+        try:
+            # Tell the caller what is happening BEFORE dialing, and WAIT until it has been spoken completely
+            # (the ring tone starts right after; the transfer must not cut this sentence off).
+            tts = getattr(telephony_session, "tts", None)
+            try:
+                if tts is not None:
+                    await tts.speak_text("Please hold for a moment while I connect you to the HR coordinator.")
+                    await tts.wait_for_playout(timeout=8.0)
+                else:
+                    handle = telephony_session.say("Please hold for a moment while I connect you to the HR coordinator.", allow_interruptions=False)
+                    await handle.wait_for_playout()
+            except asyncio.CancelledError:
+                raise
+            except Exception as se:
+                logger.debug(f"[Transfer] Hold notice: {se}")
+
+            logger.info(f"🔀 [Transfer] Dialing coordinator {coord_num}...")
+            dial_started = True
+            ok = await telephony_session.transfer_call(coord_num)
+        except BaseException:
+            if hasattr(telephony_session, "is_transferring"):
+                telephony_session.is_transferring = False
+            if not dial_started:
+                telephony_session._transfer_attempted = False
+                self._transfer_attempted = False
+            raise
+
+        if not ok:
+            if hasattr(telephony_session, "is_transferring"):
+                telephony_session.is_transferring = False
+            logger.warning(f"⚠️ [Transfer] Transfer to {coord_num} failed.")
+            return (
+                "The coordinator could not be reached right now. "
+                "Apologise to the caller and say: 'The HR coordinator is currently unavailable. "
+                "I can raise an HR ticket for your query so they can call you back, or I can help you with anything else. "
+                "Which would you prefer?'"
+            )
+
+        logger.info(f"✅ [Transfer] Coordinator {coord_num} is now connected to the caller.")
         return (
-            "Coordinator connected and the handoff line has already been "
-            "spoken by this tool. The agent is now muted at the code "
-            "level -- do not attempt to say anything else."
+            "Coordinator connected. The caller is now talking to the coordinator and this AI session is ending. "
+            "Do not say anything else."
         )
 
     @function_tool

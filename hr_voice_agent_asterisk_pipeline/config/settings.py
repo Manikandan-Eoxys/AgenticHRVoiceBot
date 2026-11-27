@@ -153,6 +153,23 @@ class Config:
     ARI_APP_NAME = os.getenv("ARI_APP_NAME", "hr_voicebot")
 
     # ------------------------------------------------------------------
+    # Outbound Calling
+    # ------------------------------------------------------------------
+    OUTBOUND_ENABLED              = os.getenv("OUTBOUND_ENABLED", "0")
+    OUTBOUND_CALLER_ID            = os.getenv("OUTBOUND_CALLER_ID", "")
+    OUTBOUND_TRUNK_ENDPOINT       = os.getenv("OUTBOUND_TRUNK_ENDPOINT", "plivo-outbound")
+    OUTBOUND_DEFAULT_COUNTRY_CODE = os.getenv("OUTBOUND_DEFAULT_COUNTRY_CODE", "91")
+    OUTBOUND_ALLOWED_PREFIXES     = os.getenv("OUTBOUND_ALLOWED_PREFIXES", "91")
+    OUTBOUND_MAX_CALLS            = int(os.getenv("OUTBOUND_MAX_CALLS", "10"))
+    OUTBOUND_RING_TIMEOUT         = int(os.getenv("OUTBOUND_RING_TIMEOUT", "30"))
+    OUTBOUND_DIAL_PLUS            = os.getenv("OUTBOUND_DIAL_PLUS", "true").lower() in ("1", "true", "yes")
+    OUTBOUND_API_HOST             = os.getenv("OUTBOUND_API_HOST", "127.0.0.1")
+    OUTBOUND_API_PORT             = int(os.getenv("OUTBOUND_API_PORT", "8090"))
+    OUTBOUND_API_KEY              = os.getenv("OUTBOUND_API_KEY", "")
+    COORDINATOR_PHONE_NUMBER      = os.getenv("COORDINATOR_PHONE_NUMBER", "+918861760716")
+    COORDINATOR_DIAL_TIMEOUT_SECONDS = int(os.getenv("COORDINATOR_DIAL_TIMEOUT_SECONDS", "30"))
+
+    # ------------------------------------------------------------------
     # RAG Retrieval Pipeline
     # ------------------------------------------------------------------
     RAG_TIMEOUT            = float(os.getenv("RAG_TIMEOUT", "2.0"))
@@ -237,3 +254,18 @@ RAG_ALLOWED_HOSTS      = Config.RAG_ALLOWED_HOSTS
 RAG_ALLOW_INSECURE_DEV = Config.RAG_ALLOW_INSECURE_DEV
 RAG_ALLOW_METADATA_CONFIG = Config.RAG_ALLOW_METADATA_CONFIG
 RAG_SECRET_KEY         = Config.RAG_SECRET_KEY
+
+# Outbound Calling
+OUTBOUND_ENABLED              = Config.OUTBOUND_ENABLED
+OUTBOUND_CALLER_ID            = Config.OUTBOUND_CALLER_ID
+OUTBOUND_TRUNK_ENDPOINT       = Config.OUTBOUND_TRUNK_ENDPOINT
+OUTBOUND_DEFAULT_COUNTRY_CODE = Config.OUTBOUND_DEFAULT_COUNTRY_CODE
+OUTBOUND_ALLOWED_PREFIXES     = Config.OUTBOUND_ALLOWED_PREFIXES
+OUTBOUND_MAX_CALLS            = Config.OUTBOUND_MAX_CALLS
+OUTBOUND_RING_TIMEOUT         = Config.OUTBOUND_RING_TIMEOUT
+OUTBOUND_DIAL_PLUS            = Config.OUTBOUND_DIAL_PLUS
+OUTBOUND_API_HOST             = Config.OUTBOUND_API_HOST
+OUTBOUND_API_PORT             = Config.OUTBOUND_API_PORT
+OUTBOUND_API_KEY              = Config.OUTBOUND_API_KEY
+COORDINATOR_PHONE_NUMBER      = Config.COORDINATOR_PHONE_NUMBER
+COORDINATOR_DIAL_TIMEOUT_SECONDS = Config.COORDINATOR_DIAL_TIMEOUT_SECONDS
