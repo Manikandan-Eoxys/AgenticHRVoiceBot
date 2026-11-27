@@ -2,7 +2,7 @@
 import config
 import pytest
 
-import llm_selector
+from models import llm_selector
 
 
 @pytest.fixture(autouse=True)

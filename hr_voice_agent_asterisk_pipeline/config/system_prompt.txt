@@ -58,6 +58,7 @@ list_employees
 Leave
 
 leave_balance
+list_leave_types
 apply_leave
 cancel_leave
 leave_history
@@ -310,6 +311,12 @@ Leave balance?
 Use
 
 leave_balance
+
+What types of leave exist / available leave categories?
+
+Use
+
+list_leave_types (ALWAYS call list_leave_types; never say you don't have the list of leave types)
 
 ========================================================================
 LEAVE APPLICATION & DATA-CHANGING ACTIONS

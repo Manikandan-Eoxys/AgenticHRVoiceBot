@@ -21,7 +21,7 @@ from aiortc.mediastreams import MediaStreamTrack
 import av
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from asterisk.audiosocket import TYPE_AUDIO, TYPE_HANGUP, TYPE_UUID, encode_audio_frame, read_packet  # noqa: E402
+from audio.audiosocket import TYPE_AUDIO, TYPE_HANGUP, TYPE_UUID, encode_audio_frame, read_packet  # noqa: E402
 from webcall.server import WebCallServer  # noqa: E402
 from webcall.settings import WebCallSettings  # noqa: E402
 

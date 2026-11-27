@@ -745,7 +745,7 @@ class AsteriskVoiceController:
     # PRIVATE HELPERS
     # ------------------------------------------------------------------
     def _build_engines(self) -> None:
-        from llm_selector import get_llm_choice  # same decision the call session uses
+        from models.llm_selector import get_llm_choice  # same decision the call session uses
         logger.info("[Asterisk FSM] Engine config: %s.", get_llm_choice().describe())
 
     def _prime_ollama_model(self) -> None:

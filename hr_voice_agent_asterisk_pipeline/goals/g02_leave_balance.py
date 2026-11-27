@@ -68,8 +68,8 @@ class LeaveBalanceService(GoalService):
         return res["message"]
 
     @function_tool
-    async def list_leave_types(self) -> str:
-        """List all available company leave types and annual allowances."""
+    async def list_leave_types(self, employee_id: str = "", **kwargs: Any) -> str:
+        """List all available company leave types and annual allowances. Always call this tool whenever the caller asks what types, kinds, or categories of leave exist or are available."""
         self.log_action("list_leave_types")
         res = self.leave_service.list_leave_types()
         return res["message"]
@@ -84,8 +84,8 @@ async def get_leave_balance(leave_type: str, employee_id: str = "", context: Run
 async def get_all_leave_balances(employee_id: str = "", context: RunContext | None = None) -> str:
     return await cast(Any, _default_leave_balance_goal).get_all_leave_balances(context=context, employee_id=employee_id)
 
-async def list_leave_types() -> str:
-    return await cast(Any, _default_leave_balance_goal).list_leave_types()
+async def list_leave_types(employee_id: str = "", **kwargs: Any) -> str:
+    return await cast(Any, _default_leave_balance_goal).list_leave_types(employee_id=employee_id, **kwargs)
 
 execute_get_leave_balance = get_leave_balance
 execute_get_all_leave_balances = get_all_leave_balances

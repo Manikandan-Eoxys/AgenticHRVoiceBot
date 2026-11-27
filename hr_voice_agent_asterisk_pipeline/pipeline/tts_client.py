@@ -18,7 +18,7 @@ from typing import Optional, AsyncGenerator
 
 import aiohttp
 
-from asterisk.audiosocket import AudioSocketWriterQueue
+from audio.audiosocket import AudioSocketWriterQueue
 
 logger = logging.getLogger("asterisk.tts")
 

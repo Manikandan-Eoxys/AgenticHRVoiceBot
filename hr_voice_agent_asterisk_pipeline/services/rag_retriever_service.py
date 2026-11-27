@@ -921,6 +921,12 @@ class HttpRetriever:
             )
         return self._session
 
+    async def close(self) -> None:
+        """Close the underlying aiohttp.ClientSession if open."""
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+        self._session = None
+
     async def search(self, query: str, k: Optional[int] = None) -> list[str]:
         """
         Execute a retrieval search against the customer endpoint.

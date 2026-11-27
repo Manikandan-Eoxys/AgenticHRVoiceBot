@@ -88,7 +88,7 @@ def test_unauthenticated_caller_allowed_public_tools():
 
 
 def test_clean_tts_text_strips_markdown():
-    from asterisk.tts_client import clean_tts_text
+    from pipeline.tts_client import clean_tts_text
 
     raw_text = "- **Probation Period**: Typically 6 months.\n- **Working Hours**: 9:00 AM to 6:00 PM."
     cleaned = clean_tts_text(raw_text)

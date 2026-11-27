@@ -64,7 +64,7 @@ from typing import Any, Callable, List, Optional
 import aiohttp    # async HTTP client, used to call Ollama's web API
 
 # Asterisk-native LLM building blocks
-from asterisk.llm_types import (
+from models.llm_types import (
     LLM,
     ChatChunk,
     ChatContext,
@@ -269,7 +269,9 @@ class OllamaLLMStream(LLMStream):
             "stream": True,          # get the answer piece by piece (lower latency)
             "think": self._think,    # False = skip the slow reasoning chain
             "options": {
-                "num_thread": 8,     # CPU threads Ollama may use
+                "num_thread": 6,     # Physical P-cores on Intel i5 (avoids E-core bottleneck)
+                "num_ctx": 1024,     # Tighter context — tool schemas + 6-msg history fits in ~900 tokens
+                "num_predict": 80,   # Voice replies rarely need more than 80 tokens
             },
         }
 

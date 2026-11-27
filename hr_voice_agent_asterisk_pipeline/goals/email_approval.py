@@ -320,14 +320,21 @@ class EmailApprovalService:
 
 # Module-level singleton
 email_approval_service = EmailApprovalService()
+_daemon_lock = threading.Lock()
+_daemon_thread: threading.Thread | None = None
 
 
 def start_email_approval_daemon(poll_interval: int = 15) -> threading.Thread:
-    """Start the IMAP approval polling loop as a background daemon thread."""
-    def _run():
-        logger.info(f"🚀 [EmailApproval] Daemon thread started (polling every {poll_interval}s).")
-        email_approval_service.run_forever(poll_interval=poll_interval)
+    """Start the IMAP approval polling loop as a background daemon thread (idempotent)."""
+    global _daemon_thread
+    with _daemon_lock:
+        if _daemon_thread is not None and _daemon_thread.is_alive():
+            return _daemon_thread
 
-    thread = threading.Thread(target=_run, daemon=True, name="EmailApprovalDaemon")
-    thread.start()
-    return thread
+        def _run():
+            logger.info(f"🚀 [EmailApproval] Daemon thread started (polling every {poll_interval}s).")
+            email_approval_service.run_forever(poll_interval=poll_interval)
+
+        _daemon_thread = threading.Thread(target=_run, daemon=True, name="EmailApprovalDaemon")
+        _daemon_thread.start()
+        return _daemon_thread

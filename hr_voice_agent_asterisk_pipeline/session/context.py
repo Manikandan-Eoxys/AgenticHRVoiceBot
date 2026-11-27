@@ -1,10 +1,11 @@
 """
-hr_voice_agent/telephony/context.py
+hr_voice_agent/session/context.py
 
-CallContext: Unified Call Session State & Resource Container
-============================================================
+CallContext & Asterisk Context Adapters
+=======================================
 Holds all per-call metadata, verification state, channel identifiers,
-telephony session references, and compatibility context adapters for
+telephony session references, and compatibility context adapters
+(`AsteriskJobContext`, `AsteriskRunContext`, `PlayoutHandle`, etc.) for
 tools, goals, and the VoiceController FSM.
 """
 
@@ -16,13 +17,30 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-from telephony.base import BaseTelephonySession
+from session.base import BaseTelephonySession
 
-logger = logging.getLogger("telephony.context")
+logger = logging.getLogger("session.context")
 
 
-class DuckParticipant:
-    """Participant matching telephony interface."""
+class PlayoutHandle:
+    """Awaitable handle returned by session.say() to wait for speech playout."""
+
+    def __init__(self, wait_fn: Callable[[], Any]) -> None:
+        self._wait_fn = wait_fn
+
+    async def wait_for_playout(self, timeout: Optional[float] = None) -> bool:
+        res = self._wait_fn()
+        if asyncio.iscoroutine(res):
+            return await res
+        return True
+
+    async def wait(self, timeout: Optional[float] = None) -> bool:
+        """Alias for wait_for_playout."""
+        return await self.wait_for_playout(timeout=timeout)
+
+
+class AsteriskParticipant:
+    """Participant representation for caller, agent, or coordinator."""
 
     def __init__(self, identity: str, name: str = "") -> None:
         self.identity = identity
@@ -33,14 +51,14 @@ class DuckParticipant:
         pass
 
 
-class DuckRoom:
-    """Room matching telephony interface."""
+class AsteriskRoom:
+    """Room representation for an Asterisk call session."""
 
-    def __init__(self, name: str, caller_id: str = "caller") -> None:
+    def __init__(self, name: str, caller_id: str = "asterisk_caller") -> None:
         self.name = name
-        self.local_participant = DuckParticipant(identity="agent-worker", name="HRVoiceAgent")
-        caller_p = DuckParticipant(identity=f"sip_{caller_id}", name=caller_id)
-        self.remote_participants: Dict[str, DuckParticipant] = {caller_p.identity: caller_p}
+        self.local_participant = AsteriskParticipant(identity="agent-worker", name="HRVoiceAgent")
+        caller_p = AsteriskParticipant(identity=f"sip_{caller_id}", name=caller_id)
+        self.remote_participants: Dict[str, AsteriskParticipant] = {caller_p.identity: caller_p}
         self._events: Dict[str, list[Callable]] = {}
 
     def on(self, event_name: str, handler: Callable) -> None:
@@ -56,11 +74,11 @@ class DuckRoom:
                 logger.warning(f"Error in room event handler for '{event_name}': {e}")
 
 
-class DuckJobContext:
-    """Telephony JobContext tracking session and hangup hooks."""
+class AsteriskJobContext:
+    """Asterisk telephony JobContext tracking session and hangup hooks."""
 
     def __init__(self, room_name: str, caller_id: str, on_disconnect: Optional[Callable[[], Any]] = None) -> None:
-        self.room = DuckRoom(name=room_name, caller_id=caller_id)
+        self.room = AsteriskRoom(name=room_name, caller_id=caller_id)
         self.caller_id = caller_id
         self._on_disconnect = on_disconnect
         self._shutdown_callbacks: list[Callable] = []
@@ -69,6 +87,7 @@ class DuckJobContext:
         self._shutdown_callbacks.append(cb)
 
     async def disconnect(self) -> None:
+        logger.info(f"📴 [AsteriskJobContext] Disconnecting call {self.room.name}...")
         for cb in self._shutdown_callbacks:
             try:
                 res = cb()
@@ -82,9 +101,9 @@ class DuckJobContext:
                 await res
 
 
-class DuckRunContext:
+class AsteriskRunContext:
     """
-    Telephony RunContext passed into @function_tool actions.
+    Asterisk RunContext passed into @function_tool actions.
     Provides context.session, context.wait_for_playout(), and context.agent.
     """
 
@@ -96,6 +115,13 @@ class DuckRunContext:
         if hasattr(self.session, "wait_for_playout"):
             return await self.session.wait_for_playout(timeout)
         return True
+
+
+# Backwards-compatible aliases
+DuckParticipant = AsteriskParticipant
+DuckRoom = AsteriskRoom
+DuckJobContext = AsteriskJobContext
+DuckRunContext = AsteriskRunContext
 
 
 @dataclass

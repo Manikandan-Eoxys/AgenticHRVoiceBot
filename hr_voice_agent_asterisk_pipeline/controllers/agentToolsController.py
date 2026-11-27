@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Callable, Dict, List, Optional, Type
-from asterisk.llm_types import function_tool
+from models.llm_types import function_tool
 
 from datasources import get_data_source_adapter
 from datasources.base import BaseDataSourceAdapter

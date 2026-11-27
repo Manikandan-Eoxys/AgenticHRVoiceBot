@@ -21,7 +21,7 @@ from controllers.global_monitor_fsm import (
     global_monitor_running,
     report_agent_event,
 )
-from telephony.context import CallContext, DuckJobContext, DuckRunContext
+from session.context import CallContext, DuckJobContext, DuckRunContext
 from goals.helpers import require_verified, clean_id
 from goals.g01_identity_verification import IdentityVerificationService
 from goals.g13_coordinator_transfer import CoordinatorTransferService

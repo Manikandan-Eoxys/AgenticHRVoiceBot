@@ -1,28 +1,18 @@
 """
 config/__init__.py
 
-Re-exports typed Config and module-level constants from config.py
-so that both `from config import OLLAMA_BASE_URL` and `import config` work seamlessly
-whether Python resolves config as a package directory or module.
+Re-exports typed Config and module-level constants from config.settings
+so that both `from config import OLLAMA_BASE_URL` and `import config` work cleanly.
 """
 
-import importlib.util
-from pathlib import Path
 from typing import TYPE_CHECKING, Optional
-
-_cfg_path = Path(__file__).resolve().parent.parent / "config.py"
-if _cfg_path.exists():
-    _spec = importlib.util.spec_from_file_location("_config_module", str(_cfg_path))
-    if _spec and _spec.loader:
-        _mod = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_mod)
-        for _attr in dir(_mod):
-            if not _attr.startswith("__"):
-                globals()[_attr] = getattr(_mod, _attr)
+from .settings import *  # noqa: F401, F403
 
 # Explicit fallback module-level bindings for static type analyzers (Pyrefly/mypy)
 OPENROUTER_API_KEY: Optional[str] = globals().get("OPENROUTER_API_KEY", None)
 OPENROUTER_MODEL: str = globals().get("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")
+STT_API_KEY: Optional[str] = globals().get("STT_API_KEY", None)
+TTS_API_KEY: Optional[str] = globals().get("TTS_API_KEY", None)
 
 __all__ = [
     "Config",

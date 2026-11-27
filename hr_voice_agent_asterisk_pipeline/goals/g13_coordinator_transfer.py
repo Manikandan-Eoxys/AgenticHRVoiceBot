@@ -13,7 +13,7 @@ import time
 from datetime import timedelta
 from typing import Any
 from goals.base import GoalService, GoalMeta, function_tool, RunContext
-from manage_blocked_numbers import is_number_blocked
+from security.call_blocklist import is_number_blocked
 
 logger = logging.getLogger("goals.g13_coordinator")
 
@@ -68,17 +68,12 @@ class CoordinatorTransferService(GoalService):
             return "Call context is unavailable. Unable to complete live transfer at this moment."
 
         room = self.job_ctx.room
-        identity = f"coordinator-{int(time.time())}"
 
         # Check recording mode: if cutoff, stop recording before dialing coordinator
         rec_mode = os.environ.get("RECORDING_COORDINATOR_MODE", "record_all").strip().lower()
         if rec_mode == "cutoff" and getattr(context.session, "recorder", None):
             logger.info("🛑 [Transfer] Mode is 'cutoff': stopping recorder before coordinator pick.")
             await context.session.recorder.stop()
-
-        timeout_sec = int(os.environ.get("COORDINATOR_DIAL_TIMEOUT_SECONDS", str(COORDINATOR_DIAL_TIMEOUT_SECONDS)))
-        caller_id = os.environ.get("SIP_CALLER_ID", SIP_CALLER_ID)
-        trunk_id = os.environ.get("SIP_OUTBOUND_TRUNK_ID", OUTBOUND_TRUNK_ID)
 
         # Underlying session is an Asterisk telephony session
         telephony_session = getattr(context, "session", None)

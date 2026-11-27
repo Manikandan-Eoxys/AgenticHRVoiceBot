@@ -44,12 +44,12 @@ from database.db import run_startup_check
 from security.call_blocklist import is_number_blocked
 from services.monitoring_handler import install_monitoring_handler
 from goals.email_approval import start_email_approval_daemon
-from asterisk.audiosocket import (
+from audio.audiosocket import (
     read_packet,
     HEADER_SIZE,
     TYPE_UUID,
 )
-from asterisk.voice_session import AsteriskVoiceSession
+from pipeline.voice_session import AsteriskVoiceSession
 
 logger = logging.getLogger("asterisk.server")
 
@@ -182,6 +182,7 @@ class AsteriskServer:
             async with http_session.post(ans_url) as resp:
                 if resp.status not in (200, 204):
                     logger.error(f"Failed to answer channel {channel_id}: {resp.status}")
+                    await self._cleanup_call(channel_id)
                     return
 
             # 2. Register standard RFC 4122 UUID (required by Asterisk res_audiosocket)
@@ -205,6 +206,7 @@ class AsteriskServer:
                 if resp.status not in (200, 201):
                     body = await resp.text()
                     logger.error(f"Failed to create externalMedia channel: {resp.status} - {body}")
+                    await self._cleanup_call(channel_id)
                     return
                 ext_chan = await resp.json()
                 ext_channel_id = ext_chan.get("id")
@@ -215,6 +217,7 @@ class AsteriskServer:
             async with http_session.post(bridge_url, json=bridge_payload) as resp:
                 if resp.status not in (200, 201):
                     logger.error(f"Failed to create bridge: {resp.status}")
+                    await self._cleanup_call(channel_id)
                     return
                 bridge = await resp.json()
                 bridge_id = bridge.get("id")
@@ -228,15 +231,18 @@ class AsteriskServer:
                     logger.info(f"✅ [ARI Bridge {bridge_id}] Caller {channel_id} ↔ AudioSocket {ext_channel_id} bridged successfully.")
                 else:
                     logger.error(f"Failed to bridge channels: {resp.status}")
+                    await self._cleanup_call(channel_id)
 
         except Exception as e:
             logger.error(f"❌ Error setting up call {channel_id}: {e}", exc_info=True)
+            await self._cleanup_call(channel_id)
 
     async def _handle_audiosocket_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Handles TCP connection from Asterisk externalMedia."""
         peer = writer.get_extra_info("peername")
         logger.info(f"🔌 AudioSocket client connected from {peer}")
 
+        channel_id: Optional[str] = None
         try:
             # 1. Read first packet (expected TYPE_UUID = 0x01)
             msg_type, payload = await read_packet(reader)
@@ -275,6 +281,8 @@ class AsteriskServer:
 
         except Exception as e:
             logger.error(f"❌ AudioSocket client handler error: {e}", exc_info=True)
+            if channel_id:
+                await self._cleanup_call(channel_id)
             try:
                 writer.close()
                 await writer.wait_closed()

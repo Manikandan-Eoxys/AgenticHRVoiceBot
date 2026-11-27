@@ -29,13 +29,12 @@ fi
 
 if [ "${1:-}" = "selftest" ]; then exec $PY -m webcall.selftest; fi
 
-if [ ! -f "$ENV_FILE" ]; then
-  echo "❌ $(cd .. && pwd)/.env not found. Create it in the project root."
-  exit 1
-fi
-if [ -f ./.env ]; then
-  echo "⚠️  Found $(pwd)/.env - agent.py loads this one INSTEAD of the outer .env."
-  echo "    Delete it to use only ../.env:  rm $(pwd)/.env"
+if [ -f "./.env" ]; then
+  ENV_FILE="./.env"
+elif [ -f "../.env" ]; then
+  ENV_FILE="../.env"
+else
+  echo "❌ .env not found."
   exit 1
 fi
 

@@ -1,17 +1,10 @@
 """
 main.py
 
-Entry point for HR Voice Agent
-Supports both Asterisk Telephony (Native ARI + AudioSocket) and LiveKit WebRTC backend.
-=======================================================================================
+Entry point for HR Voice Agent (Asterisk Native ARI + AudioSocket).
+===================================================================
 Usage:
-  # Run Asterisk Telephony Daemon:
-  python main.py asterisk
-  # OR set TELEPHONY_BACKEND=asterisk in .env:
   python main.py
-
-  # Run LiveKit WebRTC Worker (development / backwards-compatibility):
-  python main.py dev
 """
 
 import sys
@@ -31,25 +24,11 @@ for _p in (_current_dir, _project_root):
         sys.path.insert(0, _p_str)
 
 import logging
-from services.monitoring_handler import install_monitoring_handler
-from goals.email_approval import start_email_approval_daemon
 
 logger = logging.getLogger("main")
 
-# Attach monitoring handler so all logs stream to frontend UI
-try:
-    install_monitoring_handler()
-except Exception as e:
-    logging.warning(f"Could not initialize monitoring handler: {e}")
-
-
-def _start_email_approval_daemon():
-    """Starts background thread to continuously poll for manager leave approvals via email."""
-    return start_email_approval_daemon(poll_interval=15)
-
 
 def main():
-    _start_email_approval_daemon()
     logger.info("☎️ [Mode: ASTERISK] Starting Asterisk ARI + AudioSocket Telephony Daemon...")
     from agent import run
     run()

@@ -22,7 +22,7 @@ import time
 try:
     from .base import BaseTelephonySession
 except ImportError:
-    from telephony.base import BaseTelephonySession
+    from session.base import BaseTelephonySession
 
 logger = logging.getLogger("telephony.registry")
 

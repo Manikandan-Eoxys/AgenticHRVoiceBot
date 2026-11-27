@@ -3,8 +3,10 @@ hr_voice_agent/pipeline/stt_client.py
 
 Real-Time Streaming Speech-to-Text (STT) Client
 ========================================================
-Connects to Deepgram's streaming WebSocket API to process linear 16-bit PCM.
-Emits real-time interim results, final speech segments, and server-side VAD events.
+Connects to Deepgram's streaming WebSocket API over raw linear 16-bit PCM.
+Supports real-time VAD events (instant barge-in detection), interim results,
+per-chunk final callbacks (`on_final`), and end-of-turn utterance callbacks
+(`on_speech_final`).
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ import asyncio
 import json
 import logging
 import urllib.parse
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import aiohttp
 
@@ -23,6 +25,10 @@ logger = logging.getLogger("pipeline.stt")
 class StreamingSTTClient:
     """
     Asynchronous streaming STT client for Deepgram Nova-3.
+
+    Supports both:
+      - `on_final(transcript, speech_final)`: called on every `is_final` chunk
+      - `on_speech_final(full_transcript)`: called once per utterance on `speech_final`
     """
 
     def __init__(
@@ -31,10 +37,11 @@ class StreamingSTTClient:
         sample_rate: int = 8000,
         model: str = "nova-3",
         language: str = "en",
-        endpointing_ms: int = 400,
-        on_speech_started: Optional[Callable[[], None]] = None,
-        on_interim: Optional[Callable[[str], None]] = None,
-        on_final: Optional[Callable[[str, bool], None]] = None,  # (transcript, speech_final)
+        endpointing_ms: int = 240,
+        on_speech_started: Optional[Callable[[], Any]] = None,
+        on_interim: Optional[Callable[[str], Any]] = None,
+        on_final: Optional[Callable[[str, bool], Any]] = None,
+        on_speech_final: Optional[Callable[[str], Any]] = None,
     ) -> None:
         self.api_key = api_key
         self.sample_rate = sample_rate
@@ -42,15 +49,19 @@ class StreamingSTTClient:
         self.language = language
         self.endpointing_ms = endpointing_ms
 
+        # Event callbacks
         self.on_speech_started = on_speech_started
         self.on_interim = on_interim
         self.on_final = on_final
+        self.on_speech_final = on_speech_final
 
+        self._connector: Optional[aiohttp.TCPConnector] = None
         self._session: Optional[aiohttp.ClientSession] = None
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
         self._receive_task: Optional[asyncio.Task] = None
         self._running = False
         self._connected_event = asyncio.Event()
+        self._current_utterance: list[str] = []
 
     def _build_ws_url(self) -> str:
         params = {
@@ -67,8 +78,18 @@ class StreamingSTTClient:
         }
         return f"wss://api.deepgram.com/v1/listen?{urllib.parse.urlencode(params)}"
 
+    def _dispatch(self, callback: Optional[Callable[..., Any]], *args: Any, label: str = "") -> None:
+        if not callback:
+            return
+        try:
+            res = callback(*args)
+            if asyncio.iscoroutine(res):
+                asyncio.create_task(res)
+        except Exception as exc:
+            logger.warning(f"Error in {label or 'STT'} callback: {exc}")
+
     async def start(self) -> None:
-        """Connects to Deepgram streaming WebSocket."""
+        """Connects to Deepgram streaming WebSocket and starts receiver task."""
         if self._running:
             return
 
@@ -76,29 +97,33 @@ class StreamingSTTClient:
         ws_url = self._build_ws_url()
         headers = {"Authorization": f"Token {self.api_key}"}
 
-        self._session = aiohttp.ClientSession()
+        # Hold an explicit TCPConnector reference so Python 3.12 GC finalizers
+        # on prior sessions cannot close a shared connector pool prematurely.
+        self._connector = aiohttp.TCPConnector(force_close=True)
+        self._session = aiohttp.ClientSession(connector=self._connector)
+        logger.info(f"🎙️ [STT] Connecting to streaming API (model={self.model}, rate={self.sample_rate}Hz)...")
         try:
             self._ws = await self._session.ws_connect(ws_url, headers=headers)
             self._connected_event.set()
-            self._receive_task = asyncio.create_task(self._listen_loop(), name="DeepgramListener")
-            logger.info(f"🎙️ Deepgram streaming STT connected (model={self.model}, rate={self.sample_rate}Hz)")
+            logger.info("✅ [STT] WebSocket connected.")
+            self._receive_task = asyncio.create_task(self._listen_loop(), name="DeepgramSTTListener")
         except Exception as e:
-            logger.error(f"❌ Failed to connect to Deepgram STT: {e}")
+            logger.error(f"❌ [STT] Connection error: {e}")
             await self.close()
             raise
 
-    async def send_audio(self, pcm_data: bytes) -> None:
+    async def send_audio(self, pcm_bytes: bytes) -> None:
         """Sends a chunk of raw linear 16-bit PCM bytes to Deepgram."""
         if not self._running or self._ws is None or self._ws.closed:
             return
         try:
-            await self._ws.send_bytes(pcm_data)
+            await self._ws.send_bytes(pcm_bytes)
         except Exception as e:
-            logger.warning(f"⚠️ Error sending audio to Deepgram: {e}")
+            logger.debug(f"[STT] Audio send failed: {e}")
 
     async def _listen_loop(self) -> None:
-        """Receives and processes JSON messages from Deepgram."""
-        if not self._ws:
+        """Receives and parses transcripts and VAD events from Deepgram."""
+        if self._ws is None:
             return
 
         try:
@@ -114,48 +139,53 @@ class StreamingSTTClient:
                         logger.warning(f"Failed to parse Deepgram message: {parse_err}")
 
                 elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                    logger.info("Deepgram WebSocket closed.")
+                    logger.warning("⚠️ [STT] WebSocket closed.")
                     break
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.warning(f"Exception in Deepgram listener loop: {e}")
+            logger.warning(f"⚠️ [STT] Listener loop error: {e}")
 
     def _handle_message(self, data: dict) -> None:
         msg_type = data.get("type")
 
-        # 1. Server-side VAD event: speech started
+        # 1. Server-side VAD event: speech started (instant barge-in)
         if msg_type == "SpeechStarted":
-            logger.debug("⚡ [STT] Deepgram SpeechStarted VAD event")
-            if self.on_speech_started:
-                self.on_speech_started()
+            logger.debug("🗣️ [Deepgram VAD] SpeechStarted detected!")
+            self._dispatch(self.on_speech_started, label="on_speech_started")
             return
 
-        # 2. Transcription results
-        if msg_type == "Results" or "channel" in data:
-            channel = data.get("channel", {})
-            alternatives = channel.get("alternatives", [])
-            if not alternatives:
-                return
+        # 2. Transcription results (guard non-dict 'channel' in metadata/VAD events)
+        channel = data.get("channel", {})
+        if not isinstance(channel, dict):
+            return
+        alternatives = channel.get("alternatives", [])
+        if not alternatives:
+            return
 
-            transcript = alternatives[0].get("transcript", "").strip()
-            if not transcript:
-                return
+        transcript = (alternatives[0].get("transcript") or "").strip()
+        is_final = data.get("is_final", False)
+        speech_final = data.get("speech_final", False)
 
-            is_final = data.get("is_final", False)
-            speech_final = data.get("speech_final", False)
-
-            if is_final:
-                logger.debug(f"📝 [STT Final]: '{transcript}' (speech_final={speech_final})")
-                if self.on_final:
-                    self.on_final(transcript, speech_final)
+        if transcript:
+            if not is_final:
+                self._dispatch(self.on_interim, transcript, label="on_interim")
             else:
-                if self.on_interim:
-                    self.on_interim(transcript)
+                self._current_utterance.append(transcript)
+                logger.info(f"📝 [STT Final Chunk]: '{transcript}' (speech_final={speech_final})")
+                self._dispatch(self.on_final, transcript, speech_final, label="on_final")
+
+        # 3. End-of-turn detection
+        if speech_final:
+            full_transcript = " ".join(self._current_utterance).strip()
+            self._current_utterance.clear()
+            if full_transcript:
+                logger.info(f"🎯 [STT End-of-Turn]: '{full_transcript}'")
+                self._dispatch(self.on_speech_final, full_transcript, label="on_speech_final")
 
     async def close(self) -> None:
-        """Closes the WebSocket and session cleanly."""
+        """Closes WebSocket, session, and connector cleanly."""
         self._running = False
         if self._receive_task and not self._receive_task.done():
             self._receive_task.cancel()
@@ -166,11 +196,22 @@ class StreamingSTTClient:
 
         if self._ws and not self._ws.closed:
             try:
-                # Send close stream message if socket is open
-                await self._ws.send_json({"type": "CloseStream"})
+                await self._ws.send_bytes(b"")
                 await self._ws.close()
             except Exception:
                 pass
 
         if self._session and not self._session.closed:
-            await self._session.close()
+            try:
+                await self._session.close()
+            except Exception:
+                pass
+            self._session = None
+
+        if self._connector and not self._connector.closed:
+            try:
+                await self._connector.close()
+            except Exception:
+                pass
+            self._connector = None
+        logger.info("🔌 [STT] Stream closed cleanly.")

@@ -401,7 +401,7 @@ class LeaveService:
             "message": f"I have sent a reminder notification to your manager regarding your pending {req['leave_name']} request for {req['start_date']} to {req['end_date']}."
         }
 
-    def list_leave_types(self) -> dict:
+    def list_leave_types(self, *args, **kwargs) -> dict:
         try:
             rows = self._query(
                 """SELECT leave_code, leave_name, annual_range, short_note, applies_to

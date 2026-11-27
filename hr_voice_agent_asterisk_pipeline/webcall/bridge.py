@@ -11,7 +11,7 @@ import logging
 import uuid
 from typing import Awaitable, Callable, Optional
 
-from asterisk.audiosocket import (
+from audio.audiosocket import (
     TYPE_AUDIO,
     TYPE_ERROR,
     TYPE_HANGUP,

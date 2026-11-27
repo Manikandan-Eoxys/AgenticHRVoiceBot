@@ -15,7 +15,7 @@ _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from audiosocket_echo import (
+from scripts.audiosocket_echo import (
     AudioSocketEchoServer,
     encode_packet,
     parse_uuid,
@@ -131,6 +131,7 @@ def test_echo_server_invalid_handshake():
     async def _test():
         server = AudioSocketEchoServer(host="127.0.0.1", port=0)
         await server.start()
+        assert server.server is not None
         port = server.server.sockets[0].getsockname()[1]
 
         try:
@@ -154,6 +155,7 @@ def test_echo_server_error_packet():
     async def _test():
         server = AudioSocketEchoServer(host="127.0.0.1", port=0)
         await server.start()
+        assert server.server is not None
         port = server.server.sockets[0].getsockname()[1]
 
         try:
@@ -180,6 +182,7 @@ def test_echo_server_concurrency():
     async def _test():
         server = AudioSocketEchoServer(host="127.0.0.1", port=0)
         await server.start()
+        assert server.server is not None
         port = server.server.sockets[0].getsockname()[1]
 
         async def run_client(client_id: int):

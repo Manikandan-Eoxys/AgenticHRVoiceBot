@@ -15,6 +15,11 @@ class Config:
     OPENROUTER_MODEL: str
     GROQ_API_KEY: Optional[str]
     GROQ_MODEL: str
+    STT_API_KEY: Optional[str]
+    STT_MODEL: str
+    STT_LANGUAGE: str
+    TTS_API_KEY: Optional[str]
+    LLM_PROVIDER: str
     DEEPGRAM_API_KEY: Optional[str]
     ELEVENLABS_API_KEY: Optional[str]
     ELEVENLABS_VOICE_ID: Optional[str]
@@ -73,6 +78,11 @@ OPENROUTER_API_KEY: Optional[str]
 OPENROUTER_MODEL: str
 GROQ_API_KEY: Optional[str]
 GROQ_MODEL: str
+STT_API_KEY: Optional[str]
+STT_MODEL: str
+STT_LANGUAGE: str
+TTS_API_KEY: Optional[str]
+LLM_PROVIDER: str
 DEEPGRAM_API_KEY: Optional[str]
 ELEVENLABS_API_KEY: Optional[str]
 ELEVENLABS_VOICE_ID: Optional[str]
@@ -122,6 +132,11 @@ __all__ = [
     "OPENROUTER_MODEL",
     "GROQ_API_KEY",
     "GROQ_MODEL",
+    "STT_API_KEY",
+    "STT_MODEL",
+    "STT_LANGUAGE",
+    "TTS_API_KEY",
+    "LLM_PROVIDER",
     "DEEPGRAM_API_KEY",
     "ELEVENLABS_API_KEY",
     "ELEVENLABS_VOICE_ID",

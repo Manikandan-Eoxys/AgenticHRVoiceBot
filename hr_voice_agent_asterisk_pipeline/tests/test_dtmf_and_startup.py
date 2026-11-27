@@ -14,7 +14,7 @@ _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from telephony.dtmf import DtmfBuffer
+from audio.dtmf import DtmfBuffer
 from agent import validate_config
 
 

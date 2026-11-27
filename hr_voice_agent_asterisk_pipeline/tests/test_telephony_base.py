@@ -8,7 +8,7 @@ import asyncio
 from typing import AsyncIterator, Optional
 import pytest
 
-from telephony.base import BaseTelephonySession
+from session.base import BaseTelephonySession
 
 
 class MockTelephonySession(BaseTelephonySession):

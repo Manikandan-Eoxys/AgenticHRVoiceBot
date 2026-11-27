@@ -1,20 +1,19 @@
 """
-hr_voice_agent/telephony/audiosocket.py
+hr_voice_agent/asterisk/audiosocket.py
 
 Asterisk AudioSocket Protocol Implementation
 =============================================
-RFC/Specification: Asterisk res_audiosocket / chan_audiosocket / app_audiosocket
+RFC/Specification: Asterisk app_audiosocket / res_audiosocket / chan_audiosocket
 
 Wire Format:
   [Type (1 byte)] [Payload Length (2 bytes, big-endian uint16)] [Payload (N bytes)]
 
-Protocol Message Types:
-  0x00: Hangup
-  0x01: UUID (16-byte binary UUID or 36-byte ASCII string)
-  0x02: Silence / Keep-Alive
-  0x03: Error (Alternative)
-  0x10: Audio (Signed 16-bit Little-Endian Mono Linear PCM)
-  0xFF: Error (AudioSocket Standard)
+Message Types:
+  0x00 = Hangup (asterisk/client disconnect)
+  0x01 = UUID (16-byte binary UUID or ASCII UUID string)
+  0x02 = Silence (heartbeat)
+  0x03 = Error
+  0x10 = Linear 16-bit signed PCM audio
 """
 
 from __future__ import annotations
@@ -23,12 +22,11 @@ import asyncio
 import logging
 import struct
 import time
-import uuid
-from typing import Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
-logger = logging.getLogger("telephony.audiosocket")
+logger = logging.getLogger("asterisk.audiosocket")
 
-# Protocol constants
+# AudioSocket protocol byte types
 TYPE_HANGUP   = 0x00
 TYPE_UUID     = 0x01
 TYPE_SILENCE  = 0x02
@@ -52,7 +50,7 @@ def bytes_per_frame(sample_rate: int = 8000, duration_ms: int = FRAME_DURATION_M
 
 
 def encode_packet(msg_type: int, payload: bytes = b"") -> bytes:
-    """Encodes an AudioSocket packet with a 3-byte header."""
+    """Encodes an AudioSocket packet with 3-byte header."""
     return struct.pack(">BH", msg_type, len(payload)) + payload
 
 
@@ -66,21 +64,6 @@ def encode_hangup() -> bytes:
     return encode_packet(TYPE_HANGUP, b"")
 
 
-def parse_uuid(payload: bytes) -> Optional[uuid.UUID]:
-    """
-    Validates and extracts UUID from initial handshake payload.
-    Supports both 16-byte RFC 4122 binary representation and 36-byte ASCII string.
-    """
-    try:
-        if len(payload) == 16:
-            return uuid.UUID(bytes=payload)
-        elif len(payload) == 36:
-            return uuid.UUID(payload.decode("ascii"))
-        return None
-    except Exception:
-        return None
-
-
 async def read_packet(reader: asyncio.StreamReader) -> Tuple[int, bytes]:
     """
     Reads one complete AudioSocket packet from the stream.
@@ -88,9 +71,9 @@ async def read_packet(reader: asyncio.StreamReader) -> Tuple[int, bytes]:
     Raises asyncio.IncompleteReadError on socket EOF.
     """
     header = await reader.readexactly(HEADER_SIZE)
-    msg_type, length = struct.unpack(">BH", header)
-    if length > 0:
-        payload = await reader.readexactly(length)
+    msg_type, msg_len = struct.unpack(">BH", header)
+    if msg_len > 0:
+        payload = await reader.readexactly(msg_len)
     else:
         payload = b""
     return msg_type, payload
@@ -100,7 +83,7 @@ class AudioSocketWriterQueue:
     """
     Paced Audio Streamer for Asterisk AudioSocket.
 
-    Maintains a bounded queue of 20ms audio frames and paces delivery
+    Maintains an asynchronous queue of 20ms audio frames and paces delivery
     at real-time rate (every ~20ms). Supports instant barge-in / interruption
     by purging all pending frames immediately.
     """
@@ -110,7 +93,6 @@ class AudioSocketWriterQueue:
         writer: asyncio.StreamWriter,
         sample_rate: int = 8000,
         frame_duration_ms: int = FRAME_DURATION_MS,
-        max_queue_size: int = 250,  # ~5 seconds buffer max
     ) -> None:
         self.writer = writer
         self.sample_rate = sample_rate
@@ -118,12 +100,14 @@ class AudioSocketWriterQueue:
         self.frame_bytes = bytes_per_frame(sample_rate, frame_duration_ms)
         self.frame_interval = frame_duration_ms / 1000.0  # 0.02s
 
-        self._queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=max_queue_size)
+        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._pcm_buffer: bytearray = bytearray()
         self._running = True
         self._is_playing = False
         self._playout_done_event = asyncio.Event()
         self._playout_done_event.set()
         self._worker_task: Optional[asyncio.Task] = None
+        self.on_frame_sent: Optional[Any] = None
 
     def start(self) -> None:
         """Starts the background frame delivery loop."""
@@ -132,11 +116,12 @@ class AudioSocketWriterQueue:
 
     @property
     def is_playing(self) -> bool:
-        return self._is_playing or not self._queue.empty()
+        return self._is_playing or not self._queue.empty() or len(self._pcm_buffer) >= self.frame_bytes
 
     def enqueue_pcm(self, pcm_data: bytes) -> None:
         """
-        Slices arbitrary length PCM data into exact 20ms frames and enqueues them.
+        Appends streaming PCM data to the internal buffer and enqueues exact 20ms frames.
+        Maintains audio continuity across chunk boundaries without injecting silence.
         """
         if not pcm_data or not self._running:
             return
@@ -144,23 +129,28 @@ class AudioSocketWriterQueue:
         self._is_playing = True
         self._playout_done_event.clear()
 
+        self._pcm_buffer.extend(pcm_data)
         step = self.frame_bytes
-        for offset in range(0, len(pcm_data), step):
-            chunk = pcm_data[offset : offset + step]
-            if len(chunk) < step:
-                # Pad final short chunk with silence to maintain 20ms framing
-                chunk = chunk + (b"\x00" * (step - len(chunk)))
-            try:
-                self._queue.put_nowait(chunk)
-            except asyncio.QueueFull:
-                logger.warning("⚠️ Outbound audio queue full; dropping frame to prevent latency.")
-                break
+        while len(self._pcm_buffer) >= step:
+            frame = bytes(self._pcm_buffer[:step])
+            del self._pcm_buffer[:step]
+            self._queue.put_nowait(frame)
 
-    def interrupt(self) -> int:
+    def flush(self) -> None:
+        """
+        Pads and flushes any trailing residual samples at the end of speech.
+        """
+        if self._pcm_buffer and self._running:
+            pad_len = self.frame_bytes - len(self._pcm_buffer)
+            frame = bytes(self._pcm_buffer) + (b"\x00" * pad_len)
+            self._pcm_buffer.clear()
+            self._queue.put_nowait(frame)
+
+    def interrupt(self) -> None:
         """
         Barge-in: Instantly purges all queued audio frames and stops playback.
-        Returns the number of discarded frames.
         """
+        self._pcm_buffer.clear()
         discarded = 0
         while not self._queue.empty():
             try:
@@ -173,11 +163,7 @@ class AudioSocketWriterQueue:
         self._is_playing = False
         self._playout_done_event.set()
         if discarded > 0:
-            logger.info(
-                f"⚡ [AudioSocket] Barge-in interruption: purged {discarded} audio frames "
-                f"({discarded * self.frame_duration_ms}ms)."
-            )
-        return discarded
+            logger.info(f"⚡ [AudioSocket] Barge-in interruption: purged {discarded} audio frames ({discarded * 20}ms).")
 
     async def wait_for_playout(self, timeout: Optional[float] = None) -> bool:
         """
@@ -200,6 +186,7 @@ class AudioSocketWriterQueue:
 
         while self._running:
             try:
+                # Wait for next frame (or idle timeout)
                 try:
                     frame = await asyncio.wait_for(self._queue.get(), timeout=0.1)
                 except asyncio.TimeoutError:
@@ -216,6 +203,11 @@ class AudioSocketWriterQueue:
                 self.writer.write(packet)
                 await self.writer.drain()
                 self._queue.task_done()
+                if self.on_frame_sent is not None:
+                    try:
+                        self.on_frame_sent(frame)
+                    except Exception:
+                        pass
 
                 # Maintain 20ms cadence
                 now = time.monotonic()

@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
  
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 _env_path = BASE_DIR / ".env"
 if _env_path.exists():
     load_dotenv(_env_path, override=True)
@@ -52,10 +52,10 @@ class Config:
     GROQ_MODEL     = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
  
     # Speech services (provider-neutral names)
-    STT_API_KEY  = os.getenv("STT_API_KEY")
+    STT_API_KEY  = os.getenv("STT_API_KEY") or os.getenv("DEEPGRAM_API_KEY")
     STT_MODEL    = os.getenv("STT_MODEL", "nova-3")
     STT_LANGUAGE = os.getenv("STT_LANGUAGE", "en")
-    TTS_API_KEY  = os.getenv("TTS_API_KEY")
+    TTS_API_KEY  = os.getenv("TTS_API_KEY") or os.getenv("DEEPGRAM_API_KEY")
 
     # LLM selection: auto | local | openrouter | groq  (see llm_selector.py)
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").strip().lower()
@@ -193,6 +193,7 @@ STT_API_KEY  = Config.STT_API_KEY
 STT_MODEL    = Config.STT_MODEL
 STT_LANGUAGE = Config.STT_LANGUAGE
 TTS_API_KEY  = Config.TTS_API_KEY
+DEEPGRAM_API_KEY = Config.STT_API_KEY
 LLM_PROVIDER = Config.LLM_PROVIDER
  
 MYSQL_HOST     = Config.MYSQL_HOST

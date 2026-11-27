@@ -55,6 +55,10 @@ def get_llm_choice() -> LLMChoice:
     ollama_url = _setting("OLLAMA_BASE_URL", "http://localhost:11434/v1")
     requested = (_setting("LLM_PROVIDER", "auto") or "auto").lower()
 
+    use_cloud_env = _setting("USE_CLOUD_LLM", "").lower()
+    if use_cloud_env in ("false", "0", "no", "off"):
+        requested = "local"
+
     def local(reason: str) -> LLMChoice:
         return LLMChoice("ollama", ollama_model, ollama_url, "", reason, ollama_model, ollama_url)
 
@@ -84,13 +88,13 @@ def get_llm_choice() -> LLMChoice:
 
 def build_llm(choice: LLMChoice | None = None):
     """Create the LLM object for one call from the (cached) choice."""
-    from ollama_llm import FallbackLLM, OllamaLLM
+    from models.ollama_llm import FallbackLLM, OllamaLLM
 
     choice = choice or get_llm_choice()
     local = OllamaLLM(model=choice.ollama_model, base_url=choice.ollama_base_url, think=False)
     if not choice.is_cloud:
         return local
-    from asterisk.llm_types import OpenAICompatibleLLM
+    from models.llm_types import OpenAICompatibleLLM
 
     cloud_llm = OpenAICompatibleLLM(model=choice.model, api_key=choice.api_key, base_url=choice.base_url)
     return FallbackLLM(primary_llm=cloud_llm, fallback_llm=local)

@@ -31,7 +31,7 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 
 # Asterisk LLM types used by tools and FallbackLLM
-from asterisk.llm_types import ChatContext, ChatMessage
+from models.llm_types import ChatContext, ChatMessage
 
 from config import (
     STT_API_KEY,
@@ -46,11 +46,11 @@ from config import (
     RAG_FILLER_MODE,
     ARI_URL,
 )
-from prompts import INBOUND_INSTRUCTIONS
+from prompts import INBOUND_INSTRUCTIONS, INBOUND_INSTRUCTIONS_LOCAL
 COORDINATOR_PHONE_NUMBER = os.environ.get("COORDINATOR_PHONE_NUMBER", "+918925355704")
 from controllers.agentVoiceController import AsteriskVoiceController, ControllerState
 from controllers.global_monitor_fsm import report_agent_event
-from ollama_llm import OllamaLLM, FallbackLLM
+from models.ollama_llm import OllamaLLM, FallbackLLM
 from services.rag_retriever_service import (
     RagConfig,
     HttpRetriever,
@@ -63,22 +63,22 @@ from services.rag_retriever_service import (
     load_clips,
 )
 from session.call_session import CallSession
-from asterisk.audiosocket import (
+from audio.audiosocket import (
     AudioSocketWriterQueue,
     read_packet,
     TYPE_AUDIO,
     TYPE_HANGUP,
     TYPE_UUID,
 )
-from asterisk.stt_client import StreamingSTTClient
-from llm_selector import build_llm, get_llm_choice
-from asterisk.tts_client import StreamingTTSClient
-from asterisk.context import (
+from pipeline.stt_client import StreamingSTTClient
+from models.llm_selector import build_llm, get_llm_choice
+from pipeline.tts_client import StreamingTTSClient
+from session.context import (
     AsteriskJobContext,
     AsteriskRunContext,
     PlayoutHandle,
 )
-from telephony.base import BaseTelephonySession
+from session.base import BaseTelephonySession
 from security.tool_guardrails import default_tool_guardrail
 
 logger = logging.getLogger("asterisk.voice_session")
@@ -302,7 +302,7 @@ class AsteriskVoiceSession(BaseTelephonySession):
         self.verified_employee_id: Optional[str] = None
 
         # Call-specific isolated context
-        from telephony.context import CallContext
+        from session.context import CallContext
         self.call_context = CallContext(
             call_id=self.call_uuid,
             caller_number=self.caller_id,
@@ -317,7 +317,11 @@ class AsteriskVoiceSession(BaseTelephonySession):
 
         # Conversation History
         today_str = date.today().strftime("%A, %B %-d, %Y")
-        prompt = INBOUND_INSTRUCTIONS.format(today_str=today_str)
+        is_local_only = getattr(self.llm, "provider", "") == "ollama" or isinstance(self.llm, OllamaLLM)
+        if is_local_only:
+            prompt = INBOUND_INSTRUCTIONS_LOCAL.format(today_str=today_str)
+        else:
+            prompt = INBOUND_INSTRUCTIONS.format(today_str=today_str)
         self.chat_ctx = ChatContext()
         self.chat_ctx.add_message(role="system", content=prompt)
 
@@ -679,6 +683,48 @@ class AsteriskVoiceSession(BaseTelephonySession):
         logger.info(f"🗣️ [Caller Turn]: '{user_text}'")
         self._update_state("thinking")
 
+        # 0a. Instant Spoken Employee ID Fast-Path (eliminates 38s LLM delay for 4-digit ID)
+        if not self.verified_employee_id and not getattr(self, "_candidate_employee_id", None):
+            WORD_TO_DIGIT = {
+                "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3",
+                "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"
+            }
+            words = re.findall(r"\b[a-zA-Z0-9]+\b", (user_text or "").lower())
+            extracted_digits = "".join(WORD_TO_DIGIT.get(w, w if w.isdigit() else "") for w in words)
+            id_match = re.search(r"\b(10[0-1][0-9])\b", extracted_digits) or re.search(r"\b(10[0-1][0-9])\b", user_text or "")
+            if id_match:
+                candidate_id = id_match.group(1)
+                logger.info(f"⚡ [Fast-Path] Extracted spoken employee ID: {candidate_id}")
+                tool_fn = self._find_tool_by_name("get_employee_by_id")
+                exec_result = await default_tool_guardrail.execute_tool(
+                    tool_callable=tool_fn,
+                    tool_name="get_employee_by_id",
+                    tool_args={"employee_id": candidate_id},
+                    caller_employee_id=self.verified_employee_id,
+                    context=self.run_ctx,
+                    timeout_seconds=3.5,
+                ) if tool_fn else {"success": False}
+                if exec_result.get("success"):
+                    res_content = str(exec_result.get("data", ""))
+                    logger.info(f"✅ [Fast-Path Tool Result] get_employee_by_id -> {res_content[:100]}")
+                    verify_match = re.search(r"VERIFY WITH CALLER:\s*([^?]+\?)", res_content)
+                    if verify_match:
+                        verify_speech = verify_match.group(1).strip()
+                        self._candidate_employee_id = candidate_id
+                        name_match = re.search(r"ID \d+,\s*([^—\-\?]+)", verify_speech)
+                        if name_match:
+                            self._candidate_employee_name = name_match.group(1).strip()
+                        self.chat_ctx.add_message(role="user", content=user_text)
+                        self.chat_ctx.add_message(role="assistant", content=verify_speech)
+                        self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [User]: {user_text}")
+                        self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {verify_speech}")
+                        self._update_state("speaking")
+                        await self.tts.speak_text(verify_speech)
+                        await self.tts.wait_for_playout()
+                        if self.running:
+                            self._update_state("listening")
+                        return
+
         # 0. Caller Identity Confirmation Guard (Instant readback affirmation handling)
         if not self.verified_employee_id and getattr(self, "_candidate_employee_id", None):
             cleaned_user = re.sub(r"[^\w\s]", "", (user_text or "").lower()).strip()
@@ -751,10 +797,16 @@ class AsteriskVoiceSession(BaseTelephonySession):
         self.chat_ctx.add_message(role="user", content=user_text)
         self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [User]: {user_text}")
         if rag_context_msg:
-            self.chat_ctx.add_message(role="assistant", content=rag_context_msg)
+            # Inject as "user" system note — NOT "assistant" (which causes LLM to speak it aloud)
+            self.chat_ctx.add_message(role="user", content=rag_context_msg)
 
         # 3. Dynamic Goal-Based Tool Filtering (Reduces prompt token count from ~5,500 to ~400)
         turn_tools = self._get_relevant_tools_for_turn(user_text)
+
+        # When RAG context was injected, strip tools entirely — the answer is in the context,
+        # no tool call is needed. This cuts 18 tool schemas (~1,400 tokens) from the prompt.
+        if rag_context_msg:
+            turn_tools = []
 
         # 4. Call LLM with Pruned Tool Set
         try:
@@ -928,6 +980,20 @@ class AsteriskVoiceSession(BaseTelephonySession):
                                         self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {verify_speech}")
                                         continue
 
+                                # ── Template Fast-Path: skip second LLM call for known data tools ──
+                                # For structured data tools we can format a natural spoken reply
+                                # directly from the raw result, saving 15-35s of Ollama inference.
+                                template_reply = self._format_tool_result_as_speech(fn_name, res_content)
+                                if template_reply:
+                                    logger.info(f"⚡ [Template Fast-Path] {fn_name} → skipping LLM summary call")
+                                    await self.tts.speak_text(template_reply)
+                                    await self.tts.wait_for_playout()
+                                    self.chat_ctx.add_message(role="assistant", content=template_reply)
+                                    self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {template_reply}")
+                                    if self.running:
+                                        self._update_state("listening")
+                                    continue
+
                                 # Inject as user role instruction so the LLM immediately speaks the result to caller
                                 self.chat_ctx.add_message(
                                     role="user",
@@ -1023,6 +1089,67 @@ class AsteriskVoiceSession(BaseTelephonySession):
         logger.info(f"🎯 [Dynamic Tools] Intent-routed {len(matched_tools)} tools for turn (verified={is_verified}, saving ~5,000 tokens)")
         return matched_tools
 
+    def _format_tool_result_as_speech(self, tool_name: str, result: Any) -> Optional[str]:
+        """
+        Template-based fast-path: convert structured tool results into a natural
+        spoken reply WITHOUT calling the LLM. Returns None if the tool is not
+        handled here (falls back to LLM summarization).
+
+        Saves 15-35s of Ollama inference per tool turn for common data queries.
+        """
+        name = getattr(self, "verified_employee_name", None) or "there"
+        res = str(result)
+
+        try:
+            # ── Leave balance (all types) ──────────────────────────────────────
+            if tool_name == "get_all_leave_balances":
+                # Parse "Casual Leave: 4 available; Sick/Medical Leave: 5 available; ..."
+                pairs = re.findall(r"([A-Za-z /]+(?:Leave|LWP|LOP|Comp Off)[A-Za-z /]*?):\s*(\d+|unlimited)\s*available", res)
+                if pairs:
+                    parts = []
+                    for leave_type, count in pairs:
+                        parts.append(f"{leave_type.strip()} {count}")
+                    return f"Your leave balances are: {', '.join(parts)}. Is there anything else I can help you with?"
+
+            # ── Single leave type balance ──────────────────────────────────────
+            if tool_name == "get_leave_balance":
+                m = re.search(r"(\d+)\s+(?:days?\s+)?(?:of\s+)?(.+?)(?:\s+leave)?\s+(?:available|remaining|left)", res, re.I)
+                if m:
+                    return f"You have {m.group(1)} days of {m.group(2).strip()} leave available. Anything else?"
+                # Fallback: speak the raw result if short enough
+                if len(res) < 120:
+                    return f"{res.strip()} Is there anything else?"
+
+            # ── Attendance summary ─────────────────────────────────────────────
+            if tool_name in ("get_attendance_summary", "get_attendance"):
+                if len(res) < 200:
+                    # Strip internal labels and speak directly
+                    clean = re.sub(r"\[.*?\]", "", res).strip()
+                    return f"Here's your attendance summary: {clean}. Anything else I can help with?"
+
+            # ── Leave application result ───────────────────────────────────────
+            if tool_name in ("apply_leave", "submit_leave_request"):
+                if "success" in res.lower() or "applied" in res.lower() or "submitted" in res.lower():
+                    return f"Your leave request has been submitted successfully. You'll receive a confirmation email shortly. Is there anything else?"
+                if "error" in res.lower() or "fail" in res.lower():
+                    return f"I'm sorry, there was an issue submitting your leave request. {res[:80].strip()}. Please try again or contact HR."
+
+            # ── Holiday list ───────────────────────────────────────────────────
+            if tool_name in ("get_holidays", "list_holidays"):
+                if len(res) < 300:
+                    clean = re.sub(r"\[.*?\]", "", res).strip()
+                    return f"Here are the upcoming holidays: {clean}. Is there anything else?"
+
+            # ── Policy / RAG result ────────────────────────────────────────────
+            if tool_name in ("search_policy", "get_policy"):
+                if len(res) < 250:
+                    return f"{res.strip()} Is there anything else I can help you with?"
+
+        except Exception:
+            pass  # Any parsing error → fall back to LLM
+
+        return None  # Not handled → use LLM summarization
+
     def _find_tool_by_name(self, name: str) -> Optional[Callable]:
         """Matches tool name to tool in full registry."""
         tools_pool = getattr(self, "all_tools", self.active_tools)
@@ -1099,21 +1226,36 @@ class AsteriskVoiceSession(BaseTelephonySession):
         # Update FSM state to ENDING -> READY
         self.voice_controller.on_call_end(self.room_name)
 
-        # Close STT & TTS
+        # Cancel in-flight turn and inbound audio tasks (avoid cancelling ourselves)
+        current_task = asyncio.current_task()
+        for task_attr in ("_current_turn_task", "_inbound_audio_task"):
+            task = getattr(self, task_attr, None)
+            if task and task is not current_task and not task.done():
+                task.cancel()
+            setattr(self, task_attr, None)
+
+        # Close STT, TTS, and RAG HTTP session
         if self.stt:
             await self.stt.close()
         await self.tts.close()
+        if self._retriever is not None:
+            try:
+                await self._retriever.close()
+            except Exception as e:
+                logger.debug(f"RAG retriever close notice: {e}")
 
         # Close AudioSocket writer
         await self.audio_queue.close()
 
-        # Flush any remaining agent speech into recording
-        if self._wav_writer and hasattr(self, "_agent_audio_buffer"):
-            while self._agent_audio_buffer:
-                try:
-                    self._wav_writer.writeframes(self._agent_audio_buffer.popleft())
-                except Exception:
-                    break
+        # Flush any remaining agent speech into recording, then release buffer
+        if hasattr(self, "_agent_audio_buffer"):
+            if self._wav_writer:
+                while self._agent_audio_buffer:
+                    try:
+                        self._wav_writer.writeframes(self._agent_audio_buffer.popleft())
+                    except Exception:
+                        break
+            self._agent_audio_buffer.clear()
 
         # Close local WAV recording
         if self._wav_writer:

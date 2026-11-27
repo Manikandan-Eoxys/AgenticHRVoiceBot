@@ -11,6 +11,7 @@ import asyncio
 import inspect
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar, Union
 
@@ -332,10 +333,12 @@ class OpenAICompatibleStream(LLMStream["OpenAICompatibleLLM"]):
             "Content-Type": "application/json",
         }
         messages, _ = self._chat_ctx.to_provider_format("openai")
+        max_tokens = int(os.getenv("LLM_MAX_TOKENS", "350"))
         payload: Dict[str, Any] = {
             "model": self._llm.model,
             "messages": messages,
             "stream": True,
+            "max_tokens": max_tokens,
         }
         if self._tools:
             tools_schema = ToolContext(self._tools).parse_function_tools("openai")

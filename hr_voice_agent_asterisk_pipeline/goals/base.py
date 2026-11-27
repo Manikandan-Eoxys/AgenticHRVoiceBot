@@ -3,7 +3,7 @@ from abc import ABC
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from asterisk.llm_types import function_tool
+from models.llm_types import function_tool
 
 logger = logging.getLogger("goals.base")
 

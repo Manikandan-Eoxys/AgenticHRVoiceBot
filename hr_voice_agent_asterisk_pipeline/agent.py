@@ -18,11 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 import sys
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -40,25 +38,21 @@ else:
 
 from config import (
     ARI_URL,
-    ARI_WS_URL,
     ARI_USER,
     ARI_PASSWORD,
     ARI_APP_NAME,
     AST_BRIDGE_HOST,
     AST_BRIDGE_ADVERTISE_HOST,
     AST_BRIDGE_PORT,
-    AST_SAMPLE_RATE,
     STT_API_KEY,
     TTS_API_KEY,
-    OLLAMA_MODEL,
-    OLLAMA_BASE_URL,
 )
 from controllers.agentVoiceController import prewarm_worker_resources
 from controllers.global_monitor_fsm import start_global_monitor, global_monitor_running
 from database.db import run_startup_check
 from goals.email_approval import start_email_approval_daemon
 from services.monitoring_handler import install_monitoring_handler
-from asterisk.server import AsteriskServer
+from pipeline.server import AsteriskServer
 
 logger = logging.getLogger("agent")
 
@@ -86,7 +80,7 @@ def validate_config() -> bool:
     logger.info(f"   • AudioSocket:    {AST_BRIDGE_HOST}:{AST_BRIDGE_PORT} (Advertised: {AST_BRIDGE_ADVERTISE_HOST})")
     logger.info(f"   • Audio Format:   8000 Hz Linear 16-bit PCM (slin)")
     # LLM is decided once here, before any call starts; every call reuses this choice.
-    from llm_selector import get_llm_choice
+    from models.llm_selector import get_llm_choice
     logger.info(f"   • LLM:            {get_llm_choice().describe()}")
     return True
 
