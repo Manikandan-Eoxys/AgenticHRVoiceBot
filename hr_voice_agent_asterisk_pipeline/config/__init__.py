@@ -13,6 +13,9 @@ OPENROUTER_API_KEY: Optional[str] = globals().get("OPENROUTER_API_KEY", None)
 OPENROUTER_MODEL: str = globals().get("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")
 STT_API_KEY: Optional[str] = globals().get("STT_API_KEY", None)
 TTS_API_KEY: Optional[str] = globals().get("TTS_API_KEY", None)
+TTS_PROVIDER: str = globals().get("TTS_PROVIDER", "deepgram")
+TTS_MODEL: str = globals().get("TTS_MODEL", "aura-2-thalia-en")
+TTS_VOICE: str = globals().get("TTS_VOICE", "")
 
 __all__ = [
     "Config",
@@ -31,6 +34,9 @@ __all__ = [
     "STT_MODEL",
     "STT_LANGUAGE",
     "TTS_API_KEY",
+    "TTS_PROVIDER",
+    "TTS_MODEL",
+    "TTS_VOICE",
     "LLM_PROVIDER",
     "MYSQL_HOST",
     "MYSQL_USER",

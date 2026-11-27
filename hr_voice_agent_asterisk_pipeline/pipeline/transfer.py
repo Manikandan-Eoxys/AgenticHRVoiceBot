@@ -357,8 +357,10 @@ class TransferManager:
             self.pending.pop(coord_id, None)
             self.active.pop(caller, None)
             self.by_coord.pop(coord_id, None)
-            self.by_ext.pop(ext_id, None)
-            self.server.relay_calls.pop(relay_uuid, None)
+            if ext_id:
+                self.by_ext.pop(ext_id, None)
+            if relay_uuid:
+                self.server.relay_calls.pop(relay_uuid, None)
             entry.closed.set()
             for chan in (ext_id, coord_id):
                 if chan:
@@ -443,7 +445,8 @@ class TransferManager:
         if rec is None:
             return
         coord_id = next((c for c, caller in self.by_coord.items() if caller == caller_channel_id), None)
-        self.by_coord.pop(coord_id, None)
+        if coord_id:
+            self.by_coord.pop(coord_id, None)
         web = rec.get("web")
         if hang_up in ("caller", "both"):
             if web is not None:

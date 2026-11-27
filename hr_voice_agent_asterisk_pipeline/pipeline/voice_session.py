@@ -38,6 +38,9 @@ from config import (
     STT_MODEL,
     STT_LANGUAGE,
     TTS_API_KEY,
+    TTS_PROVIDER,
+    TTS_MODEL,
+    TTS_VOICE,
     OLLAMA_MODEL,
     OLLAMA_BASE_URL,
     RAG_TIMEOUT,
@@ -282,7 +285,14 @@ class AsteriskVoiceSession(BaseTelephonySession):
         self._agent_audio_buffer: deque[bytes] = deque(maxlen=500)
         self.audio_queue.on_frame_sent = self._on_agent_frame_sent
         self._speaking_start_time: float = 0.0
-        self.tts = StreamingTTSClient(api_key=TTS_API_KEY or "", audio_queue=self.audio_queue, sample_rate=self.sample_rate)
+        self.tts = StreamingTTSClient(
+            api_key=TTS_API_KEY or "",
+            audio_queue=self.audio_queue,
+            sample_rate=self.sample_rate,
+            model=TTS_MODEL,
+            provider=TTS_PROVIDER,
+            voice=TTS_VOICE,
+        )
         self.stt: Optional[StreamingSTTClient] = None
         self.dtmf_detector = InBandDtmfDetector8k(sample_rate=self.sample_rate)
         self.dtmf_collector = AsteriskDtmfCollector(on_id_complete=self._on_dtmf_id_collected)

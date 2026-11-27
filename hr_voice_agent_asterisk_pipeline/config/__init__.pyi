@@ -19,6 +19,9 @@ class Config:
     STT_MODEL: str
     STT_LANGUAGE: str
     TTS_API_KEY: Optional[str]
+    TTS_PROVIDER: str
+    TTS_MODEL: str
+    TTS_VOICE: str
     LLM_PROVIDER: str
     DEEPGRAM_API_KEY: Optional[str]
     ELEVENLABS_API_KEY: Optional[str]
@@ -82,6 +85,9 @@ STT_API_KEY: Optional[str]
 STT_MODEL: str
 STT_LANGUAGE: str
 TTS_API_KEY: Optional[str]
+TTS_PROVIDER: str
+TTS_MODEL: str
+TTS_VOICE: str
 LLM_PROVIDER: str
 DEEPGRAM_API_KEY: Optional[str]
 ELEVENLABS_API_KEY: Optional[str]
@@ -136,6 +142,9 @@ __all__ = [
     "STT_MODEL",
     "STT_LANGUAGE",
     "TTS_API_KEY",
+    "TTS_PROVIDER",
+    "TTS_MODEL",
+    "TTS_VOICE",
     "LLM_PROVIDER",
     "DEEPGRAM_API_KEY",
     "ELEVENLABS_API_KEY",

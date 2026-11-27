@@ -89,7 +89,7 @@ class OutboundSettings:
 
 def normalize_number(raw: str, country_code: str = "91") -> str:
     """'+91 89253 55704', '08925355704', '8925355704', '918925355704' -> '918925355704' (digits only)."""
-    text = re.sub(r"[\s\-().]", "", str(raw or ""))
+    text = re.sub(r"[\s\-().]", "", raw or "")
     digits = re.sub(r"\D", "", text)
     if not digits:
         raise OutboundError("A phone number is required.")
@@ -121,7 +121,7 @@ class OutboundDialer:
         if not s.caller_id:
             raise OutboundError("OUTBOUND_CALLER_ID is not configured.", 500)
 
-        employee_id = re.sub(r"\D", "", str(employee_id or ""))
+        employee_id = re.sub(r"\D", "", employee_id or "")
         if call_type in NEEDS_EMPLOYEE:
             if not employee_id:
                 raise OutboundError(f"employeeId is required for callType '{call_type}'.")

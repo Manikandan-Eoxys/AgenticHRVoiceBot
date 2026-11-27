@@ -64,12 +64,16 @@ class StreamingTTSClient:
         api_key: str,
         audio_queue: AudioSocketWriterQueue,
         sample_rate: int = 8000,
-        model: str = "aura-asteria-en",
+        model: str = "aura-2-thalia-en",
+        provider: str = "deepgram",
+        voice: str = "",
     ) -> None:
         self.api_key = api_key
         self.audio_queue = audio_queue
         self.sample_rate = sample_rate
         self.model = model
+        self.provider = (provider or "deepgram").strip().lower()
+        self.voice = voice
 
         self._session: Optional[aiohttp.ClientSession] = None
         self._current_task: Optional[asyncio.Task] = None
@@ -79,6 +83,66 @@ class StreamingTTSClient:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
+
+    def _build_request(self, text: str) -> tuple[str, dict[str, str], dict]:
+        """Builds (url, headers, json_payload) for the configured TTS provider."""
+        if self.provider == "elevenlabs":
+            voice_id = self.voice or "21m00Tcm4TlvDq8ikWAM"  # Rachel
+            model_id = self.model if self.model and not self.model.startswith("aura") else "eleven_flash_v2_5"
+            url = (
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+                f"?output_format=pcm_{self.sample_rate}"
+            )
+            headers = {
+                "xi-api-key": self.api_key,
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "text": text,
+                "model_id": model_id,
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.78,
+                    "style": 0.25,
+                    "use_speaker_boost": True,
+                },
+            }
+            return url, headers, payload
+
+        if self.provider == "cartesia":
+            voice_id = self.voice or "ec1e269e-9ca0-402f-8a18-58e0e022355a"
+            model_id = self.model.split("/")[-1] if self.model and not self.model.startswith("aura") else "sonic-3"
+            url = "https://api.cartesia.ai/tts/bytes"
+            headers = {
+                "X-API-Key": self.api_key,
+                "Cartesia-Version": "2024-11-13",
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "model_id": model_id,
+                "transcript": text,
+                "voice": {"mode": "id", "id": voice_id},
+                "output_format": {
+                    "container": "raw",
+                    "encoding": "pcm_s16le",
+                    "sample_rate": self.sample_rate,
+                },
+            }
+            return url, headers, payload
+
+        # Default: Deepgram Aura / Aura-2
+        params = {
+            "model": self.model or "aura-2-thalia-en",
+            "encoding": "linear16",
+            "sample_rate": str(self.sample_rate),
+            "container": "none",
+        }
+        url = f"https://api.deepgram.com/v1/speak?{urllib.parse.urlencode(params)}"
+        headers = {
+            "Authorization": f"Token {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        return url, headers, {"text": text}
 
     async def speak_text(self, text: str) -> None:
         """
@@ -90,21 +154,10 @@ class StreamingTTSClient:
 
         self._cancelled = False
         session = await self._get_session()
-        params = {
-            "model": self.model,
-            "encoding": "linear16",
-            "sample_rate": str(self.sample_rate),
-            "container": "none",
-        }
-        url = f"https://api.deepgram.com/v1/speak?{urllib.parse.urlencode(params)}"
-        headers = {
-            "Authorization": f"Token {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {"text": cleaned}
+        url, headers, payload = self._build_request(cleaned)
 
         try:
-            logger.info(f"🔊 [TTS Synthesizing]: '{cleaned[:60]}'...")
+            logger.info(f"🔊 [TTS Synthesizing ({self.provider}/{self.model})]: '{cleaned[:60]}'...")
             self._current_task = asyncio.current_task()
             async with session.post(url, headers=headers, json=payload) as resp:
                 if resp.status not in (200, 201):
@@ -112,7 +165,7 @@ class StreamingTTSClient:
                     logger.error(f"❌ [TTS Error] Status {resp.status}: {body}")
                     return
 
-                # Stream audio chunks as they arrive from Deepgram
+                # Stream audio chunks as they arrive
                 is_first = True
                 async for chunk in resp.content.iter_chunked(1024):
                     if self._cancelled:

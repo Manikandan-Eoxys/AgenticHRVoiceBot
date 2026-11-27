@@ -56,6 +56,9 @@ class Config:
     STT_MODEL    = os.getenv("STT_MODEL", "nova-3")
     STT_LANGUAGE = os.getenv("STT_LANGUAGE", "en")
     TTS_API_KEY  = os.getenv("TTS_API_KEY") or os.getenv("DEEPGRAM_API_KEY")
+    TTS_PROVIDER = os.getenv("TTS_PROVIDER", "deepgram").strip().lower()
+    TTS_MODEL    = os.getenv("TTS_MODEL", "aura-2-thalia-en")
+    TTS_VOICE    = os.getenv("TTS_VOICE", "")
 
     # LLM selection: auto | local | openrouter | groq  (see llm_selector.py)
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").strip().lower()
@@ -210,6 +213,9 @@ STT_API_KEY  = Config.STT_API_KEY
 STT_MODEL    = Config.STT_MODEL
 STT_LANGUAGE = Config.STT_LANGUAGE
 TTS_API_KEY  = Config.TTS_API_KEY
+TTS_PROVIDER = Config.TTS_PROVIDER
+TTS_MODEL    = Config.TTS_MODEL
+TTS_VOICE    = Config.TTS_VOICE
 DEEPGRAM_API_KEY = Config.STT_API_KEY
 LLM_PROVIDER = Config.LLM_PROVIDER
  
