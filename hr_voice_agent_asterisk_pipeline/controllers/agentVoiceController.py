@@ -747,12 +747,14 @@ class AsteriskVoiceController:
     # ------------------------------------------------------------------
     def _build_engines(self) -> None:
         use_cloud = os.getenv("USE_CLOUD_LLM", "false").lower() in ("true", "1")
-        llm_model = os.getenv("ASTERISK_LLM_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct"))
+        provider = os.getenv("LLM_PROVIDER", "auto").strip().lower()
+        if provider == "groq":
+            llm_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        else:
+            llm_model = os.getenv("ASTERISK_LLM_MODEL", os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct"))
         if use_cloud:
             logger.info(
-                "[Asterisk FSM] Engine config: Hybrid LLM (Primary: %s -> Fallback: Ollama %s).",
-                llm_model,
-                self.ollama_model,
+                f"[Asterisk FSM] Engine config: {provider} ({llm_model}) with local Ollama ({self.ollama_model}) as outage fallback - LLM_PROVIDER={provider}."
             )
         else:
             logger.info(

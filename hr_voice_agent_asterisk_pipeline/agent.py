@@ -48,9 +48,30 @@ from config import (
     AST_BRIDGE_ADVERTISE_HOST,
     AST_BRIDGE_PORT,
     AST_SAMPLE_RATE,
+    STT_API_KEY,
+    STT_MODEL,
+    STT_LANGUAGE,
+    STT_PROVIDER,
+    TTS_API_KEY,
+    TTS_MODEL,
+    TTS_PROVIDER,
     DEEPGRAM_API_KEY,
+    MULTI_STT_API_KEY,
+    MULTI_TTS_API_KEY,
+    MULTI_TTS_SPEAKER,
+    MULTI_TTS_PACE,
+    SARVAM_API_KEY,
+    TRANSLATOR_API_KEY,
+    TRANSLATOR_MODEL,
+    TRANSLATION_MODE,
+    TRANSLATION_NUMERALS_FORMAT,
+    TRANSLATION_ENABLED,
+    PRIMARY_LANGUAGE,
     OLLAMA_MODEL,
     OLLAMA_BASE_URL,
+    LLM_PROVIDER,
+    GROQ_MODEL,
+    OPENROUTER_MODEL,
 )
 from controllers.agentVoiceController import prewarm_worker_resources
 from controllers.global_monitor_fsm import start_global_monitor, global_monitor_running
@@ -71,18 +92,38 @@ def validate_config() -> bool:
         missing.append("ARI_USER")
     if not ARI_PASSWORD:
         missing.append("ARI_PASSWORD")
-    if not DEEPGRAM_API_KEY:
-        missing.append("DEEPGRAM_API_KEY")
+    if not (MULTI_STT_API_KEY or STT_API_KEY or DEEPGRAM_API_KEY):
+        missing.append("MULTI_STT_API_KEY (or STT_API_KEY / DEEPGRAM_API_KEY)")
+
+    if TTS_PROVIDER in ("sarvam", "multi", "multilingual"):
+        if not (MULTI_TTS_API_KEY or SARVAM_API_KEY):
+            missing.append("MULTI_TTS_API_KEY (or SARVAM_API_KEY)")
+    else:
+        if not (TTS_API_KEY or DEEPGRAM_API_KEY):
+            missing.append("TTS_API_KEY (or DEEPGRAM_API_KEY)")
 
     if missing:
         logger.error(f"❌ Missing required environment configuration: {', '.join(missing)}")
         return False
 
+    llm_info = LLM_PROVIDER
+    if LLM_PROVIDER == "groq":
+        llm_info = f"groq ({GROQ_MODEL})"
+    elif LLM_PROVIDER == "openrouter":
+        llm_info = f"openrouter ({OPENROUTER_MODEL})"
+    elif LLM_PROVIDER == "local":
+        llm_info = f"local ollama ({OLLAMA_MODEL})"
+
+    speaker_info = f" | Speaker={MULTI_TTS_SPEAKER} | Pace={MULTI_TTS_PACE}" if TTS_PROVIDER in ("sarvam", "multi", "multilingual") else ""
     logger.info("⚙️ Telephony Configuration Validated:")
     logger.info(f"   • ARI URL:        {ARI_URL} (App: {ARI_APP_NAME})")
     logger.info(f"   • AudioSocket:    {AST_BRIDGE_HOST}:{AST_BRIDGE_PORT} (Advertised: {AST_BRIDGE_ADVERTISE_HOST})")
     logger.info(f"   • Audio Format:   8000 Hz Linear 16-bit PCM (slin)")
-    logger.info(f"   • Local LLM:      {OLLAMA_MODEL} @ {OLLAMA_BASE_URL}")
+    logger.info(f"   • STT Engine:     Provider={STT_PROVIDER} | Model={STT_MODEL} ({STT_LANGUAGE})")
+    logger.info(f"   • TTS Engine:     Provider={TTS_PROVIDER} | Model={TTS_MODEL}{speaker_info}")
+    if TRANSLATION_ENABLED:
+        logger.info(f"   • Translation:    Sarvam {TRANSLATOR_MODEL} ({PRIMARY_LANGUAGE} <-> en-IN | Mode={TRANSLATION_MODE} | Numerals={TRANSLATION_NUMERALS_FORMAT})")
+    logger.info(f"   • LLM:            {llm_info} with local Ollama ({OLLAMA_MODEL}) as outage fallback - LLM_PROVIDER={LLM_PROVIDER}")
     return True
 
 

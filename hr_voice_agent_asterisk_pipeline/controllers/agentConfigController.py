@@ -30,11 +30,17 @@ logger = logging.getLogger("controllers.agent_config")
 
 _DEFAULTS: dict[str, str] = {
     # STT / LLM / TTS
+    "STT_API_KEY": "",
+    "STT_MODEL": "nova-3",
+    "STT_LANGUAGE": "en-US",
+    "TTS_API_KEY": "",
     "DEEPGRAM_API_KEY": "",
     "DEEPGRAM_LANGUAGE": "en",
+    "LLM_PROVIDER": "auto",
     "LLM_MODEL": "google/gemma-4-31b-it",
-    "TTS_PROVIDER": "cartesia",
-    "TTS_MODEL": "cartesia/sonic-3",
+    "GROQ_MODEL": "openai/gpt-oss-120b",
+    "TTS_PROVIDER": "deepgram",
+    "TTS_MODEL": "aura-asteria-en",
     "TTS_VOICE": "ec1e269e-9ca0-402f-8a18-58e0e022355a",
     # Ollama fallback
     "OLLAMA_BASE_URL": "http://localhost:11434/v1",
@@ -172,7 +178,9 @@ class AgentConfigController:
 
         env: dict[str, str] = {k: os.environ.get(k, v) for k, v in _DEFAULTS.items()}
 
-        missing = [k for k in _REQUIRED_KEYS if not env.get(k)]
+        missing = []
+        if not (env.get("STT_API_KEY") or env.get("DEEPGRAM_API_KEY")):
+            missing.append("STT_API_KEY")
         if missing:
             for key in missing:
                 logger.error(
@@ -185,11 +193,11 @@ class AgentConfigController:
         )
 
         config = AgentRuntimeConfig(
-            deepgram_api_key=env.get("DEEPGRAM_API_KEY", ""),
-            deepgram_language=env.get("DEEPGRAM_LANGUAGE", "en") or "en",
+            deepgram_api_key=env.get("STT_API_KEY") or env.get("DEEPGRAM_API_KEY", ""),
+            deepgram_language=env.get("STT_LANGUAGE") or env.get("DEEPGRAM_LANGUAGE", "en") or "en",
             llm_model=env.get("LLM_MODEL") or env.get("LIVEKIT_LLM_MODEL", "google/gemma-4-31b-it") or "google/gemma-4-31b-it",
-            tts_provider=env.get("TTS_PROVIDER", "cartesia") or "cartesia",
-            tts_model=env.get("TTS_MODEL", "cartesia/sonic-3") or "cartesia/sonic-3",
+            tts_provider=env.get("TTS_PROVIDER", "deepgram") or "deepgram",
+            tts_model=env.get("TTS_MODEL", "aura-asteria-en") or "aura-asteria-en",
             tts_voice=env.get("TTS_VOICE", "") or "ec1e269e-9ca0-402f-8a18-58e0e022355a",
             ollama_base_url=env.get("OLLAMA_BASE_URL", "http://localhost:11434/v1") or "http://localhost:11434/v1",
             ollama_model=env.get("OLLAMA_MODEL", "qwen3:8b") or "qwen3:8b",

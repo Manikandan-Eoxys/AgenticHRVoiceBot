@@ -15,6 +15,7 @@ import base64
 import io
 import logging
 import re
+import time
 import urllib.parse
 import wave
 from typing import Optional, AsyncGenerator
@@ -63,6 +64,43 @@ def clean_tts_text(text: str) -> str:
     return t
 
 
+def chunk_text_for_sarvam(text: str, max_chars: int = 400) -> list[str]:
+    """
+    Splits long text into chunks <= max_chars respecting sentence boundaries.
+    Sarvam AI Bulbul enforces a strict 500 character limit per input chunk.
+    """
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks = []
+    parts = re.split(r"([.!?;।\n]+)", text)
+    current = ""
+    for part in parts:
+        if not part:
+            continue
+        if len(current) + len(part) <= max_chars:
+            current += part
+        else:
+            if current.strip():
+                chunks.append(current.strip())
+            if len(part) > max_chars:
+                words = part.split(" ")
+                sub = ""
+                for w in words:
+                    if len(sub) + len(w) + 1 <= max_chars:
+                        sub = f"{sub} {w}".strip()
+                    else:
+                        if sub:
+                            chunks.append(sub)
+                        sub = w
+                current = sub
+            else:
+                current = part
+    if current.strip():
+        chunks.append(current.strip())
+    return [c for c in chunks if c.strip()]
+
+
 class StreamingTTSClient:
     """
     Synthesizes text into 8000 Hz 16-bit linear PCM and feeds AudioSocketWriterQueue.
@@ -76,19 +114,29 @@ class StreamingTTSClient:
         model: str = "aura-asteria-en",
         provider: str = "deepgram",
         sarvam_api_key: Optional[str] = None,
-        sarvam_speaker: str = "chaitra_kn_conversation",
+        sarvam_speaker: str = "ishita_en_customer",
         sarvam_model: str = "bulbul:v4-flash",
-        sarvam_language_code: str = "kn-IN",
+        sarvam_language_code: str = "ta-IN",
+        sarvam_pace: Optional[float] = None,
+        multi_tts_api_key: Optional[str] = None,
+        multi_tts_speaker: Optional[str] = None,
+        multi_tts_model: Optional[str] = None,
+        multi_tts_language_code: Optional[str] = None,
+        multi_tts_pace: Optional[float] = None,
     ) -> None:
         self.api_key = api_key
         self.audio_queue = audio_queue
         self.sample_rate = sample_rate
         self.model = model
         self.provider = (provider or "deepgram").lower().strip()
-        self.sarvam_api_key = sarvam_api_key
-        self.sarvam_speaker = sarvam_speaker
-        self.sarvam_model = sarvam_model
-        self.sarvam_language_code = sarvam_language_code
+        self.sarvam_api_key = multi_tts_api_key or sarvam_api_key
+        self.sarvam_speaker = multi_tts_speaker or sarvam_speaker
+        self.sarvam_model = multi_tts_model or sarvam_model
+        self.sarvam_language_code = multi_tts_language_code or sarvam_language_code
+        pace_val = multi_tts_pace if multi_tts_pace is not None else sarvam_pace
+        self.sarvam_pace = pace_val if pace_val is not None else float(os.getenv("MULTI_TTS_PACE", "1.0"))
+        self.last_tts_duration_ms: float = 0.0
+        self.on_first_audio_chunk: Optional[Callable[[], None]] = None
 
         self._session: Optional[aiohttp.ClientSession] = None
         self._current_task: Optional[asyncio.Task] = None
@@ -102,13 +150,13 @@ class StreamingTTSClient:
     async def speak_text(self, text: str) -> None:
         """
         Synthesizes a complete text string and feeds audio frames to Asterisk.
-        Delegates to Sarvam AI or Deepgram based on configured provider.
+        Delegates to Multilingual (Sarvam AI) or Deepgram based on configured provider.
         """
         cleaned = clean_tts_text(text)
         if not cleaned:
             return
 
-        if self.provider == "sarvam" and self.sarvam_api_key:
+        if self.provider in ("sarvam", "multi", "multilingual") and self.sarvam_api_key:
             await self._speak_sarvam(cleaned)
         else:
             await self._speak_deepgram(cleaned)
@@ -122,50 +170,70 @@ class StreamingTTSClient:
             "api-subscription-key": self.sarvam_api_key or "",
             "Content-Type": "application/json",
         }
-        payload = {
-            "inputs": [text],
-            "target_language_code": self.sarvam_language_code,
-            "speaker": self.sarvam_speaker,
-            "speech_sample_rate": self.sample_rate,
-            "model": self.sarvam_model,
-        }
 
-        try:
-            logger.info(f"🔊 [Sarvam TTS Synthesizing ({self.sarvam_language_code}/{self.sarvam_speaker})]: '{text[:60]}'...")
-            self._current_task = asyncio.current_task()
-            async with session.post(url, headers=headers, json=payload) as resp:
-                if resp.status not in (200, 201):
-                    body = await resp.text()
-                    logger.error(f"❌ [Sarvam TTS Error] Status {resp.status}: {body}")
-                    return
+        # Sarvam enforces max 500 chars per input item
+        chunks = chunk_text_for_sarvam(text, max_chars=400)
 
-                res_json = await resp.json()
-                audios = res_json.get("audios", [])
-                if not audios:
-                    logger.warning("⚠️ [Sarvam TTS] No audio returned.")
-                    return
+        for chunk in chunks:
+            if self._cancelled:
+                break
 
-                wav_bytes = base64.b64decode(audios[0])
-                # Extract linear PCM frames from WAV container
-                with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
-                    pcm_data = wav_file.readframes(wav_file.getnframes())
+            payload = {
+                "inputs": [chunk],
+                "target_language_code": self.sarvam_language_code,
+                "speaker": self.sarvam_speaker,
+                "speech_sample_rate": self.sample_rate,
+                "model": self.sarvam_model,
+                "pace": self.sarvam_pace,
+            }
 
-                # Feed 20ms chunks (320 bytes @ 8kHz 16-bit) to audio queue
-                chunk_size = int(self.sample_rate * 2 * 0.02)  # 320 bytes
-                for i in range(0, len(pcm_data), chunk_size):
-                    if self._cancelled:
-                        break
-                    self.audio_queue.enqueue_pcm(pcm_data[i : i + chunk_size])
+            try:
+                t0_tts = time.perf_counter()
+                logger.info(f"🔊 [Sarvam TTS Synthesizing ({self.sarvam_language_code}/{self.sarvam_speaker})]: '{chunk[:60]}'...")
+                self._current_task = asyncio.current_task()
+                async with session.post(url, headers=headers, json=payload) as resp:
+                    if resp.status not in (200, 201):
+                        body = await resp.text()
+                        logger.error(f"❌ [Sarvam TTS Error] Status {resp.status}: {body}")
+                        continue
 
-                if not self._cancelled:
-                    self.audio_queue.flush()
+                    res_json = await resp.json()
+                    audios = res_json.get("audios", [])
+                    if not audios:
+                        logger.warning("⚠️ [Sarvam TTS] No audio returned.")
+                        continue
 
-        except asyncio.CancelledError:
-            self._cancelled = True
-        except Exception as e:
-            logger.error(f"❌ [Sarvam TTS Exception]: {e}")
-        finally:
-            self._current_task = None
+                    wav_bytes = base64.b64decode(audios[0])
+                    with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+                        pcm_data = wav_file.readframes(wav_file.getnframes())
+
+                    tts_elapsed_ms = (time.perf_counter() - t0_tts) * 1000
+                    self.last_tts_duration_ms = tts_elapsed_ms
+                    logger.info(f"🔊 [Sarvam TTS Synthesized in {tts_elapsed_ms:.1f}ms ({self.sarvam_language_code})]: {len(pcm_data)} bytes")
+
+                    if self.on_first_audio_chunk is not None:
+                        try:
+                            self.on_first_audio_chunk()
+                        except Exception:
+                            pass
+
+                    # Feed 20ms chunks (320 bytes @ 8kHz 16-bit) to audio queue
+                    chunk_size = int(self.sample_rate * 2 * 0.02)  # 320 bytes
+                    for i in range(0, len(pcm_data), chunk_size):
+                        if self._cancelled:
+                            break
+                        self.audio_queue.enqueue_pcm(pcm_data[i : i + chunk_size])
+
+                    if not self._cancelled:
+                        self.audio_queue.flush()
+
+            except asyncio.CancelledError:
+                self._cancelled = True
+                break
+            except Exception as e:
+                logger.error(f"❌ [Sarvam TTS Exception]: {e}")
+            finally:
+                self._current_task = None
 
     async def _speak_deepgram(self, cleaned: str) -> None:
         """Synthesizes text using Deepgram Aura API."""

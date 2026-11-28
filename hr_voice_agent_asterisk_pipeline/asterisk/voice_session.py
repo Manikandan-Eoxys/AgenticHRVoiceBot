@@ -34,7 +34,28 @@ import numpy as np
 from asterisk.llm_types import ChatContext, ChatMessage
 
 from config import (
+    STT_API_KEY,
+    STT_MODEL,
+    STT_LANGUAGE,
+    TTS_API_KEY,
+    TTS_MODEL,
     DEEPGRAM_API_KEY,
+    DEEPGRAM_MODEL,
+    DEEPGRAM_LANGUAGE,
+    MULTI_STT_API_KEY,
+    MULTI_STT_MODEL,
+    MULTI_STT_LANGUAGE,
+    STT_PROVIDER,
+    MULTI_TTS_API_KEY,
+    MULTI_TTS_MODEL,
+    MULTI_TTS_SPEAKER,
+    MULTI_TTS_LANGUAGE_CODE,
+    MULTI_TTS_PACE,
+    TRANSLATOR_API_KEY,
+    TRANSLATOR_MODEL,
+    TRANSLATION_MODE,
+    TRANSLATION_NUMERALS_FORMAT,
+    LLM_PROVIDER,
     OPENROUTER_API_KEY,
     OPENROUTER_MODEL,
     GROQ_API_KEY,
@@ -56,7 +77,6 @@ from config import (
 )
 from services.translator import SarvamTranslator
 from prompts import INBOUND_INSTRUCTIONS
-DEEPGRAM_LANGUAGE = os.environ.get("DEEPGRAM_LANGUAGE", "en")
 COORDINATOR_PHONE_NUMBER = os.environ.get("COORDINATOR_PHONE_NUMBER", "+918925355704")
 from controllers.agentVoiceController import AsteriskVoiceController, ControllerState
 from controllers.global_monitor_fsm import report_agent_event
@@ -81,6 +101,7 @@ from asterisk.audiosocket import (
     TYPE_UUID,
 )
 from asterisk.deepgram_stt import DeepgramStreamingSTT
+from asterisk.sarvam_stt import SarvamStreamingSTT
 from asterisk.tts_client import StreamingTTSClient
 from asterisk.context import (
     AsteriskJobContext,
@@ -277,26 +298,39 @@ class AsteriskVoiceSession(BaseTelephonySession):
         self.audio_queue.on_frame_sent = self._on_agent_frame_sent
         self._speaking_start_time: float = 0.0
         self.tts = StreamingTTSClient(
-            api_key=DEEPGRAM_API_KEY or "",
+            api_key=(TTS_API_KEY or DEEPGRAM_API_KEY or ""),
             audio_queue=self.audio_queue,
             sample_rate=self.sample_rate,
+            model=TTS_MODEL,
             provider=TTS_PROVIDER,
-            sarvam_api_key=SARVAM_API_KEY,
-            sarvam_speaker=SARVAM_SPEAKER,
-            sarvam_model=SARVAM_MODEL,
-            sarvam_language_code=SARVAM_LANGUAGE_CODE,
+            sarvam_api_key=(MULTI_TTS_API_KEY or SARVAM_API_KEY),
+            sarvam_speaker=(MULTI_TTS_SPEAKER or SARVAM_SPEAKER),
+            sarvam_model=(MULTI_TTS_MODEL or SARVAM_MODEL),
+            sarvam_language_code=(MULTI_TTS_LANGUAGE_CODE or SARVAM_LANGUAGE_CODE),
+            multi_tts_api_key=MULTI_TTS_API_KEY,
+            multi_tts_speaker=MULTI_TTS_SPEAKER,
+            multi_tts_model=MULTI_TTS_MODEL,
+            multi_tts_language_code=MULTI_TTS_LANGUAGE_CODE,
+            multi_tts_pace=MULTI_TTS_PACE,
         )
         # Cascaded Multilingual Translation (Approach 2)
-        # Translates regional language caller speech (e.g. Kannada) to English for LLM,
+        # Translates regional language caller speech (e.g. Kannada, Tamil) to English for LLM,
         # and English LLM responses back to regional language for TTS.
-        multilingual_target = SARVAM_LANGUAGE_CODE if TTS_PROVIDER == "sarvam" else (PRIMARY_LANGUAGE or "en")
+        multilingual_target = (
+            (MULTI_TTS_LANGUAGE_CODE or SARVAM_LANGUAGE_CODE)
+            if TTS_PROVIDER in ("sarvam", "multi", "multilingual")
+            else (PRIMARY_LANGUAGE or "en")
+        )
         self.translator = SarvamTranslator(
-            api_key=SARVAM_API_KEY,
+            api_key=(TRANSLATOR_API_KEY or MULTI_TTS_API_KEY or SARVAM_API_KEY),
             target_lang=multilingual_target,
             source_lang="en-IN",
             enabled=TRANSLATION_ENABLED,
+            mode=TRANSLATION_MODE,
+            numerals_format=TRANSLATION_NUMERALS_FORMAT,
+            model=TRANSLATOR_MODEL,
         )
-        self.stt: Optional[DeepgramStreamingSTT] = None
+        self.stt: Optional[Any] = None
         self.dtmf_detector = InBandDtmfDetector8k(sample_rate=self.sample_rate)
         self.dtmf_collector = AsteriskDtmfCollector(on_id_complete=self._on_dtmf_id_collected)
         self._turn_lock = asyncio.Lock()
@@ -367,9 +401,8 @@ class AsteriskVoiceSession(BaseTelephonySession):
     def _setup_llm(self) -> None:
         """
         Sets up the LLM for Asterisk calls:
-        - Primary: OpenRouter (Qwen 2.5 72B) or Groq
+        - Primary: Based on LLM_PROVIDER (groq, openrouter, local, or auto)
         - Fallback: Local Ollama (if cloud provider has a network outage)
-        - Zero LiveKit gateway involvement.
         """
         local_ollama = OllamaLLM(
             model=OLLAMA_MODEL.strip(),
@@ -378,38 +411,60 @@ class AsteriskVoiceSession(BaseTelephonySession):
         )
         
         use_cloud = os.getenv("USE_CLOUD_LLM", "true").lower() in ("true", "1")
+        provider = (os.getenv("LLM_PROVIDER") or LLM_PROVIDER or "auto").strip().lower()
 
-        # 1. OpenRouter (Primary if cloud enabled)
+        groq_key = (GROQ_API_KEY or os.getenv("GROQ_API_KEY", "")).strip()
+        groq_model = (GROQ_MODEL or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")).strip()
+
         openrouter_key = (OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY", "")).strip()
+        if openrouter_key == "your-openrouter-api-key":
+            openrouter_key = ""
         openrouter_model = (OPENROUTER_MODEL or os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")).strip()
 
-        if use_cloud and openrouter_key:
-            from asterisk.llm_types import OpenAICompatibleLLM
-            openrouter_llm = OpenAICompatibleLLM(
-                model=openrouter_model,
-                api_key=openrouter_key,
-                base_url="https://openrouter.ai/api/v1",
-            )
-            logger.info(f"🚀 [LLM Setup] Primary: OpenRouter ({openrouter_model}) | Fallback: Local Ollama ({OLLAMA_MODEL})")
-            self.llm = FallbackLLM(primary_llm=openrouter_llm, fallback_llm=local_ollama)
-            return
+        from asterisk.llm_types import OpenAICompatibleLLM
 
-        # 2. Groq (Secondary)
-        groq_key = (GROQ_API_KEY or os.getenv("GROQ_API_KEY", "")).strip()
-        groq_model = (GROQ_MODEL or os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")).strip()
-
-        if use_cloud and groq_key:
-            from asterisk.llm_types import OpenAICompatibleLLM
+        if use_cloud and provider == "groq" and groq_key:
             groq_llm = OpenAICompatibleLLM(
                 model=groq_model,
                 api_key=groq_key,
                 base_url="https://api.groq.com/openai/v1",
             )
-            logger.info(f"🚀 [LLM Setup] Primary: Groq ({groq_model}) | Fallback: Local Ollama ({OLLAMA_MODEL})")
+            logger.info(f"🚀 [LLM Setup] Primary: Groq ({groq_model}) | Fallback: Local Ollama ({OLLAMA_MODEL}) - LLM_PROVIDER=groq")
             self.llm = FallbackLLM(primary_llm=groq_llm, fallback_llm=local_ollama)
-        else:
-            logger.info(f"🚀 [LLM Setup] Cloud LLM key not provided; using Local Ollama ({OLLAMA_MODEL})")
-            self.llm = local_ollama
+            return
+
+        if use_cloud and provider == "openrouter" and openrouter_key:
+            openrouter_llm = OpenAICompatibleLLM(
+                model=openrouter_model,
+                api_key=openrouter_key,
+                base_url="https://openrouter.ai/api/v1",
+            )
+            logger.info(f"🚀 [LLM Setup] Primary: OpenRouter ({openrouter_model}) | Fallback: Local Ollama ({OLLAMA_MODEL}) - LLM_PROVIDER=openrouter")
+            self.llm = FallbackLLM(primary_llm=openrouter_llm, fallback_llm=local_ollama)
+            return
+
+        if use_cloud and provider == "auto":
+            if groq_key:
+                groq_llm = OpenAICompatibleLLM(
+                    model=groq_model,
+                    api_key=groq_key,
+                    base_url="https://api.groq.com/openai/v1",
+                )
+                logger.info(f"🚀 [LLM Setup] Primary: Groq ({groq_model}) | Fallback: Local Ollama ({OLLAMA_MODEL}) - LLM_PROVIDER=auto")
+                self.llm = FallbackLLM(primary_llm=groq_llm, fallback_llm=local_ollama)
+                return
+            elif openrouter_key:
+                openrouter_llm = OpenAICompatibleLLM(
+                    model=openrouter_model,
+                    api_key=openrouter_key,
+                    base_url="https://openrouter.ai/api/v1",
+                )
+                logger.info(f"🚀 [LLM Setup] Primary: OpenRouter ({openrouter_model}) | Fallback: Local Ollama ({OLLAMA_MODEL}) - LLM_PROVIDER=auto")
+                self.llm = FallbackLLM(primary_llm=openrouter_llm, fallback_llm=local_ollama)
+                return
+
+        logger.info(f"🚀 [LLM Setup] Cloud LLM key not provided; using Local Ollama ({OLLAMA_MODEL})")
+        self.llm = local_ollama
 
     def _init_rag(self) -> None:
         try:
@@ -464,15 +519,40 @@ class AsteriskVoiceSession(BaseTelephonySession):
         # Start AudioSocket paced playback
         self.audio_queue.start()
 
-        # Start Deepgram streaming STT
-        self.stt = DeepgramStreamingSTT(
-            api_key=DEEPGRAM_API_KEY or "",
-            sample_rate=self.sample_rate,
-            language=DEEPGRAM_LANGUAGE,
-            on_speech_started=self._on_user_speech_started,
-            on_interim=self._on_user_interim_transcript,
-            on_speech_final=self._on_user_speech_final,
+        # Start streaming STT
+        stt_key = MULTI_STT_API_KEY or STT_API_KEY or DEEPGRAM_API_KEY or ""
+        stt_lang = MULTI_STT_LANGUAGE or STT_LANGUAGE or DEEPGRAM_LANGUAGE or "ta-IN"
+
+        use_sarvam_stt = (
+            STT_PROVIDER in ("sarvam", "multi", "multilingual")
+            or stt_key.startswith("sk_")
         )
+        stt_model = MULTI_STT_MODEL or (
+            "saaras:v3" if use_sarvam_stt else (STT_MODEL or "nova-3")
+        )
+
+        if use_sarvam_stt:
+            logger.info(f"🎙️ [VoiceSession] Using SarvamStreamingSTT (model={stt_model}, lang={stt_lang})")
+            self.stt = SarvamStreamingSTT(
+                api_key=stt_key,
+                sample_rate=self.sample_rate,
+                model=stt_model,
+                language=stt_lang,
+                on_speech_started=self._on_user_speech_started,
+                on_interim=self._on_user_interim_transcript,
+                on_speech_final=self._on_user_speech_final,
+            )
+        else:
+            logger.info(f"🎙️ [VoiceSession] Using DeepgramStreamingSTT (model={stt_model}, lang={stt_lang})")
+            self.stt = DeepgramStreamingSTT(
+                api_key=stt_key,
+                sample_rate=self.sample_rate,
+                model=stt_model,
+                language=stt_lang,
+                on_speech_started=self._on_user_speech_started,
+                on_interim=self._on_user_interim_transcript,
+                on_speech_final=self._on_user_speech_final,
+            )
         await self.stt.start()
 
         # Start background inbound audio loop (Asterisk AudioSocket -> STT + DTMF)
@@ -487,28 +567,30 @@ class AsteriskVoiceSession(BaseTelephonySession):
         # before streaming audio — 0.3s was too short; Asterisk would drop frames
         # that arrived before the bridge channels were joined.
         await asyncio.sleep(1.5)
-        is_tamil = (
-            DEEPGRAM_LANGUAGE.startswith("ta")
-            or SARVAM_LANGUAGE_CODE.startswith("ta")
-            or PRIMARY_LANGUAGE.startswith("ta")
-        )
-        is_kannada = (
-            DEEPGRAM_LANGUAGE.startswith("kn")
-            or SARVAM_LANGUAGE_CODE.startswith("kn")
-            or PRIMARY_LANGUAGE.startswith("kn")
-        )
+        active_lang = (
+            MULTI_STT_LANGUAGE
+            or STT_LANGUAGE
+            or DEEPGRAM_LANGUAGE
+            or MULTI_TTS_LANGUAGE_CODE
+            or SARVAM_LANGUAGE_CODE
+            or PRIMARY_LANGUAGE
+            or ""
+        ).lower()
+        is_tamil = active_lang.startswith("ta")
+        is_kannada = active_lang.startswith("kn")
 
         english_context = (
             "Hello! Welcome to Eoxys HR voice assistant. "
             "Please say or enter your 4-digit employee ID to get started."
         )
 
-        if TTS_PROVIDER == "sarvam" and is_tamil:
+        is_multilingual_tts = TTS_PROVIDER in ("sarvam", "multi", "multilingual")
+        if is_multilingual_tts and is_tamil:
             greeting = (
                 "வணக்கம்! ஈயாக்சிஸ் மனிதவள குரல் உதவியாளருக்கு நல்வரவு. "
                 "தொடர உங்கள் நான்கு இலக்க பணியாளர் அடையாள எண்ணைக் கூறவும்."
             )
-        elif TTS_PROVIDER == "sarvam" and is_kannada:
+        elif is_multilingual_tts and is_kannada:
             greeting = (
                 "ನಮಸ್ಕಾರ! ಇಆಕ್ಸಿಸ್ ಎಚ್ಆರ್ ವಾಯ್ಸ್ ಅಸಿಸ್ಟೆಂಟ್‌ಗೆ ಸುಸ್ವಾಗತ. "
                 "ದಯವಿಟ್ಟು ನಿಮ್ಮ ನಾಲ್ಕು ಅಂಕಿಯ ಉದ್ಯೋಗಿ ಐಡಿಯನ್ನು ತಿಳಿಸಿ."
@@ -519,6 +601,7 @@ class AsteriskVoiceSession(BaseTelephonySession):
         # In Approach 2, store the English context in chat_ctx so LLM reasoning remains 100% English
         self.chat_ctx.add_message(role="assistant", content=english_context)
         self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {greeting}")
+        self._update_state("speaking")
         await self.tts.speak_text(greeting)
         await self.tts.wait_for_playout()
         if self.agent_state == "speaking":
@@ -731,10 +814,17 @@ class AsteriskVoiceSession(BaseTelephonySession):
                 break
 
     def _on_user_speech_final(self, user_transcript: str) -> None:
-        """Fired by Deepgram STT when caller finishes speaking (end-of-turn)."""
+        """Fired by Deepgram/Sarvam STT when caller finishes speaking (end-of-turn)."""
         text = user_transcript.strip()
         if not text or not self.running:
             return
+
+        # Instant barge-in: If agent is speaking (or in initial greeting), stop speech immediately!
+        if self.agent_state == "speaking":
+            logger.info(f"⚡ [Barge-In] Caller spoke '{text}' while agent was speaking -> interrupting speech.")
+            self.interrupt()
+
+        stt_latency = getattr(self.stt, "last_stt_latency_ms", 0.0) if self.stt else 0.0
 
         # ── STT Debounce ────────────────────────────────────────────────
         # Deepgram sometimes fires two speech_final events for a single
@@ -758,21 +848,55 @@ class AsteriskVoiceSession(BaseTelephonySession):
             logger.info(f"⚡ [Turn Supervisor] Cancelling prior turn task for new speech input: '{text}'")
             self._current_turn_task.cancel()
 
-        self._current_turn_task = asyncio.create_task(self._safe_process_user_turn(text))
+        self._current_turn_task = asyncio.create_task(self._safe_process_user_turn(text, stt_latency_ms=stt_latency))
 
-    async def _safe_process_user_turn(self, user_text: str) -> None:
+    async def _safe_process_user_turn(self, user_text: str, stt_latency_ms: float = 0.0) -> None:
         async with self._turn_lock:
             try:
-                await self._process_user_turn(user_text)
+                await self._process_user_turn(user_text, stt_latency_ms=stt_latency_ms)
             except asyncio.CancelledError:
                 logger.debug(f"Turn '{user_text[:30]}' was cancelled.")
             except Exception as e:
                 logger.error(f"❌ Error during conversation turn: {e}", exc_info=True)
 
-    async def _speak_agent_stream(self, token_generator: AsyncGenerator[str, None]) -> str:
+    def _log_latency_waterfall(
+        self,
+        stt_ms: float,
+        trans_in_ms: float,
+        rag_ms: float,
+        rag_hit: bool,
+        llm_ttft_ms: float,
+        tool_ms: float,
+        tool_name: str,
+        trans_out_ms: float,
+        tts_ms: float,
+        audiosocket_ms: float,
+        total_s: float,
+    ) -> None:
+        rag_desc = "(hit)" if rag_hit else "(skipped)"
+        tool_desc = f"({tool_name})" if tool_name else "(none)"
+        logger.info("⏱️ ══════════════ [TURN LATENCY WATERFALL] ══════════════")
+        logger.info(f"⏱️   • 1. STT Transcription:     {stt_ms:6.1f} ms")
+        logger.info(f"⏱️   • 2. STT -> LLM Translate:  {trans_in_ms:6.1f} ms  (ta -> en)")
+        logger.info(f"⏱️   • 3. RAG Context Lookup:    {rag_ms:6.1f} ms  {rag_desc}")
+        logger.info(f"⏱️   • 4. LLM Time to 1st Token: {llm_ttft_ms:6.1f} ms")
+        if tool_ms > 0:
+            logger.info(f"⏱️   • 5. Tool Execution:        {tool_ms:6.1f} ms  {tool_desc}")
+        logger.info(f"⏱️   • 6. LLM -> TTS Translate:  {trans_out_ms:6.1f} ms  (en -> ta)")
+        logger.info(f"⏱️   • 7. TTS Audio Synthesis:   {tts_ms:6.1f} ms")
+        logger.info(f"⏱️   • 8. AudioSocket Stream Out:  Ready in ~20ms frames")
+        logger.info(f"⏱️   ──────────────────────────────────────────────────")
+        logger.info(f"⏱️   • TOTAL TURNAROUND TIME:    {total_s:6.2f} s  (Caller Stop → Voice In Ear)")
+        logger.info("⏱️ ══════════════════════════════════════════════════════")
+
+    async def _speak_agent_stream(
+        self,
+        token_generator: AsyncGenerator[str, None],
+        timing_tracker: Optional[dict] = None,
+    ) -> str:
         """
         Consumes streaming LLM tokens. If translation is active (Approach 2),
-        buffers tokens into sentences, translates each sentence to target language (e.g. Kannada)
+        buffers tokens into sentences, translates each sentence to target language (e.g. Tamil)
         via Sarvam Mayura, and speaks it via Sarvam Bulbul TTS.
         Otherwise speaks raw English tokens directly via speak_stream.
         Returns the complete generated English text.
@@ -805,34 +929,132 @@ class AsteriskVoiceSession(BaseTelephonySession):
                     complete_sentence = (parts[0] + parts[1]).strip()
                     buffer = parts[2]
                     if complete_sentence:
+                        t0_tr = time.perf_counter()
                         target_sentence = await self.translator.to_target(complete_sentence)
-                        logger.info(f"🌐 [Translator LLM -> TTS]: '{complete_sentence}' => '{target_sentence}'")
+                        tr_out_ms = (time.perf_counter() - t0_tr) * 1000
+                        logger.info(f"🌐 [Translator LLM -> TTS {tr_out_ms:.1f}ms]: '{complete_sentence}' => '{target_sentence}'")
+                        if timing_tracker is not None and "first_trans_out_ms" not in timing_tracker:
+                            timing_tracker["first_trans_out_ms"] = tr_out_ms
+
+                        t0_tts = time.perf_counter()
                         await self.tts.speak_text(target_sentence)
+                        tts_ms = getattr(self.tts, "last_tts_duration_ms", (time.perf_counter() - t0_tts) * 1000)
+                        if timing_tracker is not None and "first_tts_ms" not in timing_tracker:
+                            timing_tracker["first_tts_ms"] = tts_ms
+
+                        if timing_tracker is not None and not timing_tracker.get("waterfall_logged"):
+                            timing_tracker["waterfall_logged"] = True
+                            t_now = time.perf_counter()
+                            stt_ms = timing_tracker.get("stt_ms", 0.0)
+                            trans_in_ms = timing_tracker.get("trans_in_ms", 0.0)
+                            rag_ms = timing_tracker.get("rag_ms", 0.0)
+                            rag_hit = timing_tracker.get("rag_hit", False)
+                            llm_ttft_ms = timing_tracker.get("llm_ttft_ms", 0.0)
+                            tool_ms = timing_tracker.get("tool_ms", 0.0)
+                            tool_name = timing_tracker.get("tool_name", "")
+                            trans_out_ms = timing_tracker.get("first_trans_out_ms", 0.0)
+                            tts_ms = timing_tracker.get("first_tts_ms", 0.0)
+                            audiosocket_ms = (t_now - timing_tracker.get("t_turn_start", t_now)) * 1000
+                            total_s = (t_now - timing_tracker.get("t_turn_start", t_now)) + (stt_ms / 1000.0)
+
+                            self._log_latency_waterfall(
+                                stt_ms=stt_ms,
+                                trans_in_ms=trans_in_ms,
+                                rag_ms=rag_ms,
+                                rag_hit=rag_hit,
+                                llm_ttft_ms=llm_ttft_ms,
+                                tool_ms=tool_ms,
+                                tool_name=tool_name,
+                                trans_out_ms=trans_out_ms,
+                                tts_ms=tts_ms,
+                                audiosocket_ms=audiosocket_ms,
+                                total_s=total_s,
+                            )
                 else:
                     break
 
         # Flush any trailing sentence/clause
         if buffer.strip() and self.running:
+            t0_tr = time.perf_counter()
             target_trailing = await self.translator.to_target(buffer.strip())
-            logger.info(f"🌐 [Translator LLM -> TTS Trailing]: '{buffer.strip()}' => '{target_trailing}'")
+            tr_out_ms = (time.perf_counter() - t0_tr) * 1000
+            logger.info(f"🌐 [Translator LLM -> TTS Trailing {tr_out_ms:.1f}ms]: '{buffer.strip()}' => '{target_trailing}'")
+            if timing_tracker is not None and "first_trans_out_ms" not in timing_tracker:
+                timing_tracker["first_trans_out_ms"] = tr_out_ms
+
+            t0_tts = time.perf_counter()
             await self.tts.speak_text(target_trailing)
+            tts_ms = getattr(self.tts, "last_tts_duration_ms", (time.perf_counter() - t0_tts) * 1000)
+            if timing_tracker is not None and "first_tts_ms" not in timing_tracker:
+                timing_tracker["first_tts_ms"] = tts_ms
+
+            if timing_tracker is not None and not timing_tracker.get("waterfall_logged"):
+                timing_tracker["waterfall_logged"] = True
+                t_now = time.perf_counter()
+                stt_ms = timing_tracker.get("stt_ms", 0.0)
+                trans_in_ms = timing_tracker.get("trans_in_ms", 0.0)
+                rag_ms = timing_tracker.get("rag_ms", 0.0)
+                rag_hit = timing_tracker.get("rag_hit", False)
+                llm_ttft_ms = timing_tracker.get("llm_ttft_ms", 0.0)
+                tool_ms = timing_tracker.get("tool_ms", 0.0)
+                tool_name = timing_tracker.get("tool_name", "")
+                trans_out_ms = timing_tracker.get("first_trans_out_ms", 0.0)
+                tts_ms = timing_tracker.get("first_tts_ms", 0.0)
+                audiosocket_ms = (t_now - timing_tracker.get("t_turn_start", t_now)) * 1000
+                total_s = (t_now - timing_tracker.get("t_turn_start", t_now)) + (stt_ms / 1000.0)
+
+                self._log_latency_waterfall(
+                    stt_ms=stt_ms,
+                    trans_in_ms=trans_in_ms,
+                    rag_ms=rag_ms,
+                    rag_hit=rag_hit,
+                    llm_ttft_ms=llm_ttft_ms,
+                    tool_ms=tool_ms,
+                    tool_name=tool_name,
+                    trans_out_ms=trans_out_ms,
+                    tts_ms=tts_ms,
+                    audiosocket_ms=audiosocket_ms,
+                    total_s=total_s,
+                )
 
         await self.tts.wait_for_playout()
         return "".join(reply_chunks).strip()
 
-    async def _process_user_turn(self, user_text: str) -> None:
+    async def _process_user_turn(self, user_text: str, stt_latency_ms: float = 0.0) -> None:
         """Orchestrates RAG check, LLM generation, tool execution, and TTS."""
-        logger.info(f"🗣️ [Caller Turn]: '{user_text}'")
+        t_turn_start = time.perf_counter()
+        logger.info(f"🗣️ [Caller Turn]: '{user_text}' (stt_latency={stt_latency_ms:.1f}ms)")
         self._update_state("thinking")
+
+        timing_tracker: dict[str, Any] = {
+            "t_turn_start": t_turn_start,
+            "stt_ms": stt_latency_ms,
+            "trans_in_ms": 0.0,
+            "rag_ms": 0.0,
+            "rag_hit": False,
+            "llm_ttft_ms": 0.0,
+            "tool_ms": 0.0,
+            "tool_name": "",
+            "waterfall_logged": False,
+        }
 
         # ── Step A: Multilingual Input Translation (Caller Speech -> English) ──
         english_user_text = user_text
         if self.translator and self.translator.is_active:
+            t0_tr = time.perf_counter()
             english_user_text = await self.translator.to_english(user_text)
-            logger.info(f"🌐 [Translator STT -> LLM]: '{user_text}' => '{english_user_text}'")
+            tr_in_ms = (time.perf_counter() - t0_tr) * 1000
+            timing_tracker["trans_in_ms"] = tr_in_ms
+            logger.info(f"🌐 [Translator STT -> LLM {tr_in_ms:.1f}ms]: '{user_text}' => '{english_user_text}'")
 
         # 1. Check RAG Retrieval
+        t0_rag = time.perf_counter()
         rag_context_msg = await self._handle_rag(english_user_text)
+        if rag_context_msg:
+            rag_ms = (time.perf_counter() - t0_rag) * 1000
+            timing_tracker["rag_ms"] = rag_ms
+            timing_tracker["rag_hit"] = True
+            logger.info(f"📚 [RAG Retrieved in {rag_ms:.1f}ms]: {rag_context_msg[:60]}...")
 
         # 2. Append User Message
         self.chat_ctx.add_message(role="user", content=english_user_text)
@@ -850,12 +1072,15 @@ class AsteriskVoiceSession(BaseTelephonySession):
 
         # 4. Call LLM with Pruned Tool Set
         try:
+            t0_llm = time.perf_counter()
             stream = self.llm.chat(chat_ctx=self.chat_ctx, tools=turn_tools)
             self._update_state("speaking")
 
             tool_calls_to_run: list[Any] = []
+            first_token_seen = False
 
             async def _token_generator():
+                nonlocal first_token_seen
                 async for chunk in stream:
                     if not self.running:
                         break
@@ -865,13 +1090,23 @@ class AsteriskVoiceSession(BaseTelephonySession):
                         continue
                     content = getattr(delta, "content", None)
                     if content:
+                        if not first_token_seen:
+                            first_token_seen = True
+                            ttft = (time.perf_counter() - t0_llm) * 1000
+                            timing_tracker["llm_ttft_ms"] = ttft
+                            logger.info(f"🧠 [LLM Time to First Token]: {ttft:.1f}ms")
                         yield content
                     tool_calls = getattr(delta, "tool_calls", None)
                     if tool_calls:
+                        if not first_token_seen:
+                            first_token_seen = True
+                            ttft = (time.perf_counter() - t0_llm) * 1000
+                            timing_tracker["llm_ttft_ms"] = ttft
+                            logger.info(f"🧠 [LLM Tool Call Generated in {ttft:.1f}ms]")
                         tool_calls_to_run.extend(tool_calls)
 
             # Stream speech directly to Asterisk (with translation if enabled)
-            full_reply_text = await self._speak_agent_stream(_token_generator())
+            full_reply_text = await self._speak_agent_stream(_token_generator(), timing_tracker=timing_tracker)
 
             # Record assistant message into history
             if full_reply_text:
@@ -961,7 +1196,7 @@ class AsteriskVoiceSession(BaseTelephonySession):
                                         if not c.startswith("[System"):
                                             yield c
 
-                            followup_reply = await self._speak_agent_stream(_followup_end_guard_gen())
+                            followup_reply = await self._speak_agent_stream(_followup_end_guard_gen(), timing_tracker=timing_tracker)
                             if followup_reply:
                                 self.chat_ctx.add_message(role="assistant", content=followup_reply)
                                 self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {followup_reply}")
@@ -972,6 +1207,8 @@ class AsteriskVoiceSession(BaseTelephonySession):
                         try:
                             # 1 & 2 & 4. Execute through ToolExecutionGuardrail (least-privilege, timeout, breaker, sanitization)
                             verified_id = self.verified_employee_id or getattr(self.run_ctx.session, "verified_employee_id", None)
+                            timing_tracker["tool_name"] = fn_name
+                            t0_tool = time.perf_counter()
                             exec_result = await default_tool_guardrail.execute_tool(
                                 tool_callable=tool_fn,
                                 tool_name=fn_name,
@@ -980,6 +1217,9 @@ class AsteriskVoiceSession(BaseTelephonySession):
                                 context=self.run_ctx,
                                 timeout_seconds=3.5,
                             )
+                            tool_ms = (time.perf_counter() - t0_tool) * 1000
+                            timing_tracker["tool_ms"] = tool_ms
+                            logger.info(f"🛠️ [Tool Executed in {tool_ms:.1f}ms] {fn_name}")
 
                             # Sync verified employee ID if identity tool just succeeded
                             new_verified = getattr(self.run_ctx.session, "verified_employee_id", None)
@@ -1038,7 +1278,7 @@ class AsteriskVoiceSession(BaseTelephonySession):
                                         if not c.startswith("[Tool Result:") and not c.startswith("[System Note"):
                                             yield c
 
-                            followup_reply = await self._speak_agent_stream(_followup_gen())
+                            followup_reply = await self._speak_agent_stream(_followup_gen(), timing_tracker=timing_tracker)
                             if followup_reply:
                                 self.chat_ctx.add_message(role="assistant", content=followup_reply)
                                 self._append_transcript_log(f"[{datetime.now().strftime('%H:%M:%S')}] [Assistant]: {followup_reply}")

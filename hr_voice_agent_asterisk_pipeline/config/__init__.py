@@ -23,6 +23,19 @@ if _cfg_path.exists():
 # Explicit fallback module-level bindings for static type analyzers (Pyrefly/mypy)
 OPENROUTER_API_KEY: Optional[str] = globals().get("OPENROUTER_API_KEY", None)
 OPENROUTER_MODEL: str = globals().get("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")
+MULTI_STT_API_KEY: Optional[str] = globals().get("MULTI_STT_API_KEY", None)
+MULTI_STT_MODEL: str = globals().get("MULTI_STT_MODEL", "nova-3")
+MULTI_STT_LANGUAGE: str = globals().get("MULTI_STT_LANGUAGE", "ta")
+STT_PROVIDER: str = globals().get("STT_PROVIDER", "deepgram")
+MULTI_TTS_API_KEY: Optional[str] = globals().get("MULTI_TTS_API_KEY", None)
+MULTI_TTS_MODEL: str = globals().get("MULTI_TTS_MODEL", "bulbul:v4-flash")
+MULTI_TTS_SPEAKER: str = globals().get("MULTI_TTS_SPEAKER", "ishita_en_customer")
+MULTI_TTS_LANGUAGE_CODE: str = globals().get("MULTI_TTS_LANGUAGE_CODE", "ta-IN")
+MULTI_TTS_PACE: float = globals().get("MULTI_TTS_PACE", 1.0)
+TRANSLATOR_API_KEY: Optional[str] = globals().get("TRANSLATOR_API_KEY", None)
+TRANSLATOR_MODEL: str = globals().get("TRANSLATOR_MODEL", "mayura:v1")
+TRANSLATION_MODE: str = globals().get("TRANSLATION_MODE", "modern-colloquial")
+TRANSLATION_NUMERALS_FORMAT: str = globals().get("TRANSLATION_NUMERALS_FORMAT", "international")
 TTS_PROVIDER: str = globals().get("TTS_PROVIDER", "deepgram")
 SARVAM_API_KEY: Optional[str] = globals().get("SARVAM_API_KEY", None)
 SARVAM_SPEAKER: str = globals().get("SARVAM_SPEAKER", "vijay_ta_narration")
@@ -46,6 +59,20 @@ __all__ = [
     "OPENROUTER_MODEL",
     "GROQ_API_KEY",
     "GROQ_MODEL",
+    "MULTI_STT_API_KEY",
+    "MULTI_STT_MODEL",
+    "MULTI_STT_LANGUAGE",
+    "MULTI_TTS_API_KEY",
+    "MULTI_TTS_MODEL",
+    "MULTI_TTS_SPEAKER",
+    "MULTI_TTS_LANGUAGE_CODE",
+    "MULTI_TTS_PACE",
+    "TRANSLATOR_API_KEY",
+    "TRANSLATOR_MODEL",
+    "TRANSLATION_MODE",
+    "TRANSLATION_NUMERALS_FORMAT",
+    "TRANSLATION_ENABLED",
+    "PRIMARY_LANGUAGE",
     "DEEPGRAM_API_KEY",
     "DEEPGRAM_MODEL",
     "DEEPGRAM_LANGUAGE",

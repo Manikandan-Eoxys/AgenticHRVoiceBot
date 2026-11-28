@@ -59,16 +59,28 @@ class SarvamTranslator:
         source_lang: str = "en-IN",
         enabled: bool = True,
         speaker_gender: str = "Female",
-        mode: str = "formal",
+        mode: str = "modern-colloquial",
+        numerals_format: str = "international",
+        model: str = "mayura:v1",
         timeout_seconds: float = 3.0,
     ) -> None:
-        self.api_key = api_key
+        import os
+        self.api_key = (
+            api_key
+            or os.getenv("TRANSLATOR_API_KEY")
+            or os.getenv("SARVAM_TRANSLATOR_API_KEY")
+            or os.getenv("MULTI_TTS_API_KEY")
+            or os.getenv("SARVAM_API_KEY")
+        )
         self.target_lang = normalize_lang_code(target_lang)
         self.source_lang = normalize_lang_code(source_lang)
         self.enabled = enabled
         self.speaker_gender = speaker_gender
-        self.mode = mode
+        self.mode = os.getenv("TRANSLATION_MODE", mode)
+        self.numerals_format = os.getenv("TRANSLATION_NUMERALS_FORMAT", numerals_format)
+        self.model = os.getenv("TRANSLATOR_MODEL", model)
         self.timeout_seconds = timeout_seconds
+        self.last_duration_ms: float = 0.0
 
         self._session: Optional[aiohttp.ClientSession] = None
 
@@ -109,7 +121,8 @@ class SarvamTranslator:
             "target_language_code": tgt,
             "speaker_gender": self.speaker_gender,
             "mode": self.mode,
-            "model": "mayura:v1",
+            "model": self.model,
+            "numerals_format": self.numerals_format,
         }
         headers = {
             "api-subscription-key": self.api_key,
@@ -121,6 +134,7 @@ class SarvamTranslator:
             session = await self._get_session()
             async with session.post(self.TRANSLATE_URL, json=payload, headers=headers) as resp:
                 elapsed_ms = (time.time() - t0) * 1000
+                self.last_duration_ms = elapsed_ms
                 if resp.status == 200:
                     data = await resp.json()
                     translated = (data.get("translated_text") or "").strip()

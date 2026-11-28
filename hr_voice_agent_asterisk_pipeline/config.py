@@ -11,11 +11,13 @@ from pathlib import Path
 from dotenv import load_dotenv
  
 BASE_DIR = Path(__file__).resolve().parent
-_env_path = BASE_DIR / ".env"
-if _env_path.exists():
-    load_dotenv(_env_path, override=True)
-else:
-    load_dotenv(override=True)
+_parent_env = BASE_DIR.parent / ".env"
+_local_env = BASE_DIR / ".env"
+if _parent_env.exists():
+    load_dotenv(_parent_env, override=True)
+if _local_env.exists():
+    load_dotenv(_local_env, override=True)
+load_dotenv(override=True)
  
  
 class Config:
@@ -49,19 +51,59 @@ class Config:
     OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct")
 
     GROQ_API_KEY   = os.getenv("GROQ_API_KEY", None)
-    GROQ_MODEL     = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    GROQ_MODEL     = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
  
-    DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
-    DEEPGRAM_MODEL   = os.getenv("DEEPGRAM_MODEL", "nova-3")
-    DEEPGRAM_LANGUAGE= os.getenv("DEEPGRAM_LANGUAGE", "en")
+    LLM_PROVIDER   = os.getenv("LLM_PROVIDER", "auto").strip().lower()
+    LLM_MODEL      = os.getenv("LLM_MODEL", "google/gemma-4-31b-it")
+
+    # ------------------------------------------------------------------
+    # Provider-Neutral STT, TTS & Multilingual
+    # ------------------------------------------------------------------
+    MULTI_STT_API_KEY    = os.getenv("MULTI_STT_API_KEY") or os.getenv("STT_API_KEY") or os.getenv("DEEPGRAM_API_KEY")
+    MULTI_STT_MODEL      = os.getenv("MULTI_STT_MODEL") or os.getenv("STT_MODEL") or os.getenv("DEEPGRAM_MODEL", "saaras:v3" if (MULTI_STT_API_KEY or "").startswith("sk_") else "nova-3")
+    MULTI_STT_LANGUAGE   = os.getenv("MULTI_STT_LANGUAGE") or os.getenv("DEEPGRAM_LANGUAGE") or os.getenv("STT_LANGUAGE", "ta-IN")
+
+    STT_PROVIDER         = os.getenv("STT_PROVIDER", "sarvam" if (MULTI_STT_API_KEY or "").startswith("sk_") else "deepgram").strip().lower()
+
+    MULTI_TTS_API_KEY    = os.getenv("MULTI_TTS_API_KEY") or os.getenv("SARVAM_API_KEY")
+    MULTI_TTS_MODEL      = os.getenv("MULTI_TTS_MODEL") or os.getenv("SARVAM_MODEL", "bulbul:v4-flash")
+    MULTI_TTS_SPEAKER    = os.getenv("MULTI_TTS_SPEAKER") or os.getenv("SARVAM_SPEAKER", "ishita_en_customer")
+    MULTI_TTS_LANGUAGE_CODE = os.getenv("MULTI_TTS_LANGUAGE_CODE") or os.getenv("SARVAM_LANGUAGE_CODE", "ta-IN")
+    MULTI_TTS_PACE       = float(os.getenv("MULTI_TTS_PACE", "1.0"))
+
+    # Distinct API key & settings for Translator model (e.g. separate Sarvam account)
+    TRANSLATOR_API_KEY   = os.getenv("TRANSLATOR_API_KEY") or os.getenv("SARVAM_TRANSLATOR_API_KEY") or MULTI_TTS_API_KEY
+    TRANSLATOR_MODEL     = os.getenv("TRANSLATOR_MODEL", "mayura:v1")
+    TRANSLATION_MODE     = os.getenv("TRANSLATION_MODE", "modern-colloquial")
+    TRANSLATION_NUMERALS_FORMAT = os.getenv("TRANSLATION_NUMERALS_FORMAT", "international")
+
+    STT_API_KEY      = MULTI_STT_API_KEY or os.getenv("STT_API_KEY") or os.getenv("DEEPGRAM_API_KEY")
+    STT_MODEL        = MULTI_STT_MODEL
+    STT_LANGUAGE     = MULTI_STT_LANGUAGE
 
     TTS_PROVIDER     = os.getenv("TTS_PROVIDER", "deepgram").strip().lower()
-    SARVAM_API_KEY   = os.getenv("SARVAM_API_KEY", None)
-    SARVAM_SPEAKER   = os.getenv("SARVAM_SPEAKER", "chaitra_kn_conversation")
-    SARVAM_MODEL     = os.getenv("SARVAM_MODEL", "bulbul:v4-flash")
-    SARVAM_LANGUAGE_CODE = os.getenv("SARVAM_LANGUAGE_CODE", "en")
+    TTS_API_KEY      = (
+        (MULTI_TTS_API_KEY or os.getenv("SARVAM_API_KEY"))
+        if TTS_PROVIDER in ("sarvam", "multi", "multilingual")
+        else (os.getenv("TTS_API_KEY") or os.getenv("DEEPGRAM_API_KEY"))
+    )
+    TTS_MODEL        = (
+        MULTI_TTS_MODEL
+        if TTS_PROVIDER in ("sarvam", "multi", "multilingual")
+        else os.getenv("TTS_MODEL", "aura-asteria-en")
+    )
+
+    # Backward-compatibility aliases
+    DEEPGRAM_API_KEY = STT_API_KEY
+    DEEPGRAM_MODEL   = STT_MODEL
+    DEEPGRAM_LANGUAGE= STT_LANGUAGE
+
+    SARVAM_API_KEY   = MULTI_TTS_API_KEY
+    SARVAM_SPEAKER   = MULTI_TTS_SPEAKER
+    SARVAM_MODEL     = MULTI_TTS_MODEL
+    SARVAM_LANGUAGE_CODE = MULTI_TTS_LANGUAGE_CODE
     TRANSLATION_ENABLED  = os.getenv("TRANSLATION_ENABLED", "true").strip().lower() in ("true", "1", "yes")
-    PRIMARY_LANGUAGE     = os.getenv("PRIMARY_LANGUAGE", "kn").strip().lower()
+    PRIMARY_LANGUAGE     = os.getenv("PRIMARY_LANGUAGE") or (MULTI_STT_LANGUAGE[:2] if MULTI_STT_LANGUAGE else "ta")
  
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
  
@@ -196,6 +238,27 @@ OPENROUTER_MODEL   = Config.OPENROUTER_MODEL
 GROQ_API_KEY = Config.GROQ_API_KEY
 GROQ_MODEL   = Config.GROQ_MODEL
  
+LLM_PROVIDER = Config.LLM_PROVIDER
+LLM_MODEL    = Config.LLM_MODEL
+
+MULTI_STT_API_KEY    = Config.MULTI_STT_API_KEY
+MULTI_STT_MODEL      = Config.MULTI_STT_MODEL
+MULTI_STT_LANGUAGE   = Config.MULTI_STT_LANGUAGE
+STT_PROVIDER         = Config.STT_PROVIDER
+
+MULTI_TTS_API_KEY    = Config.MULTI_TTS_API_KEY
+MULTI_TTS_MODEL      = Config.MULTI_TTS_MODEL
+MULTI_TTS_SPEAKER    = Config.MULTI_TTS_SPEAKER
+MULTI_TTS_LANGUAGE_CODE = Config.MULTI_TTS_LANGUAGE_CODE
+TRANSLATOR_API_KEY   = Config.TRANSLATOR_API_KEY
+
+STT_API_KEY       = Config.STT_API_KEY
+STT_MODEL         = Config.STT_MODEL
+STT_LANGUAGE      = Config.STT_LANGUAGE
+
+TTS_API_KEY       = Config.TTS_API_KEY
+TTS_MODEL         = Config.TTS_MODEL
+
 DEEPGRAM_API_KEY   = Config.DEEPGRAM_API_KEY
 DEEPGRAM_MODEL     = Config.DEEPGRAM_MODEL
 DEEPGRAM_LANGUAGE  = Config.DEEPGRAM_LANGUAGE

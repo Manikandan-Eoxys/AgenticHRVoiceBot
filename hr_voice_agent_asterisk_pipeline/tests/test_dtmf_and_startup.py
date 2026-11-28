@@ -91,9 +91,16 @@ def test_asterisk_config_validation():
     with patch("agent.ARI_URL", "http://127.0.0.1:8088/ari"), \
          patch("agent.ARI_USER", "asterisk"), \
          patch("agent.ARI_PASSWORD", "secret"), \
+         patch("agent.STT_API_KEY", "stt-test-key"), \
+         patch("agent.TTS_API_KEY", "tts-test-key"), \
          patch("agent.DEEPGRAM_API_KEY", "dg-test-key"):
         assert validate_config()
 
     # When key is missing
-    with patch("agent.DEEPGRAM_API_KEY", ""):
+    with patch("agent.STT_API_KEY", ""), \
+         patch("agent.TTS_API_KEY", ""), \
+         patch("agent.MULTI_STT_API_KEY", ""), \
+         patch("agent.MULTI_TTS_API_KEY", ""), \
+         patch("agent.SARVAM_API_KEY", ""), \
+         patch("agent.DEEPGRAM_API_KEY", ""):
         assert not validate_config()
